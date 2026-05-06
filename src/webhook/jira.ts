@@ -10,6 +10,10 @@ import {
   resolveEligibility,
   detectCycles,
 } from "../orchestration/dependency-resolver.js";
+import {
+  resolveJiraColumnMappings,
+  jiraNamesEqual,
+} from "../jira/columns.js";
 
 export const webhookRouter = new Hono();
 
@@ -38,9 +42,16 @@ webhookRouter.post("/jira", async (c) => {
   if (!config) {
     return c.json({ action: "ignored", reason: "project not configured" });
   }
+  const columnMappings = resolveJiraColumnMappings({
+    backlog: config.backlog_column_name,
+    toDo: config.to_do_column_name,
+    inProgress: config.in_progress_column_name,
+    inReview: config.in_review_column_name,
+    done: config.done_column_name,
+  });
 
   // ── Transition: To Do ──────────────────────────────────────────────────
-  if (transitionTarget === "To Do") {
+  if (jiraNamesEqual(transitionTarget, columnMappings.toDo)) {
     const issue = await jira.getIssueLinks(issueKey);
 
     const priorityValue =
@@ -97,7 +108,7 @@ webhookRouter.post("/jira", async (c) => {
   }
 
   // ── Transition: Done ───────────────────────────────────────────────────
-  if (transitionTarget === "Done") {
+  if (jiraNamesEqual(transitionTarget, columnMappings.done)) {
     const blockedRuns = await getRunsBlockedBy(issueKey);
 
     let unblockedCount = 0;

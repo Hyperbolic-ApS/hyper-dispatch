@@ -42,12 +42,15 @@ See [configuration.md](./configuration.md) for the Jira Automation rule setup. T
   "transitionTarget": "To Do"
 }
 ```
+`transitionTarget` is matched against configured per-project column/status names, not hardcoded labels:
+- `to_do_column_name` triggers queueing logic.
+- `done_column_name` triggers unblock checks.
 
 ## Board Validation
 
 The validator checks:
-1. Board has required columns: Backlog, To Do, In Progress, In Review, Done.
+1. Board has all project-configured required columns (`backlog_column_name`, `to_do_column_name`, `in_progress_column_name`, `in_review_column_name`, `done_column_name`).
 2. Model override custom field exists (if configured).
-3. Workflow statuses include the required ones.
+3. Workflow statuses include those same configured mapped names.
 
 The Jira API is read-only for board configuration — HyperDispatch reports what's missing but cannot auto-create columns.

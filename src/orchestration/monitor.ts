@@ -2,7 +2,8 @@ import OzAPI from "oz-agent-sdk";
 import type { ArtifactItem } from "oz-agent-sdk/resources/agent/runs.js";
 import { env } from "../config/env.js";
 import * as jira from "../jira/client.js";
-import { getRunsByStatus, updateRunStatus } from "../db/queries.js";
+import { getRunsByStatus, updateRunStatus, getProjectConfig } from "../db/queries.js";
+import { resolveJiraColumnMappings } from "../jira/columns.js";
 
 const MONITOR_INTERVAL_MS = 30_000;
 
@@ -81,9 +82,17 @@ export async function checkRuns(): Promise<void> {
 
         // Transition Jira to "In Review" (best-effort)
         try {
+          const config = await getProjectConfig(run.project_key);
+          const columnMappings = resolveJiraColumnMappings({
+            backlog: config?.backlog_column_name,
+            toDo: config?.to_do_column_name,
+            inProgress: config?.in_progress_column_name,
+            inReview: config?.in_review_column_name,
+            done: config?.done_column_name,
+          });
           const transitions = await jira.getTransitions(run.ticket_key);
           const inReview = transitions.transitions.find(
-            (t) => t.name === "In Review"
+            (t) => t.name.trim().toLowerCase() === columnMappings.inReview.toLowerCase()
           );
           if (inReview) {
             await jira.transitionIssue(run.ticket_key, inReview.id);

@@ -17,6 +17,11 @@ Stores per-project configuration. Managed via the config UI.
 | `github_repo` | `TEXT` | GitHub repo (e.g., "org/mono-repo") |
 | `default_model` | `TEXT` | Default LLM model ID (null = Oz default) |
 | `model_field_id` | `TEXT` | Jira custom field ID for per-ticket model override |
+| `backlog_column_name` | `TEXT` | Jira backlog column/status name for this project (default: `Backlog`) |
+| `to_do_column_name` | `TEXT` | Jira to-do column/status name (default: `To Do`) |
+| `in_progress_column_name` | `TEXT` | Jira in-progress column/status name (default: `In Progress`) |
+| `in_review_column_name` | `TEXT` | Jira in-review column/status name (default: `In Review`) |
+| `done_column_name` | `TEXT` | Jira done column/status name (default: `Done`) |
 | `skills` | `TEXT[]` | Skill specs (e.g., `["org/repo:hyperdispatch-worker"]`) |
 | `active` | `BOOLEAN` | Whether this project is active |
 | `created_at` | `TIMESTAMPTZ` | Row creation time |

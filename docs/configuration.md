@@ -24,6 +24,7 @@ Key fields:
 - **Oz environment ID** — one per Jira project (mono-repo checked out in each).
 - **Default model** — LLM model for agent runs. Can be overridden per-ticket via a Jira custom field.
 - **Model override field** — Jira custom field ID (e.g., `customfield_10050`). If a ticket has a value in this field, it overrides the project default.
+- **Jira column name mappings** — per-project names for Backlog, To Do, In Progress, In Review, and Done. Defaults match Jira defaults, but can be customized for projects that renamed workflow columns/statuses.
 - **Skills** — selected from the GitHub repo's skill directories via the config UI.
 
 ## Jira Automation Setup
