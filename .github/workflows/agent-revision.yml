@@ -1,0 +1,102 @@
+# Agent Revision on Review Feedback
+#
+# This workflow triggers when a reviewer requests changes on a PR whose branch
+# matches the `agent/*` naming convention used by HyperDispatch worker agents.
+#
+# When triggered, it:
+#   1. Extracts the Jira ticket key from the branch name (agent/{ticket-key})
+#   2. Collects all review comments from the latest "changes requested" review
+#   3. Spawns a new Oz cloud agent to address the feedback on the same branch
+#
+# Setup requirements:
+#   - Required secret:  WARP_API_KEY        — your Warp API key for spawning agents
+#   - Optional var:     WARP_AGENT_PROFILE  — Oz agent profile to use (uses Oz default if unset)
+#
+# The spawned agent will commit its changes directly to the existing PR branch
+# and will NOT open a new PR.
+
+name: Agent Revision on Review Feedback
+
+on:
+  pull_request_review:
+    types: [submitted]
+
+jobs:
+  revision:
+    if: >-
+      github.event.review.state == 'changes_requested' &&
+      startsWith(github.event.pull_request.head.ref, 'agent/')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      issues: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.ref }}
+
+      - name: Extract ticket key
+        id: ticket
+        run: |
+          BRANCH="${{ github.event.pull_request.head.ref }}"
+          TICKET_KEY="${BRANCH#agent/}"
+          echo "key=${TICKET_KEY}" >> "$GITHUB_OUTPUT"
+          echo "Extracted ticket key: ${TICKET_KEY}"
+
+      - name: Collect review comments
+        id: comments
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { data: reviews } = await github.rest.pulls.listReviews({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: context.payload.pull_request.number,
+            });
+            const { data: comments } = await github.rest.pulls.listReviewComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: context.payload.pull_request.number,
+            });
+
+            const latestReview = reviews
+              .filter(r => r.state === "CHANGES_REQUESTED")
+              .pop();
+
+            let feedback = "";
+            if (latestReview?.body) {
+              feedback += `## Review Summary\n${latestReview.body}\n\n`;
+            }
+            if (comments.length > 0) {
+              feedback += "## Inline Comments\n";
+              for (const c of comments) {
+                feedback += `### ${c.path}:${c.line || c.original_line || "?"}\n${c.body}\n\n`;
+              }
+            }
+
+            core.setOutput("feedback", feedback);
+
+      - name: Spawn revision agent
+        uses: warpdotdev/oz-agent-action@main
+        with:
+          prompt: |
+            You are addressing PR review feedback for ${{ steps.ticket.outputs.key }}.
+
+            PR: ${{ github.event.pull_request.html_url }}
+            Branch: ${{ github.event.pull_request.head.ref }}
+
+            The reviewer has requested changes. Address ALL of the following feedback:
+
+            ${{ steps.comments.outputs.feedback }}
+
+            Instructions:
+            1. Read the review comments carefully
+            2. Make the requested changes
+            3. Run tests to verify nothing is broken
+            4. Commit with message: "${{ steps.ticket.outputs.key }}: Address review feedback
+
+            Co-Authored-By: Oz <oz-agent@warp.dev>"
+            5. Push to the existing branch (do NOT create a new PR)
+          warp_api_key: ${{ secrets.WARP_API_KEY }}
+          profile: ${{ vars.WARP_AGENT_PROFILE || '' }}
