@@ -2,14 +2,15 @@ import { env } from "./config/env.js";
 import { serve } from "@hono/node-server";
 import { Hono } from "hono";
 import { runMigrations } from "./db/migrate.js";
+import { webhookRouter } from "./webhook/jira.js";
 
 const app = new Hono();
 
 // Health check
 app.get("/", (c) => c.json({ status: "ok" }));
 
-// Placeholder route groups
-app.route("/webhook", new Hono());
+// Route groups
+app.route("/webhook", webhookRouter);
 app.route("/api", new Hono());
 app.route("/dashboard", new Hono());
 app.route("/config", new Hono());
