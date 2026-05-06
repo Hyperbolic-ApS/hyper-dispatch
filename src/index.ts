@@ -3,6 +3,9 @@ import { serve } from "@hono/node-server";
 import { Hono } from "hono";
 import { runMigrations } from "./db/migrate.js";
 import { webhookRouter } from "./webhook/jira.js";
+import { dashboardRouter } from "./routes/dashboard.js";
+import { apiRouter } from "./routes/api.js";
+import { configRouter } from "./routes/config.js";
 
 const app = new Hono();
 
@@ -11,9 +14,9 @@ app.get("/", (c) => c.json({ status: "ok" }));
 
 // Route groups
 app.route("/webhook", webhookRouter);
-app.route("/api", new Hono());
-app.route("/dashboard", new Hono());
-app.route("/config", new Hono());
+app.route("/api", apiRouter);
+app.route("/dashboard", dashboardRouter);
+app.route("/config", configRouter);
 
 async function main(): Promise<void> {
   await runMigrations();
