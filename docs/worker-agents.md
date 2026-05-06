@@ -37,4 +37,17 @@ The model used for a worker agent is determined by (in order of precedence):
 
 ## Default Worker Skill
 
-The default skill (`.warp/skills/hyperdispatch-worker/SKILL.md`) implements a standard workflow. See the PLAN.md for the full step-by-step. Projects are expected to customize or replace this skill.
+The default skill (`.warp/skills/hyperdispatch-worker/SKILL.md`) implements a standard workflow:
+
+1. Parse ticket details from prompt (key, summary, description)
+2. Create branch `agent/{ticket-key}`
+3. Investigate the codebase
+4. Plan the implementation
+5. Implement (scoped tightly to minimize parallel merge conflicts)
+6. Run tests, iterate on failures
+7. Run lint/type checks
+8. Commit with `{ticket-key}: {summary}` format + co-author line
+9. Create PR via `gh pr create` with Jira link in body
+10. Report PR URL via `report_pr` artifact
+
+Projects are expected to customize or replace this skill as needed.
