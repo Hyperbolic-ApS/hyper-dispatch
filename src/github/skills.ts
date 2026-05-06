@@ -17,9 +17,10 @@ const SKILL_PREFIXES = [
 export async function discoverSkills(
   owner: string,
   repo: string,
-  branch = "main"
+  branch = "main",
+  githubToken?: string
 ): Promise<SkillEntry[]> {
-  const octokit = new Octokit({ auth: env.GITHUB_TOKEN });
+  const octokit = new Octokit({ auth: githubToken ?? env.GITHUB_TOKEN });
 
   const { data } = await octokit.git.getTree({
     owner,

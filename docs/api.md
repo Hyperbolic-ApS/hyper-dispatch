@@ -73,8 +73,22 @@ Run Jira board validation for a project. Returns pass/fail per check.
 
 ## Skill Discovery API
 
-### `GET /api/skills/:owner/:repo`
-Returns available skills from a GitHub repository. Used by the config UI for the skill selection dropdown.
+### `POST /config/skills`
+Discovers skills from the current config form values without requiring a saved project.
+
+**Request body:**
+```json
+{
+  "repo": "owner/repo",
+  "projectKey": "PROJ",
+  "githubPat": "ghp_xxx"
+}
+```
+
+Notes:
+- `repo` is required.
+- `projectKey` is optional and is used to look up a saved per-project token fallback.
+- `githubPat` is optional and, when present, is used immediately for discovery.
 
 **Response:**
 ```json
@@ -83,3 +97,6 @@ Returns available skills from a GitHub repository. Used by the config UI for the
   { "name": "tdd-worker", "path": ".warp/skills/tdd-worker/SKILL.md", "spec": "owner/repo:tdd-worker" }
 ]
 ```
+
+### `GET /config/:projectKey/skills?repo=owner/repo`
+Legacy/project-scoped discovery endpoint retained for compatibility.
