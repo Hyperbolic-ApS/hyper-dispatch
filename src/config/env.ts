@@ -48,9 +48,11 @@ import type { ProjectConfig } from "../db/config-queries.js";
 export function resolveProjectTokens(config: ProjectConfig): {
   githubToken: string;
   jiraApiToken: string;
+  jiraEmail: string;
 } {
   return {
     githubToken: config.github_pat ?? env.GITHUB_TOKEN,
     jiraApiToken: config.jira_api_token ?? env.JIRA_API_TOKEN,
+    jiraEmail: config.jira_email ?? env.JIRA_EMAIL,
   };
 }

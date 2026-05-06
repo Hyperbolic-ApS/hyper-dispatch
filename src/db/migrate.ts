@@ -14,7 +14,8 @@ export async function runMigrations(): Promise<void> {
   await sql.unsafe(`
     ALTER TABLE project_configs
       ADD COLUMN IF NOT EXISTS github_pat TEXT,
-      ADD COLUMN IF NOT EXISTS jira_api_token TEXT;
+      ADD COLUMN IF NOT EXISTS jira_api_token TEXT,
+      ADD COLUMN IF NOT EXISTS jira_email TEXT;
   `);
 
   console.log("Database migrations applied successfully");
