@@ -11,7 +11,7 @@ Basic auth using a service account email + API token (`JIRA_EMAIL` + `JIRA_API_T
 ### Jira REST API v3
 
 - **Get issue**: `GET /rest/api/3/issue/{issueKey}?fields=issuelinks,status,summary,description,priority,{model_field_id}`
-- **Transition issue**: `POST /rest/api/3/issue/{issueKey}/transitions` — used to move tickets between columns (To Do → In Progress → In Review).
+- **Transition issue**: `POST /rest/api/3/issue/{issueKey}/transitions` — used to move tickets between columns (To Do → In Progress → In Review → Done).
 - **Get transitions**: `GET /rest/api/3/issue/{issueKey}/transitions` — to find the transition ID for a target status.
 - **List fields**: `GET /rest/api/3/field` — for validating that the model override custom field exists.
 - **List statuses**: `GET /rest/api/3/status` — for validating workflow statuses.
@@ -42,6 +42,10 @@ See [configuration.md](./configuration.md) for the Jira Automation rule setup. T
   "transitionTarget": "To Do"
 }
 ```
+
+## PR Merge to Done
+
+When a worker run completes successfully, HyperDispatch stores the PR URL artifact and moves the issue to `In Review`. The monitor then polls GitHub for `succeeded` runs with PR URLs. Once a PR is merged, HyperDispatch transitions the matching Jira issue to `Done`.
 
 ## Board Validation
 
