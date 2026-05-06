@@ -34,7 +34,7 @@ const CSS = `
   .form-card { background: #fff; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); padding: 24px; max-width: 640px; }
   .field { margin-bottom: 16px; }
   label { display: block; font-size: 0.875rem; font-weight: 500; margin-bottom: 4px; }
-  input[type=text], input[type=number], textarea { width: 100%; box-sizing: border-box; padding: 8px 10px; border: 1px solid #d1d5db; border-radius: 6px; font-size: 0.875rem; font-family: inherit; }
+  input[type=text], input[type=number], input[type=password], textarea { width: 100%; box-sizing: border-box; padding: 8px 10px; border: 1px solid #d1d5db; border-radius: 6px; font-size: 0.875rem; font-family: inherit; }
   textarea { min-height: 80px; resize: vertical; }
   input[type=checkbox] { width: auto; }
   .hint { font-size: 0.75rem; color: #6b7280; margin-top: 3px; }
@@ -133,14 +133,17 @@ function syncSkills() {
     <div class="field">
       <label for="jira_cloud_id">Jira Cloud ID</label>
       <input type="text" id="jira_cloud_id" name="jira_cloud_id" value="${v.jira_cloud_id ?? ""}" required>
+      <div class="hint">Find this in Jira &rarr; Settings &rarr; Products. It\'s the UUID in Jira API URLs, e.g. <code>https://api.atlassian.com/ex/jira/<strong>CLOUD-ID</strong>/rest/...</code></div>
     </div>
     <div class="field">
       <label for="board_id">Board ID</label>
       <input type="number" id="board_id" name="board_id" value="${v.board_id ?? ""}" required>
+      <div class="hint">Go to your Jira board &rarr; the board ID is the number in the URL: <code>/jira/software/projects/PROJ/boards/<strong>123</strong></code></div>
     </div>
     <div class="field">
       <label for="oz_env_id">Oz Environment ID</label>
       <input type="text" id="oz_env_id" name="oz_env_id" value="${v.oz_env_id ?? ""}" required>
+      <div class="hint">Run <code>oz environment list</code> in your terminal, or find it in Warp &rarr; Settings &rarr; Environments</div>
     </div>
     <div class="field">
       <label for="github_repo">GitHub Repo</label>
@@ -155,7 +158,7 @@ function syncSkills() {
     <div class="field">
       <label for="model_field_id">Model Field ID</label>
       <input type="text" id="model_field_id" name="model_field_id" value="${v.model_field_id ?? ""}">
-      <div class="hint">Jira custom field ID for per-ticket model override</div>
+      <div class="hint">In Jira, go to Settings &rarr; Issues &rarr; Custom Fields. Click the field &rarr; the ID is in the URL, e.g. <code>customfield_10050</code></div>
     </div>
     <div class="field">
       <label for="skills">Skills (comma-separated specs)</label>
@@ -163,6 +166,16 @@ function syncSkills() {
       <div class="hint">e.g. owner/repo:skill-name, owner/repo:other-skill</div>
       <button type="button" id="discover-btn" class="btn btn-secondary" style="margin-top:6px" onclick="loadSkills()">Discover Skills</button>
       <div id="skills-picker"></div>
+    </div>
+    <div class="field">
+      <label for="github_pat">GitHub PAT <span style="font-weight:400;color:#6b7280">(per-project override)</span></label>
+      <input type="password" id="github_pat" name="github_pat" autocomplete="new-password" ${config?.github_pat ? 'placeholder="\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022"' : ""}>
+      <div class="hint">Generate at github.com &rarr; Settings &rarr; Developer settings &rarr; Personal Access Tokens. Needs <code>repo</code> scope. Leave blank to use the global token.</div>
+    </div>
+    <div class="field">
+      <label for="jira_api_token">Jira API Token <span style="font-weight:400;color:#6b7280">(per-project override)</span></label>
+      <input type="password" id="jira_api_token" name="jira_api_token" autocomplete="new-password" ${config?.jira_api_token ? 'placeholder="\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022"' : ""}>
+      <div class="hint">Generate at id.atlassian.com/manage-profile/security/api-tokens. Leave blank to use the global token.</div>
     </div>
     <div class="field">
       <label><input type="checkbox" name="active" value="true" ${v.active !== false ? "checked" : ""}> Active</label>
@@ -194,6 +207,26 @@ configRouter.get("/", async (c) => {
   </tr>`
   );
 
+  const webhookInstructions = `
+<div style="background:#fff;border-radius:8px;box-shadow:0 1px 3px rgba(0,0,0,0.1);padding:24px;margin-top:20px">
+  <h2 style="margin:0 0 12px;font-size:1.1rem">Webhook Setup</h2>
+  <p style="margin:0 0 12px;font-size:0.875rem;color:#374151">Create one Jira Automation rule to connect Jira to HyperDispatch:</p>
+  <ol style="margin:0 0 16px;padding-left:20px;font-size:0.875rem;color:#374151;line-height:1.7">
+    <li>In Jira, go to <strong>Project Settings &rarr; Automation</strong> (or use global automation to cover all projects)</li>
+    <li>Create a new rule with trigger: <strong>Issue transitioned</strong></li>
+    <li>Add action: <strong>Send web request</strong></li>
+    <li>Set URL to: <code style="background:#f3f4f6;padding:2px 6px;border-radius:4px">https://&lt;your-hyperdispatch-host&gt;/webhook/jira</code></li>
+    <li>Method: <strong>POST</strong>, Content type: <strong>application/json</strong></li>
+    <li>Set the body to:</li>
+  </ol>
+  <pre style="background:#1e293b;color:#e2e8f0;padding:16px;border-radius:6px;font-size:0.8rem;overflow-x:auto;margin:0 0 12px">{
+  &quot;issueKey&quot;: &quot;{{issue.key}}&quot;,
+  &quot;projectKey&quot;: &quot;{{issue.fields.project.key}}&quot;,
+  &quot;transitionTarget&quot;: &quot;{{transition.to_status.name}}&quot;
+}</pre>
+  <p style="margin:0;font-size:0.8rem;color:#6b7280">ℹ️ HyperDispatch silently ignores webhooks for projects that are not configured above.</p>
+</div>`;
+
   const body = `
 <h1>Projects</h1>
 <table>
@@ -209,7 +242,8 @@ configRouter.get("/", async (c) => {
   <tbody>
     ${configs.length === 0 ? '<tr><td colspan="5" style="text-align:center;color:#6b7280">No projects configured yet. <a href="/config/new">Add one</a>.</td></tr>' : rows.join("\n")}
   </tbody>
-</table>`;
+</table>
+${webhookInstructions}`;
 
   return c.html(layout("Projects", body));
 });
@@ -241,6 +275,8 @@ configRouter.post("/", async (c) => {
     default_model: form.default_model ? String(form.default_model) : null,
     model_field_id: form.model_field_id ? String(form.model_field_id) : null,
     skills,
+    github_pat: form.github_pat ? String(form.github_pat) : null,
+    jira_api_token: form.jira_api_token ? String(form.jira_api_token) : null,
     active: form.active === "true",
   });
 
@@ -280,6 +316,11 @@ configRouter.post("/:projectKey", async (c) => {
     .map((s) => s.trim())
     .filter(Boolean);
 
+  // Only update tokens if a new value was submitted — empty field means "keep existing"
+  const tokenUpdates: { github_pat?: string | null; jira_api_token?: string | null } = {};
+  if (form.github_pat) tokenUpdates.github_pat = String(form.github_pat);
+  if (form.jira_api_token) tokenUpdates.jira_api_token = String(form.jira_api_token);
+
   await updateProjectConfig(projectKey, {
     jira_cloud_id: String(form.jira_cloud_id),
     board_id: parseInt(String(form.board_id), 10),
@@ -288,6 +329,7 @@ configRouter.post("/:projectKey", async (c) => {
     default_model: form.default_model ? String(form.default_model) : null,
     model_field_id: form.model_field_id ? String(form.model_field_id) : null,
     skills,
+    ...tokenUpdates,
     active: form.active === "true",
   });
 

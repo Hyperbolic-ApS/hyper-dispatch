@@ -9,6 +9,8 @@ export interface ProjectConfig {
   default_model: string | null;
   model_field_id: string | null;
   skills: string[];
+  github_pat: string | null;
+  jira_api_token: string | null;
   active: boolean;
   created_at: Date;
   updated_at: Date;
@@ -23,6 +25,8 @@ export interface ProjectConfigInput {
   default_model?: string | null;
   model_field_id?: string | null;
   skills?: string[];
+  github_pat?: string | null;
+  jira_api_token?: string | null;
   active?: boolean;
 }
 
@@ -77,6 +81,8 @@ export async function createProjectConfig(
       default_model,
       model_field_id,
       skills,
+      github_pat,
+      jira_api_token,
       active
     ) VALUES (
       ${config.project_key},
@@ -87,6 +93,8 @@ export async function createProjectConfig(
       ${config.default_model ?? null},
       ${config.model_field_id ?? null},
       ${sql.array(config.skills ?? [])},
+      ${config.github_pat ?? null},
+      ${config.jira_api_token ?? null},
       ${config.active ?? true}
     )
     RETURNING *
@@ -112,6 +120,8 @@ export async function updateProjectConfig(
       default_model  = ${merged.default_model ?? null},
       model_field_id = ${merged.model_field_id ?? null},
       skills         = ${sql.array(merged.skills ?? [])},
+      github_pat     = ${merged.github_pat ?? null},
+      jira_api_token = ${merged.jira_api_token ?? null},
       active         = ${merged.active},
       updated_at     = NOW()
     WHERE project_key = ${projectKey}

@@ -7,6 +7,8 @@ CREATE TABLE IF NOT EXISTS project_configs (
   default_model  TEXT,
   model_field_id TEXT,
   skills         TEXT[] NOT NULL DEFAULT ARRAY[]::TEXT[],
+  github_pat     TEXT,
+  jira_api_token TEXT,
   active         BOOLEAN DEFAULT true,
   created_at     TIMESTAMPTZ DEFAULT NOW(),
   updated_at     TIMESTAMPTZ DEFAULT NOW()

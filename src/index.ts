@@ -11,8 +11,8 @@ import { startMonitorLoop } from "./orchestration/monitor.js";
 
 const app = new Hono();
 
-// Health check
-app.get("/", (c) => c.json({ status: "ok" }));
+// Redirect root to dashboard
+app.get("/", (c) => c.redirect("/dashboard"));
 
 // Route groups
 app.route("/webhook", webhookRouter);

@@ -37,7 +37,12 @@ function statusBadge(status: string): string {
 
 const CSS = `
   body { font-family: system-ui, sans-serif; margin: 0; padding: 20px; background: #f9fafb; color: #111; }
+  .header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; }
+  .header h1 { margin: 0; }
   h1 { margin: 0 0 16px; font-size: 1.4rem; }
+  .btn { display: inline-block; padding: 8px 18px; border-radius: 6px; font-size: 0.875rem; font-weight: 500; cursor: pointer; border: none; text-decoration: none; }
+  .btn-secondary { background: #e5e7eb; color: #111; }
+  .btn-secondary:hover { background: #d1d5db; }
   .stats { display: flex; gap: 12px; margin-bottom: 20px; flex-wrap: wrap; }
   .stat { padding: 10px 16px; border-radius: 6px; font-weight: 600; font-size: 0.9rem; }
   table { width: 100%; border-collapse: collapse; background: #fff; border-radius: 8px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
@@ -111,7 +116,10 @@ dashboardRouter.get("/", async (c) => {
   <style>${CSS}</style>
 </head>
 <body>
-  <h1>HyperDispatch Dashboard</h1>
+  <div class="header">
+    <h1>HyperDispatch Dashboard</h1>
+    <a href="/config" class="btn btn-secondary">⚙ Configure Projects</a>
+  </div>
   <div class="stats">
     ${statsHtml}
   </div>

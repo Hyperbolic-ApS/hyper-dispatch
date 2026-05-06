@@ -36,3 +36,21 @@ export const env = {
 } as const;
 
 export type Env = typeof env;
+
+// ─── Per-project token resolution ─────────────────────────────────────────────
+
+import type { ProjectConfig } from "../db/config-queries.js";
+
+/**
+ * Returns the effective GitHub and Jira tokens for a project.
+ * Per-project values take precedence over the global env vars.
+ */
+export function resolveProjectTokens(config: ProjectConfig): {
+  githubToken: string;
+  jiraApiToken: string;
+} {
+  return {
+    githubToken: config.github_pat ?? env.GITHUB_TOKEN,
+    jiraApiToken: config.jira_api_token ?? env.JIRA_API_TOKEN,
+  };
+}
