@@ -1,5 +1,10 @@
 import { env } from "../config/env.js";
 
+export interface JiraCredentials {
+  email: string;
+  apiToken: string;
+}
+
 export interface ValidationCheck {
   name: string;
   passed: boolean;
@@ -11,15 +16,15 @@ export interface ValidationResult {
   checks: ValidationCheck[];
 }
 
-function jiraAuthHeader(): string {
-  const credentials = `${env.JIRA_EMAIL}:${env.JIRA_API_TOKEN}`;
+function jiraAuthHeader(creds: JiraCredentials): string {
+  const credentials = `${creds.email}:${creds.apiToken}`;
   return "Basic " + Buffer.from(credentials).toString("base64");
 }
 
-async function jiraFetch(path: string): Promise<Response> {
+async function jiraFetch(path: string, creds: JiraCredentials): Promise<Response> {
   return fetch(`${env.JIRA_BASE_URL}${path}`, {
     headers: {
-      Authorization: jiraAuthHeader(),
+      Authorization: jiraAuthHeader(creds),
       Accept: "application/json",
     },
   });
@@ -30,13 +35,18 @@ const REQUIRED_STATUSES = ["Backlog", "To Do", "In Progress", "In Review", "Done
 
 export async function validateJiraProject(
   boardId: number,
-  modelFieldId: string | null
+  modelFieldId: string | null,
+  credentials?: JiraCredentials
 ): Promise<ValidationResult> {
+  const creds: JiraCredentials = credentials ?? {
+    email: env.JIRA_EMAIL,
+    apiToken: env.JIRA_API_TOKEN,
+  };
   const checks: ValidationCheck[] = [];
 
   // Check 1: Board columns
   try {
-    const res = await jiraFetch(`/rest/agile/1.0/board/${boardId}/configuration`);
+    const res = await jiraFetch(`/rest/agile/1.0/board/${boardId}/configuration`, creds);
     if (!res.ok) {
       checks.push({
         name: "Board columns",
@@ -77,7 +87,7 @@ export async function validateJiraProject(
   // Check 2: Custom field (if model_field_id set)
   if (modelFieldId) {
     try {
-      const res = await jiraFetch("/rest/api/3/field");
+      const res = await jiraFetch("/rest/api/3/field", creds);
       if (!res.ok) {
         checks.push({
           name: "Custom field",
@@ -118,7 +128,7 @@ export async function validateJiraProject(
 
   // Check 3: Workflow statuses
   try {
-    const res = await jiraFetch("/rest/api/3/status");
+    const res = await jiraFetch("/rest/api/3/status", creds);
     if (!res.ok) {
       checks.push({
         name: "Workflow statuses",

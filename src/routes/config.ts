@@ -384,7 +384,13 @@ configRouter.get("/:projectKey/validate", async (c) => {
     return c.json({ error: `Project ${projectKey} not found` }, 404);
   }
 
-  const result = await validateJiraProject(config.board_id, config.model_field_id);
+  const result = await validateJiraProject(
+    config.board_id,
+    config.model_field_id,
+    config.jira_email && config.jira_api_token
+      ? { email: config.jira_email, apiToken: config.jira_api_token }
+      : undefined
+  );
 
   // Return HTML if accept header prefers it, otherwise JSON
   const accept = c.req.header("accept") ?? "";
