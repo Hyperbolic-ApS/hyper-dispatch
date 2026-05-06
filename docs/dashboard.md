@@ -29,6 +29,8 @@ Auto-refreshes every 15 seconds.
 The config UI allows managing project configurations:
 - Add/edit/deactivate projects
 - Select skills from the GitHub repo (dynamic dropdown)
+  - Discovery uses the current in-form `GitHub Repo` value immediately (no save required)
+  - If entered, the current in-form `GitHub PAT` is used for discovery before save
 - Set default model and model override field
 - Validate Jira board setup
 

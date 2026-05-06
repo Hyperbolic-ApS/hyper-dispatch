@@ -83,6 +83,7 @@ function projectForm(
 <script>
 async function loadSkills() {
   const repo = document.getElementById('github_repo').value.trim();
+  const githubPat = document.getElementById('github_pat').value.trim();
   if (!repo || !repo.includes('/')) {
     alert('Enter a valid owner/repo first (e.g. myorg/myrepo)');
     return;
@@ -92,7 +93,15 @@ async function loadSkills() {
   btn.disabled = true;
   try {
     const key = document.getElementById('project_key_field')?.value || '';
-    const res = await fetch('/config/' + encodeURIComponent(key) + '/skills?repo=' + encodeURIComponent(repo));
+    const res = await fetch('/config/skills', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        repo,
+        projectKey: key || undefined,
+        githubPat: githubPat || undefined,
+      }),
+    });
     if (!res.ok) throw new Error(await res.text());
     const skills = await res.json();
     const picker = document.getElementById('skills-picker');
@@ -352,6 +361,49 @@ configRouter.post("/:projectKey/delete", async (c) => {
 });
 
 // ─── GET /:projectKey/skills — Discover skills from GitHub repo ────────────────
+configRouter.post("/skills", async (c) => {
+  let payload:
+    | { repo?: unknown; projectKey?: unknown; githubPat?: unknown }
+    | undefined;
+  try {
+    payload = await c.req.json();
+  } catch {
+    return c.json({ error: "Invalid JSON payload" }, 400);
+  }
+
+  const repoParam = typeof payload?.repo === "string" ? payload.repo : "";
+  const projectKey =
+    typeof payload?.projectKey === "string" ? payload.projectKey : "";
+  const githubPat =
+    typeof payload?.githubPat === "string" ? payload.githubPat : "";
+
+  if (!repoParam) {
+    return c.json({ error: "Missing repo value (format: owner/repo)" }, 400);
+  }
+
+  const parts = repoParam.split("/");
+  if (parts.length < 2 || !parts[0] || !parts[1]) {
+    return c.json({ error: "Invalid repo format. Use owner/repo" }, 400);
+  }
+
+  const [owner, repo] = parts;
+
+  try {
+    const existingConfig =
+      projectKey.trim().length > 0
+        ? await getProjectConfig(projectKey.trim())
+        : null;
+    const tokenForDiscovery =
+      githubPat.trim().length > 0
+        ? githubPat.trim()
+        : existingConfig?.github_pat ?? undefined;
+    const skills = await discoverSkills(owner!, repo!, "main", tokenForDiscovery);
+    return c.json(skills);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    return c.json({ error: message }, 500);
+  }
+});
 
 configRouter.get("/:projectKey/skills", async (c) => {
   const repoParam = c.req.query("repo");
@@ -367,7 +419,14 @@ configRouter.get("/:projectKey/skills", async (c) => {
   const [owner, repo] = parts;
 
   try {
-    const skills = await discoverSkills(owner!, repo!);
+    const { projectKey } = c.req.param();
+    const config = await getProjectConfig(projectKey);
+    const skills = await discoverSkills(
+      owner!,
+      repo!,
+      "main",
+      config?.github_pat ?? undefined
+    );
     return c.json(skills);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
