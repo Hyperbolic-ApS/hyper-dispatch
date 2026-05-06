@@ -6,6 +6,10 @@ import {
   getRunsBlockedBy,
   removeBlocker,
 } from "../db/queries.js";
+import {
+  resolveEligibility,
+  detectCycles,
+} from "../orchestration/dependency-resolver.js";
 
 export const webhookRouter = new Hono();
 
@@ -44,12 +48,47 @@ webhookRouter.post("/jira", async (c) => {
         ? priorityNameToNumber(issue.fields.priority.name)
         : 0;
 
+    // Cycle detection — must run before eligibility to avoid infinite recursion
+    const cycleResult = await detectCycles(issueKey);
+    if (cycleResult.hasCycle) {
+      await upsertDispatchRun({
+        ticketKey: issueKey,
+        projectKey,
+        summary: issue.fields.summary,
+        status: "blocked_cycle",
+        blockedBy: cycleResult.cycleKeys,
+        priority: priorityValue,
+      });
+      return c.json({
+        action: "blocked_cycle",
+        ticketKey: issueKey,
+        cycle: cycleResult.cycleKeys,
+      });
+    }
+
+    // Dependency resolution — check if all blockers are done
+    const eligibility = await resolveEligibility(issueKey);
+    if (!eligibility.eligible) {
+      await upsertDispatchRun({
+        ticketKey: issueKey,
+        projectKey,
+        summary: issue.fields.summary,
+        status: "blocked",
+        blockedBy: eligibility.blockedBy,
+        priority: priorityValue,
+      });
+      return c.json({
+        action: "blocked",
+        ticketKey: issueKey,
+        blockedBy: eligibility.blockedBy,
+      });
+    }
+
     await upsertDispatchRun({
       ticketKey: issueKey,
       projectKey,
       summary: issue.fields.summary,
       status: "queued",
-      // Dependency resolution (blocked_by) is handled in HYDI-3
       blockedBy: [],
       priority: priorityValue,
     });

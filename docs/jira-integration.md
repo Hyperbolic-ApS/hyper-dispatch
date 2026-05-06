@@ -29,6 +29,8 @@ Issue links are fetched via the `issuelinks` field on `GET /rest/api/3/issue/{ke
 
 A ticket is eligible only when all its blockers have a status category of "Done".
 
+Cycles in the blocking graph (A blocks B blocks A) are detected via DFS before eligibility is checked. Tickets in a cycle are stored with status `blocked_cycle` and will not be queued automatically.
+
 ## Webhook Format
 
 See [configuration.md](./configuration.md) for the Jira Automation rule setup. The webhook payload is:
@@ -37,7 +39,7 @@ See [configuration.md](./configuration.md) for the Jira Automation rule setup. T
 {
   "issueKey": "PROJ-123",
   "projectKey": "PROJ",
-  "toStatus": "To Do"
+  "transitionTarget": "To Do"
 }
 ```
 

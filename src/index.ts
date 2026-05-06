@@ -6,6 +6,8 @@ import { webhookRouter } from "./webhook/jira.js";
 import { dashboardRouter } from "./routes/dashboard.js";
 import { apiRouter } from "./routes/api.js";
 import { configRouter } from "./routes/config.js";
+import { startSchedulerLoop } from "./orchestration/scheduler.js";
+import { startMonitorLoop } from "./orchestration/monitor.js";
 
 const app = new Hono();
 
@@ -20,6 +22,9 @@ app.route("/config", configRouter);
 
 async function main(): Promise<void> {
   await runMigrations();
+
+  startSchedulerLoop();
+  startMonitorLoop();
 
   serve(
     {
