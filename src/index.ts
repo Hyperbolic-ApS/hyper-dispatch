@@ -11,6 +11,9 @@ import { startMonitorLoop } from "./orchestration/monitor.js";
 
 const app = new Hono();
 
+// Health check
+app.get("/health", (c) => c.json({ status: "ok" }));
+
 // Redirect root to dashboard
 app.get("/", (c) => c.redirect("/dashboard"));
 

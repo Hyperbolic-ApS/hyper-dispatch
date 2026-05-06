@@ -1,37 +1,39 @@
 # Deployment
 
-HyperDispatch is deployed as a Docker container on Coolify.
+HyperDispatch is deployed as a Docker container on Coolify at `https://dispatch.tools.hyperbolic.dk`.
 
 ## Dockerfile
 
-```dockerfile
-FROM node:22-alpine
-WORKDIR /app
-COPY package*.json ./
-RUN npm ci --production
-COPY dist/ ./dist/
-EXPOSE 3000
-CMD ["node", "dist/index.js"]
-```
+The `Dockerfile` uses a two-stage build:
 
-## Build
+1. **Builder stage** (`node:22-alpine`): installs all dependencies (including devDependencies), compiles TypeScript via `npm run build`.
+2. **Production stage** (`node:22-alpine`): installs production dependencies only, copies the compiled `dist/` from the builder stage.
 
-TypeScript is compiled to `dist/` before building the Docker image:
+This keeps the final image free of build tooling.
 
-```sh
-npm run build
-```
+## Coolify Setup
 
-In Coolify, set the build command to `npm run build` or use a multi-stage Dockerfile.
-
-## Environment
-
-Set all required environment variables in Coolify's environment configuration. See [configuration.md](./configuration.md) for the full list.
+- **Context**: `hb-internal` (`https://tools.hyperbolic.dk`)
+- **Project**: Orchestra
+- **Build pack**: `dockerfile`
+- **GitHub App**: `hyperbolic-coolify` (org: `Hyperbolic-ApS`)
+- **Repository**: `Hyperbolic-ApS/hyper-dispatch`, branch `main`
+- **Domain**: `dispatch.tools.hyperbolic.dk`
+- **Exposed port**: `3000`
+- **Health check**: `GET /health` (returns `{"status":"ok"}`)
 
 ## Database
 
-HyperDispatch expects a PostgreSQL database. The connection string is provided via `DATABASE_URL`. Migrations are applied automatically on startup.
+HyperDispatch uses a dedicated database on the shared AWS RDS PostgreSQL 16.6 instance in `eu-west-1`:
 
-## Health Check
+- **Host**: `internal-projects-db.c5y2m8c6aios.eu-west-1.rds.amazonaws.com`
+- **Database**: `hyperdispatch`
+- **User**: `hyperdispatch_user`
 
-`GET /health` returns `200 OK` when the service is running and the database connection is healthy. Use this as Coolify's health check endpoint.
+RDS enforces SSL. The connection automatically enables SSL for non-localhost `DATABASE_URL` values.
+
+Migrations are applied automatically on startup via `runMigrations()`.
+
+## Environment Variables
+
+Set all required environment variables in Coolify's environment configuration. See [configuration.md](./configuration.md) for the full list.
