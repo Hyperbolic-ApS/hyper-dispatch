@@ -10,8 +10,9 @@ Displays all tracked dispatch runs in a table with:
 - Ticket key (linked to Jira)
 - Summary
 - Status badge (color-coded: green=succeeded, blue=running, yellow=queued, orange=blocked, red=failed)
-- Model used
 - Agent runtime (for running/completed entries)
+- Branch (`agent/{ticket-key}`)
+- Oz task link (opens the run task/session in Oz when available)
 - Session link (clickable, for live runs — opens Oz session)
 - PR link (for completed runs)
 - Blocked-by info (for blocked entries)

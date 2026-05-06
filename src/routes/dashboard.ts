@@ -85,7 +85,11 @@ dashboardRouter.get("/", async (c) => {
 
   const rows = runs.map((run) => {
     const ticketUrl = `${env.JIRA_BASE_URL}/browse/${run.ticket_key}`;
+    const branchName = `agent/${run.ticket_key}`;
     const runtime = formatDuration(run.spawned_at, run.completed_at);
+    const ozTaskLink = run.session_link
+      ? `<a href="${run.session_link}" target="_blank">Open task</a>`
+      : "-";
     const blockedByHtml =
       run.blocked_by && run.blocked_by.length > 0
         ? `<div class="blocked-by">Blocked by: ${run.blocked_by.join(", ")}</div>`
@@ -103,6 +107,8 @@ dashboardRouter.get("/", async (c) => {
       <td>${statusBadge(run.status)}</td>
       <td>${formatDate(run.spawned_at)}</td>
       <td>${runtime}</td>
+      <td><code>${branchName}</code></td>
+      <td>${ozTaskLink}</td>
       <td>${actionLink}${blockedByHtml}</td>
     </tr>`;
   });
@@ -131,11 +137,13 @@ dashboardRouter.get("/", async (c) => {
         <th>Status</th>
         <th>Spawned At</th>
         <th>Runtime</th>
+        <th>Branch</th>
+        <th>Oz Task</th>
         <th>Links</th>
       </tr>
     </thead>
     <tbody>
-      ${runs.length === 0 ? '<tr><td colspan="6" style="text-align:center;color:#6b7280">No runs yet</td></tr>' : rows.join("\n")}
+      ${runs.length === 0 ? '<tr><td colspan="8" style="text-align:center;color:#6b7280">No runs yet</td></tr>' : rows.join("\n")}
     </tbody>
   </table>
 </body>
