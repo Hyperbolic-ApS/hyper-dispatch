@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import { getAllDispatchRuns, getRunCountsByStatus } from "../db/config-queries.js";
 import { env } from "../config/env.js";
+import { brandIconSvg, faviconDataUri } from "./branding.js";
 
 export const dashboardRouter = new Hono();
 
@@ -37,7 +38,9 @@ function statusBadge(status: string): string {
 
 const CSS = `
   body { font-family: system-ui, sans-serif; margin: 0; padding: 20px; background: #f9fafb; color: #111; }
-  .header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; }
+  .header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; gap: 16px; }
+  .header-left { display: flex; align-items: center; gap: 12px; }
+  .brand-logo { width: 34px; height: 34px; flex: 0 0 auto; display: inline-flex; }
   .header h1 { margin: 0; }
   h1 { margin: 0 0 16px; font-size: 1.4rem; }
   .btn { display: inline-block; padding: 8px 18px; border-radius: 6px; font-size: 0.875rem; font-weight: 500; cursor: pointer; border: none; text-decoration: none; }
@@ -113,11 +116,15 @@ dashboardRouter.get("/", async (c) => {
   <meta charset="UTF-8">
   <meta http-equiv="refresh" content="15">
   <title>HyperDispatch</title>
+  <link rel="icon" href="${faviconDataUri()}">
   <style>${CSS}</style>
 </head>
 <body>
   <div class="header">
-    <h1>HyperDispatch Dashboard</h1>
+    <div class="header-left">
+      <span class="brand-logo">${brandIconSvg()}</span>
+      <h1>HyperDispatch Dashboard</h1>
+    </div>
     <a href="/config" class="btn btn-secondary">⚙ Configure Projects</a>
   </div>
   <div class="stats">

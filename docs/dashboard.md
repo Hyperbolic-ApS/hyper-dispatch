@@ -1,6 +1,7 @@
 # Dashboard & Config UI
 
 Both the dashboard and configuration UI are server-rendered HTML pages served by the same Hono instance.
+Both pages now share the HyperDispatch brand icon (header logo) and include the same favicon for browser tabs.
 
 ## Dashboard
 
