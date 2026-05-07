@@ -4,6 +4,10 @@ import { env } from "../config/env.js";
 import * as jira from "../jira/client.js";
 
 export const dashboardRouter = new Hono();
+const dashboardDateTimeFormatter = new Intl.DateTimeFormat(undefined, {
+  dateStyle: "medium",
+  timeStyle: "short",
+});
 
 function formatDuration(start: Date | null, end: Date | null): string {
   if (!start) return "-";
@@ -19,7 +23,7 @@ function formatDuration(start: Date | null, end: Date | null): string {
 
 function formatDate(d: Date | null): string {
   if (!d) return "-";
-  return d.toISOString().replace("T", " ").slice(0, 19) + " UTC";
+  return dashboardDateTimeFormatter.format(d);
 }
 
 function statusBadge(status: string): string {

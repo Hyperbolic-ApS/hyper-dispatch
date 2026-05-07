@@ -11,6 +11,7 @@ Displays all tracked dispatch runs in a table with:
 - Summary
 - Ticket status (live Jira workflow status, e.g. To Do / In Progress / Done)
 - Status badge (color-coded: green=succeeded, blue=running, yellow=queued, orange=blocked, red=failed)
+- Spawned-at timestamp in the viewer's local timezone, rendered in a short locale format without seconds
 - Agent runtime (for running/completed entries)
 - Branch (`agent/{ticket-key}`)
 - Oz task link (opens the run task/session in Oz when available)
