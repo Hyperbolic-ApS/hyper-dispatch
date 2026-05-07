@@ -1,0 +1,37 @@
+name: Oz PR Review Commenting
+
+on:
+  pull_request:
+    types: [opened, reopened, ready_for_review, synchronize]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: oz-pr-review-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  review:
+    if: ${{ !github.event.pull_request.draft }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run PR review commenting skill
+        uses: warpdotdev/oz-agent-action@v1
+        with:
+          skill: pr-review-commenting
+          prompt: |
+            Review pull request #${{ github.event.pull_request.number }} and publish feedback as a single top-level PR comment.
+
+            PR URL: ${{ github.event.pull_request.html_url }}
+            Base ref: ${{ github.event.pull_request.base.ref }}
+            Head ref: ${{ github.event.pull_request.head.ref }}
+            Base SHA: ${{ github.event.pull_request.base.sha }}
+            Head SHA: ${{ github.event.pull_request.head.sha }}
+
+            Ensure the comment follows the pr-review-commenting format with severity-grouped findings and explicit action items.
+          warp_api_key: ${{ secrets.WARP_API_KEY }}
+          profile: ${{ vars.WARP_AGENT_PROFILE || '' }}

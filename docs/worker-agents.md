@@ -62,6 +62,29 @@ To use this workflow in a target repo, copy `.github/workflows/agent-revision.ym
 - **Required secret**: `WARP_API_KEY` — Warp API key for spawning agents.
 - **Optional var**: `WARP_AGENT_PROFILE` — Oz agent profile (uses the Oz platform default if unset).
 
+## Automated PR Review Commenting
+
+HyperDispatch also includes a PR review workflow that runs the `pr-review-commenting` skill whenever a non-draft pull request is created or updated.
+
+Workflow file: `.github/workflows/oz-pr-review-commenting.yml`
+
+### Trigger conditions
+
+- `pull_request` events: `opened`, `reopened`, `ready_for_review`, `synchronize`
+- Draft PRs are skipped.
+
+### Behavior
+
+1. Runs `warpdotdev/oz-agent-action@v1` with `skill: pr-review-commenting`.
+2. Passes PR URL, number, base/head refs, and SHAs in the prompt context.
+3. Uses per-PR concurrency (`oz-pr-review-<pr-number>`) and cancels in-progress runs when new commits are pushed.
+4. Posts review feedback as a single top-level PR comment (or updates the existing run comment) following the skill contract.
+
+### Setup
+
+- **Required secret**: `WARP_API_KEY`
+- **Optional var**: `WARP_AGENT_PROFILE`
+
 ## Default Worker Skill
 
 The default skill (`.agents/skills/hyperdispatch-worker/SKILL.md`) implements a standard workflow:
