@@ -17,6 +17,10 @@ export async function runMigrations(): Promise<void> {
       ADD COLUMN IF NOT EXISTS jira_api_token TEXT,
       ADD COLUMN IF NOT EXISTS jira_email TEXT;
   `);
+  await sql.unsafe(`
+    ALTER TABLE dispatch_runs
+      ADD COLUMN IF NOT EXISTS pr_has_conflicts BOOLEAN;
+  `);
 
   console.log("Database migrations applied successfully");
 }

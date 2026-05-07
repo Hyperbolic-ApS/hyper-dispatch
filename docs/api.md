@@ -41,6 +41,7 @@ Returns all tracked dispatch runs as JSON.
     "status": "running",
     "model": "claude-sonnet-4-20250514",
     "runId": "abc-123",
+    "prHasConflicts": null,
     "sessionLink": "https://...",
     "spawnedAt": "2025-01-01T12:00:00Z",
     "runtime": "12m"

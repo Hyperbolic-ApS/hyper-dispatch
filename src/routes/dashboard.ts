@@ -46,6 +46,16 @@ function ticketStatusBadge(statusName: string | null, categoryKey: string | null
   const style = colors[categoryKey ?? ""] ?? "background:#e5e7eb;color:#000";
   return `<span style="padding:2px 8px;border-radius:4px;font-size:0.75rem;font-weight:600;${style}">${statusName}</span>`;
 }
+function prConflictBadge(hasConflicts: boolean | null, hasPr: boolean): string {
+  if (!hasPr) return "-";
+  if (hasConflicts === true) {
+    return '<span style="padding:2px 8px;border-radius:4px;font-size:0.75rem;font-weight:600;background:#ef4444;color:#fff">Merge conflicts</span>';
+  }
+  if (hasConflicts === false) {
+    return '<span style="padding:2px 8px;border-radius:4px;font-size:0.75rem;font-weight:600;background:#22c55e;color:#fff">No conflicts</span>';
+  }
+  return '<span style="padding:2px 8px;border-radius:4px;font-size:0.75rem;font-weight:600;background:#e5e7eb;color:#111">Unknown</span>';
+}
 
 const CSS = `
   body { font-family: system-ui, sans-serif; margin: 0; padding: 20px; background: #f9fafb; color: #111; }
@@ -144,6 +154,7 @@ dashboardRouter.get("/", async (c) => {
       <td>${runtime}</td>
       <td><code>${branchName}</code></td>
       <td>${ozTaskLink}</td>
+      <td>${prConflictBadge(run.pr_has_conflicts, Boolean(run.pr_url))}</td>
       <td>${actionLink}${blockedByHtml}</td>
     </tr>`;
   });
@@ -179,11 +190,12 @@ dashboardRouter.get("/", async (c) => {
         <th>Runtime</th>
         <th>Branch</th>
         <th>Oz Task</th>
+        <th>PR Mergeability</th>
         <th>Links</th>
       </tr>
     </thead>
     <tbody>
-      ${runs.length === 0 ? '<tr><td colspan="9" style="text-align:center;color:#6b7280">No runs yet</td></tr>' : rows.join("\n")}
+      ${runs.length === 0 ? '<tr><td colspan="10" style="text-align:center;color:#6b7280">No runs yet</td></tr>' : rows.join("\n")}
     </tbody>
   </table>
 </body>

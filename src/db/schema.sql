@@ -27,6 +27,7 @@ CREATE TABLE IF NOT EXISTS dispatch_runs (
   spawned_at     TIMESTAMPTZ,
   completed_at   TIMESTAMPTZ,
   pr_url         TEXT,
+  pr_has_conflicts BOOLEAN,
   session_link   TEXT,
   error          TEXT,
   created_at     TIMESTAMPTZ DEFAULT NOW(),

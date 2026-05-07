@@ -103,6 +103,11 @@ async function transitionMergedPrsToDone(): Promise<void> {
         repo: parsed.repo,
         pull_number: parsed.pullNumber,
       });
+      const hasMergeConflicts =
+        pullRequest.mergeable_state === "dirty" || pullRequest.mergeable === false;
+      await updateRunStatus(run.ticket_key, {
+        pr_has_conflicts: hasMergeConflicts,
+      });
 
       if (!pullRequest.merged_at) continue;
 
