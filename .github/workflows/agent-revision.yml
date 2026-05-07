@@ -78,7 +78,7 @@ jobs:
             core.setOutput("feedback", feedback);
 
       - name: Spawn revision agent
-        uses: warpdotdev/oz-agent-action@main
+        uses: warpdotdev/oz-agent-action@v1
         with:
           prompt: |
             You are addressing PR review feedback for ${{ steps.ticket.outputs.key }}.

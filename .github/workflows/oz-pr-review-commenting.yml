@@ -14,15 +14,35 @@ concurrency:
 
 jobs:
   review:
-    if: ${{ !github.event.pull_request.draft }}
+    if: >-
+      !github.event.pull_request.draft &&
+      github.event.pull_request.user.login != 'dependabot[bot]' &&
+      github.event.pull_request.user.login != 'github-actions[bot]'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
+      - name: Install and authenticate Atlassian CLI
+        run: |
+          curl -sLO "https://acli.atlassian.com/linux/latest/acli_linux_amd64/acli"
+          chmod +x ./acli
+          sudo mv ./acli /usr/local/bin/acli
+          echo "${{ secrets.JIRA_API_TOKEN }}" | acli jira auth login --site "${{ vars.JIRA_SITE }}" --email "${{ secrets.JIRA_EMAIL }}" --token
 
       - name: Run PR review commenting skill
         uses: warpdotdev/oz-agent-action@v1
         with:
           skill: pr-review-commenting
+          mcp: |
+            {
+              "ref": {
+                "url": "https://api.ref.tools/mcp",
+                "headers": { "x-ref-api-key": "${{ secrets.REF_API_KEY }}" }
+              },
+              "exa": {
+                "url": "https://mcp.exa.ai/mcp?exaApiKey=${{ secrets.EXA_API_KEY }}"
+              }
+            }
           prompt: |
             Review pull request #${{ github.event.pull_request.number }} and publish feedback as a single top-level PR comment.
 
@@ -31,6 +51,8 @@ jobs:
             Head ref: ${{ github.event.pull_request.head.ref }}
             Base SHA: ${{ github.event.pull_request.base.sha }}
             Head SHA: ${{ github.event.pull_request.head.sha }}
+
+            Requirements: Always read the PR description and any linked issues. Additionally, if the branch name matches agent/*, extract the Jira ticket key and use the Atlassian CLI (acli) to fetch requirements from Jira. Example: acli jira workitem view --key <TICKET_KEY>
 
             Ensure the comment follows the pr-review-commenting format with severity-grouped findings and explicit action items.
           warp_api_key: ${{ secrets.WARP_API_KEY }}

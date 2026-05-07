@@ -48,9 +48,9 @@ This skill focuses on the technical review itself. It does NOT post to GitHub. U
    - For cloud/SaaS platforms, assume the **latest API version** unless the repository explicitly pins a version.
    - Confirm the **target service version** used by this codebase (or latest when unpinned as above).
    - Never validate from memory.
-   - Documentation sources must be used in this order:
-     1. Ref MCP
-     2. Exo MCP
+   - Documentation sources must be used in this order (use whichever are available):
+     1. Ref MCP (when available)
+     2. Exa MCP (when available)
      3. Internet search (prefer vendor-owned official documentation)
    - Verify endpoint path, method, auth, request fields, response shape, pagination, limits, and error model against official docs for that exact version.
    - Flag any mismatch as at least `Important`, `Critical` if it can break runtime behavior or data correctness.
