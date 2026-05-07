@@ -116,15 +116,20 @@ Loop guardrails:
 ## 8. Test
 
 Run the project's test suite:
-- Check the README, package.json, Makefile, or CI config to find the test command. Do NOT assume a specific test framework.
-- Run the tests.
+- Read `docs/testing.md` before adding or modifying tests, and follow its layering + mocking conventions.
+- Framework is Vitest (`vitest run`).
+- Run:
+  - `npm test`
+  - `npm run test:coverage`
 - If tests fail due to your changes, fix them and re-run. Iterate until green.
-- If the ticket warrants new tests, add them.
+- Co-locate new tests as `<source>.test.ts` and reuse fixtures from `src/test/fixtures.ts`.
+- Backend tickets touching `src/orchestration/`, `src/webhook/`, `src/validator/`, or `src/db/queries.ts` MUST add or update unit tests.
 
 ## 9. Lint & Type Check
 
 Run the project's linting and type-checking commands:
 - Check package.json scripts, Makefile, or CI config for lint/typecheck commands.
+- Run `npm run typecheck` explicitly.
 - Fix any issues introduced by your changes.
 
 ## 10. Commit
