@@ -69,11 +69,14 @@ The default skill (`.warp/skills/hyperdispatch-worker/SKILL.md`) implements a st
 2. Create branch `agent/{ticket-key}`
 3. Investigate the codebase
 4. Plan the implementation
-5. Implement (scoped tightly to minimize parallel merge conflicts)
-6. Run tests, iterate on failures
-7. Run lint/type checks
-8. Commit with `{ticket-key}: {summary}` format + co-author line
-9. Create PR via `gh pr create` with Jira link in body
-10. Report PR URL via `report_pr` artifact
+5. Configure headless Playwright MCP for automated screenshots (`@playwright/mcp`, isolated Chromium profile, screenshot output directory)
+6. Implement (scoped tightly to minimize parallel merge conflicts)
+7. If UI files changed, run a screenshot-and-evaluate loop (desktop/mobile captures + accessibility snapshot) with a hard cap of 4 iterations
+8. Run tests, iterate on failures
+9. Run lint/type checks
+10. Commit with `{ticket-key}: {summary}` format + co-author line
+11. Create PR via `gh pr create` with Jira link in body, plus UI iteration trail for UI-touching tickets
+12. Upload final desktop/mobile screenshots to Jira and comment with embedded images for UI-touching tickets
+13. Report PR URL via `report_pr` artifact
 
 Projects are expected to customize or replace this skill as needed.
