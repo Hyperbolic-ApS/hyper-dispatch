@@ -5,7 +5,6 @@ import { env } from "../config/env.js";
 import * as jira from "../jira/client.js";
 import { getRunsByStatus, updateRunStatus, getProjectConfig } from "../db/queries.js";
 import { resolveJiraColumnMappings } from "../jira/columns.js";
-import * as jira from "../jira/client.js";
 
 const MONITOR_INTERVAL_MS = 30_000;
 
