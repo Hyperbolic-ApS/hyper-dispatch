@@ -4,10 +4,10 @@ import type {
   JiraBoardConfig,
   JiraField,
   JiraStatus,
+  JiraSearchResponse,
   JiraTransitionsResponse,
 } from "./types.js";
-
-class JiraApiError extends Error {
+export class JiraApiError extends Error {
   constructor(
     public readonly status: number,
     public readonly body: string,
@@ -128,4 +128,40 @@ export async function getFields(): Promise<JiraField[]> {
  */
 export async function getStatuses(): Promise<JiraStatus[]> {
   return jiraFetch<JiraStatus[]>("/rest/api/3/status");
+}
+
+function escapeJqlValue(raw: string): string {
+  return raw.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+}
+
+/**
+ * Find issues for a Jira project currently in the provided status name.
+ */
+export async function searchIssuesInStatus(
+  projectKey: string,
+  statusName: string,
+  fields: string[] = ["summary", "priority", "status"]
+): Promise<JiraIssue[]> {
+  const jql = `project = "${escapeJqlValue(projectKey)}" AND status = "${escapeJqlValue(statusName)}"`;
+  const pageSize = 100;
+  const issues: JiraIssue[] = [];
+  let startAt = 0;
+
+  while (true) {
+    const page = await jiraFetch<JiraSearchResponse>("/rest/api/3/search", {
+      method: "POST",
+      body: JSON.stringify({
+        jql,
+        startAt,
+        maxResults: pageSize,
+        fields,
+      }),
+    });
+
+    issues.push(...page.issues);
+    if (startAt + page.maxResults >= page.total) break;
+    startAt += page.maxResults;
+  }
+
+  return issues;
 }
