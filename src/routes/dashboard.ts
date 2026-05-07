@@ -51,6 +51,7 @@ const CSS = `
   body { font-family: system-ui, sans-serif; margin: 0; padding: 20px; background: #f9fafb; color: #111; }
   .header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; gap: 16px; }
   .header-left { display: flex; align-items: center; gap: 12px; }
+  .header-actions { display: flex; align-items: center; gap: 8px; }
   .brand-logo { width: 34px; height: 34px; flex: 0 0 auto; display: inline-flex; }
   .header h1 { margin: 0; }
   h1 { margin: 0 0 16px; font-size: 1.4rem; }
@@ -69,6 +70,7 @@ const CSS = `
 `;
 
 dashboardRouter.get("/", async (c) => {
+  const hideDone = c.req.query("hideDone") === "1";
   const [runs, countRows] = await Promise.all([
     getAllDispatchRuns(),
     getRunCountsByStatus(),
@@ -114,7 +116,13 @@ dashboardRouter.get("/", async (c) => {
     `<div class="stat" style="background:#6b7280;color:#fff">${counts.stale ?? 0} Stale</div>`,
   ].join("\n");
 
-  const rows = runs.map((run) => {
+  const visibleRuns = hideDone
+    ? runs.filter(
+        (run) => ticketStatusByKey.get(run.ticket_key)?.categoryKey !== "done"
+      )
+    : runs;
+
+  const rows = visibleRuns.map((run) => {
     const ticketUrl = `${env.JIRA_BASE_URL}/browse/${run.ticket_key}`;
     const branchName = `agent/${run.ticket_key}`;
     const runtime = formatDuration(run.spawned_at, run.completed_at);
@@ -163,7 +171,10 @@ dashboardRouter.get("/", async (c) => {
       <span class="brand-logo">${brandIconSvg()}</span>
       <h1>HyperDispatch Dashboard</h1>
     </div>
-    <a href="/config" class="btn btn-secondary">⚙ Configure Projects</a>
+    <div class="header-actions">
+      <a href="${hideDone ? "/dashboard" : "/dashboard?hideDone=1"}" class="btn btn-secondary">${hideDone ? "Show Done" : "Hide Done"}</a>
+      <a href="/config" class="btn btn-secondary">⚙ Configure Projects</a>
+    </div>
   </div>
   <div class="stats">
     ${statsHtml}
@@ -183,7 +194,7 @@ dashboardRouter.get("/", async (c) => {
       </tr>
     </thead>
     <tbody>
-      ${runs.length === 0 ? '<tr><td colspan="9" style="text-align:center;color:#6b7280">No runs yet</td></tr>' : rows.join("\n")}
+      ${visibleRuns.length === 0 ? '<tr><td colspan="9" style="text-align:center;color:#6b7280">No runs found for the current filter</td></tr>' : rows.join("\n")}
     </tbody>
   </table>
 </body>

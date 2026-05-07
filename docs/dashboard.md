@@ -18,6 +18,7 @@ Displays all tracked dispatch runs in a table with:
 - Session link (clickable, for live runs — opens Oz session)
 - PR link (for completed runs)
 - Blocked-by info (for blocked entries)
+- Header filter toggle to hide/show rows whose Jira ticket status category is `Done`
 
 Summary stats bar at the top: counts of running / queued / blocked / succeeded / failed.
 
