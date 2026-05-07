@@ -10,6 +10,11 @@ export interface ProjectConfig {
   github_repo: string;
   default_model: string | null;
   model_field_id: string | null;
+  backlog_column_name: string;
+  to_do_column_name: string;
+  in_progress_column_name: string;
+  in_review_column_name: string;
+  done_column_name: string;
   skills: string[];
   active: boolean;
   created_at: Date;
@@ -28,6 +33,7 @@ export interface DispatchRun {
   spawned_at: Date | null;
   completed_at: Date | null;
   pr_url: string | null;
+  pr_has_conflicts: boolean | null;
   session_link: string | null;
   error: string | null;
   created_at: Date;
@@ -129,7 +135,7 @@ export async function getRunsBlockedBy(ticketKey: string): Promise<DispatchRun[]
  */
 export async function updateRunStatus(
   ticketKey: string,
-  updates: Partial<Pick<DispatchRun, "status" | "blocked_by" | "run_id" | "model" | "spawned_at" | "completed_at" | "pr_url" | "session_link" | "error">>
+  updates: Partial<Pick<DispatchRun, "status" | "blocked_by" | "run_id" | "model" | "spawned_at" | "completed_at" | "pr_url" | "pr_has_conflicts" | "session_link" | "error">>
 ): Promise<DispatchRun | null> {
   const rows = await sql<DispatchRun[]>`
     UPDATE dispatch_runs
@@ -140,6 +146,7 @@ export async function updateRunStatus(
       spawned_at   = ${updates.spawned_at    != null ? updates.spawned_at    : sql`spawned_at`},
       completed_at = ${updates.completed_at  != null ? updates.completed_at  : sql`completed_at`},
       pr_url       = ${updates.pr_url        != null ? updates.pr_url        : sql`pr_url`},
+      pr_has_conflicts = ${updates.pr_has_conflicts !== undefined ? updates.pr_has_conflicts : sql`pr_has_conflicts`},
       session_link = ${updates.session_link  != null ? updates.session_link  : sql`session_link`},
       error        = ${updates.error         != null ? updates.error         : sql`error`},
       blocked_by   = ${updates.blocked_by !== undefined ? updates.blocked_by : sql`blocked_by`},
