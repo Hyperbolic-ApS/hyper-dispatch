@@ -5,6 +5,14 @@ import { brandIconSvg, faviconDataUri } from "./branding.js";
 import * as jira from "../jira/client.js";
 
 export const dashboardRouter = new Hono();
+const dashboardDateTimeFormatter = new Intl.DateTimeFormat(undefined, {
+  year: "numeric",
+  month: "short",
+  day: "numeric",
+  hour: "2-digit",
+  minute: "2-digit",
+  hour12: false,
+});
 
 function formatDuration(start: Date | null, end: Date | null): string {
   if (!start) return "-";
@@ -20,7 +28,7 @@ function formatDuration(start: Date | null, end: Date | null): string {
 
 function formatDate(d: Date | null): string {
   if (!d) return "-";
-  return d.toISOString().replace("T", " ").slice(0, 19) + " UTC";
+  return dashboardDateTimeFormatter.format(d);
 }
 
 function statusBadge(status: string): string {
