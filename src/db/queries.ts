@@ -10,6 +10,11 @@ export interface ProjectConfig {
   github_repo: string;
   default_model: string | null;
   model_field_id: string | null;
+  backlog_column_name: string;
+  to_do_column_name: string;
+  in_progress_column_name: string;
+  in_review_column_name: string;
+  done_column_name: string;
   skills: string[];
   active: boolean;
   created_at: Date;

@@ -1,4 +1,9 @@
 import { env } from "../config/env.js";
+import {
+  type JiraColumnMappings,
+  resolveJiraColumnMappings,
+  jiraNamesEqual,
+} from "../jira/columns.js";
 
 export interface JiraCredentials {
   email: string;
@@ -30,12 +35,11 @@ async function jiraFetch(path: string, creds: JiraCredentials): Promise<Response
   });
 }
 
-const REQUIRED_COLUMNS = ["Backlog", "To Do", "In Progress", "In Review", "Done"];
-const REQUIRED_STATUSES = ["Backlog", "To Do", "In Progress", "In Review", "Done"];
 
 export async function validateJiraProject(
   boardId: number,
   modelFieldId: string | null,
+  columnMappings?: Partial<JiraColumnMappings>,
   credentials?: JiraCredentials
 ): Promise<ValidationResult> {
   const creds: JiraCredentials = credentials ?? {
@@ -43,6 +47,15 @@ export async function validateJiraProject(
     apiToken: env.JIRA_API_TOKEN,
   };
   const checks: ValidationCheck[] = [];
+  const resolvedMappings = resolveJiraColumnMappings(columnMappings);
+  const requiredColumns = [
+    resolvedMappings.backlog,
+    resolvedMappings.toDo,
+    resolvedMappings.inProgress,
+    resolvedMappings.inReview,
+    resolvedMappings.done,
+  ];
+  const requiredStatuses = [...requiredColumns];
 
   // Check 1: Board columns
   try {
@@ -59,14 +72,14 @@ export async function validateJiraProject(
       };
       const columns: string[] =
         data.columnConfig?.columns?.map((c) => c.name) ?? [];
-      const missing = REQUIRED_COLUMNS.filter(
-        (req) => !columns.some((col) => col.toLowerCase() === req.toLowerCase())
+      const missing = requiredColumns.filter(
+        (req) => !columns.some((col) => jiraNamesEqual(col, req))
       );
       if (missing.length === 0) {
         checks.push({
           name: "Board columns",
           passed: true,
-          message: `All required columns present: ${REQUIRED_COLUMNS.join(", ")}`,
+          message: `All required columns present: ${requiredColumns.join(", ")}`,
         });
       } else {
         checks.push({
@@ -138,15 +151,14 @@ export async function validateJiraProject(
     } else {
       const statuses = (await res.json()) as Array<{ name: string }>;
       const statusNames = statuses.map((s) => s.name);
-      const missing = REQUIRED_STATUSES.filter(
-        (req) =>
-          !statusNames.some((s) => s.toLowerCase() === req.toLowerCase())
+      const missing = requiredStatuses.filter(
+        (req) => !statusNames.some((s) => jiraNamesEqual(s, req))
       );
       if (missing.length === 0) {
         checks.push({
           name: "Workflow statuses",
           passed: true,
-          message: `All required statuses present: ${REQUIRED_STATUSES.join(", ")}`,
+          message: `All required statuses present: ${requiredStatuses.join(", ")}`,
         });
       } else {
         checks.push({
