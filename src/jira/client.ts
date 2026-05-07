@@ -145,22 +145,22 @@ export async function searchIssuesInStatus(
   const jql = `project = "${escapeJqlValue(projectKey)}" AND status = "${escapeJqlValue(statusName)}"`;
   const pageSize = 100;
   const issues: JiraIssue[] = [];
-  let startAt = 0;
+  let nextPageToken: string | undefined;
 
   while (true) {
-    const page = await jiraFetch<JiraSearchResponse>("/rest/api/3/search", {
+    const page = await jiraFetch<JiraSearchResponse>("/rest/api/3/search/jql", {
       method: "POST",
       body: JSON.stringify({
         jql,
-        startAt,
         maxResults: pageSize,
         fields,
+        ...(nextPageToken ? { nextPageToken } : {}),
       }),
     });
 
     issues.push(...page.issues);
-    if (startAt + page.maxResults >= page.total) break;
-    startAt += page.maxResults;
+    if (!page.nextPageToken) break;
+    nextPageToken = page.nextPageToken;
   }
 
   return issues;
