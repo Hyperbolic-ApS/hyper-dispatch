@@ -9,6 +9,7 @@ import {
 } from "../db/config-queries.js";
 import { discoverSkills } from "../github/skills.js";
 import { validateJiraProject } from "../validator/jira.js";
+import { brandIconSvg, faviconDataUri } from "./branding.js";
 
 export const configRouter = new Hono();
 
@@ -16,6 +17,9 @@ export const configRouter = new Hono();
 
 const CSS = `
   body { font-family: system-ui, sans-serif; margin: 0; padding: 20px; background: #f9fafb; color: #111; }
+  .page-header { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; }
+  .brand-logo { width: 30px; height: 30px; flex: 0 0 auto; display: inline-flex; }
+  .brand-title { margin: 0; font-size: 1.1rem; font-weight: 700; }
   h1, h2 { margin: 0 0 16px; }
   h1 { font-size: 1.4rem; }
   h2 { font-size: 1.1rem; }
@@ -58,9 +62,14 @@ function layout(title: string, body: string): string {
 <head>
   <meta charset="UTF-8">
   <title>${title} — HyperDispatch</title>
+  <link rel="icon" href="${faviconDataUri()}">
   <style>${CSS}</style>
 </head>
 <body>
+  <div class="page-header">
+    <span class="brand-logo">${brandIconSvg()}</span>
+    <p class="brand-title">HyperDispatch</p>
+  </div>
   <nav>
     <a href="/dashboard">Dashboard</a>
     <a href="/config">Projects</a>
