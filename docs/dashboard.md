@@ -9,6 +9,7 @@ Both the dashboard and configuration UI are server-rendered HTML pages served by
 Displays all tracked dispatch runs in a table with:
 - Ticket key (linked to Jira)
 - Summary
+- Ticket status (live Jira workflow status, e.g. To Do / In Progress / Done)
 - Status badge (color-coded: green=succeeded, blue=running, yellow=queued, orange=blocked, red=failed)
 - Agent runtime (for running/completed entries)
 - Branch (`agent/{ticket-key}`)
@@ -21,7 +22,7 @@ Summary stats bar at the top: counts of running / queued / blocked / succeeded /
 
 Auto-refreshes every 15 seconds.
 
-**Data source**: Primarily the `dispatch_runs` table (fast). For `running` entries, enriched with live Oz run data (runtime, session link) from the Oz API.
+**Data source**: Primarily the `dispatch_runs` table (fast), enriched with live Jira issue status per ticket and Oz run data (runtime, session link) when available.
 
 ## Config UI
 
