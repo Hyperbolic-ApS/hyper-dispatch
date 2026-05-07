@@ -40,8 +40,8 @@ One global automation rule is needed (covers all projects):
        ```json
        {
          "issueKey": "{{issue.key}}",
-         "projectKey": "{{issue.fields.project.key}}",
-         "toStatus": "{{transition.to_status.name}}"
+         "projectKey": "{{issue.project.key}}",
+         "transitionTarget": "{{issue.status.name}}"
        }
        ```
 

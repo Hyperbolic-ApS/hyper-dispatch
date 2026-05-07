@@ -11,14 +11,14 @@ Receives Jira Automation webhook payloads on issue transitions.
 {
   "issueKey": "PROJ-123",
   "projectKey": "PROJ",
-  "toStatus": "To Do"
+  "transitionTarget": "To Do"
 }
 ```
 
 **Behavior:**
 - Looks up `projectKey` in `project_configs`. Ignores if not configured or inactive.
-- `toStatus = "To Do"` → dependency check → schedule or block.
-- `toStatus = "Done"` → re-evaluate any tickets blocked by this issue.
+- `transitionTarget = "To Do"` → dependency check → schedule or block.
+- `transitionTarget = "Done"` → re-evaluate any tickets blocked by this issue.
 
 **Response:** `200 OK` (acknowledgement, processing is async).
 
