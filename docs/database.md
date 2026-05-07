@@ -38,7 +38,7 @@ Tracks ticket → agent run state. Managed by the orchestration loop.
 | `project_key` | `TEXT` FK | References `project_configs.project_key` |
 | `summary` | `TEXT` | Ticket summary for dashboard display |
 | `run_id` | `TEXT` | Oz run ID (null if blocked/queued) |
-| `status` | `TEXT` | `blocked`, `queued`, `running`, `succeeded`, `failed`, `stale` |
+| `status` | `TEXT` | `blocked`, `blocked_cycle`, `queued`, `running`, `succeeded`, `failed`, `stale` |
 | `blocked_by` | `TEXT[]` | Blocking ticket keys (when status = blocked) |
 | `model` | `TEXT` | Model used for this run |
 | `priority` | `INTEGER` | From Jira priority (for queue ordering) |
@@ -55,6 +55,12 @@ Tracks ticket → agent run state. Managed by the orchestration loop.
 
 - `idx_status` on `dispatch_runs(status)` — for run monitor queries and concurrency counting.
 - `idx_project` on `dispatch_runs(project_key)` — for per-project dashboard filtering.
+
+## Status transition notes
+
+- `removeBlocker(ticketKey, blockerKey)` removes a blocker from `blocked_by`.
+- If that removal empties `blocked_by`, only runs currently in `blocked` auto-transition to `queued`.
+- Runs in `blocked_cycle` remain `blocked_cycle` after blocker removal (cycle status is not auto-cleared by this query path).
 
 ## Migrations
 

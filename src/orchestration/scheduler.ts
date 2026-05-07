@@ -45,7 +45,11 @@ async function reconcileProjectRuns(config: ProjectConfig): Promise<void> {
     try {
       await jira.getIssue(run.ticket_key, ["status"]);
     } catch (err) {
-      if (err instanceof jira.JiraApiError && err.status === 404) {
+      const status =
+        err instanceof jira.JiraApiError
+          ? err.status
+          : (err as { status?: number } | null)?.status;
+      if (status === 404) {
         await deleteRun(run.ticket_key);
         console.log(
           `[scheduler] Removed ${run.ticket_key} from dispatch_runs because it no longer exists in Jira.`
@@ -106,7 +110,12 @@ export async function processQueue(): Promise<number> {
     // (can happen if the DB is slightly stale between polling cycles)
     try {
       const config = projectsByKey.get(run.project_key);
-      if (!config) continue;
+      if (!config) {
+        console.warn(
+          `[scheduler] Skipping ${run.ticket_key}: project ${run.project_key} is not configured.`
+        );
+        continue;
+      }
 
       const issue = await jira.getIssue(run.ticket_key);
       await spawnAgent(run.ticket_key, config, issue);
