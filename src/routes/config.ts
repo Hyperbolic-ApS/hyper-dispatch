@@ -10,6 +10,7 @@ import {
 import { discoverSkills } from "../github/skills.js";
 import { validateJiraProject } from "../validator/jira.js";
 import { DEFAULT_JIRA_COLUMN_MAPPINGS } from "../jira/columns.js";
+import { brandIconSvg, faviconDataUri } from "./branding.js";
 
 export const configRouter = new Hono();
 
@@ -28,6 +29,9 @@ function formColumnName(
 
 const CSS = `
   body { font-family: system-ui, sans-serif; margin: 0; padding: 20px; background: #f9fafb; color: #111; }
+  .page-header { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; }
+  .brand-logo { width: 30px; height: 30px; flex: 0 0 auto; display: inline-flex; }
+  .brand-title { margin: 0; font-size: 1.1rem; font-weight: 700; }
   h1, h2 { margin: 0 0 16px; }
   h1 { font-size: 1.4rem; }
   h2 { font-size: 1.1rem; }
@@ -50,13 +54,15 @@ const CSS = `
   textarea { min-height: 80px; resize: vertical; }
   input[type=checkbox] { width: auto; }
   .hint { font-size: 0.75rem; color: #6b7280; margin-top: 3px; }
-  .btn { display: inline-block; padding: 8px 18px; border-radius: 6px; font-size: 0.875rem; font-weight: 500; cursor: pointer; border: none; }
-  .btn-primary { background: #3b82f6; color: #fff; }
+  .btn { display: inline-block; padding: 8px 18px; border-radius: 6px; font-size: 0.875rem; font-weight: 500; cursor: pointer; border: 1px solid transparent; text-decoration: none; line-height: 1.2; }
+  .btn-primary { background: #3b82f6; border-color: #2563eb; color: #fff; }
   .btn-primary:hover { background: #2563eb; }
-  .btn-danger { background: #ef4444; color: #fff; }
+  .btn-danger { background: #ef4444; border-color: #dc2626; color: #fff; }
   .btn-danger:hover { background: #dc2626; }
-  .btn-secondary { background: #e5e7eb; color: #111; }
+  .btn-secondary { background: #e5e7eb; border-color: #d1d5db; color: #111; }
   .btn-secondary:hover { background: #d1d5db; }
+  .btn:hover { text-decoration: none; }
+  .btn-small { padding: 6px 10px; font-size: 0.8rem; }
   .actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 20px; }
   .skill-list { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
   .skill-tag { background:#dbeafe;color:#1e40af;padding:3px 10px;border-radius:4px;font-size:0.75rem; }
@@ -70,13 +76,17 @@ function layout(title: string, body: string): string {
 <head>
   <meta charset="UTF-8">
   <title>${title} — HyperDispatch</title>
+  <link rel="icon" href="${faviconDataUri()}">
   <style>${CSS}</style>
 </head>
 <body>
+  <div class="page-header">
+    <span class="brand-logo">${brandIconSvg()}</span>
+    <p class="brand-title">HyperDispatch</p>
+  </div>
   <nav>
     <a href="/dashboard">Dashboard</a>
     <a href="/config">Projects</a>
-    <a href="/config/new">+ New Project</a>
   </nav>
   ${body}
 </body>
@@ -252,8 +262,8 @@ configRouter.get("/", async (c) => {
     <td><span class="badge ${cfg.active ? "badge-active" : "badge-inactive"}">${cfg.active ? "active" : "inactive"}</span></td>
     <td>${cfg.oz_env_id}</td>
     <td style="white-space:nowrap">
-      <a href="/config/${cfg.project_key}">Edit</a> ·
-      <a href="/config/${cfg.project_key}/validate" target="_blank">Validate</a>
+      <a href="/config/${cfg.project_key}" class="btn btn-secondary btn-small">Edit</a>
+      <a href="/config/${cfg.project_key}/validate" target="_blank" class="btn btn-secondary btn-small">Validate</a>
     </td>
   </tr>`
   );
@@ -294,6 +304,9 @@ configRouter.get("/", async (c) => {
     ${configs.length === 0 ? '<tr><td colspan="5" style="text-align:center;color:#6b7280">No projects configured yet. <a href="/config/new">Add one</a>.</td></tr>' : rows.join("\n")}
   </tbody>
 </table>
+<div class="actions">
+  <a href="/config/new" class="btn btn-primary">+ New Project</a>
+</div>
 ${webhookInstructions}`;
 
   return c.html(layout("Projects", body));

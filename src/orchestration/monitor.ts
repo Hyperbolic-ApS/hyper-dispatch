@@ -1,20 +1,13 @@
+import { Octokit } from "@octokit/rest";
 import OzAPI from "oz-agent-sdk";
 import type { ArtifactItem } from "oz-agent-sdk/resources/agent/runs.js";
 import { env } from "../config/env.js";
 import * as jira from "../jira/client.js";
 import { getRunsByStatus, updateRunStatus, getProjectConfig } from "../db/queries.js";
 import { resolveJiraColumnMappings } from "../jira/columns.js";
+import * as jira from "../jira/client.js";
 
 const MONITOR_INTERVAL_MS = 30_000;
-
-// Terminal run states from the Oz SDK
-const TERMINAL_STATES = new Set([
-  "SUCCEEDED",
-  "FAILED",
-  "ERROR",
-  "CANCELLED",
-  "BLOCKED",
-]);
 
 // Non-terminal (in-flight) states
 const INPROGRESS_STATES = new Set([
@@ -24,14 +17,22 @@ const INPROGRESS_STATES = new Set([
   "INPROGRESS",
 ]);
 
-// Lazy singleton
+// Lazy singletons
 let _ozClient: OzAPI | null = null;
+let _githubClient: Octokit | null = null;
 
 function getOzClient(): OzAPI {
   if (!_ozClient) {
     _ozClient = new OzAPI({ apiKey: env.WARP_API_KEY });
   }
   return _ozClient;
+}
+
+function getGithubClient(): Octokit {
+  if (!_githubClient) {
+    _githubClient = new Octokit({ auth: env.GITHUB_TOKEN });
+  }
+  return _githubClient;
 }
 
 /**
@@ -47,23 +48,106 @@ function extractPrUrl(artifacts: ArtifactItem[] | undefined): string | null {
   return null;
 }
 
+function parseGithubPullRequestUrl(
+  prUrl: string
+): { owner: string; repo: string; pullNumber: number } | null {
+  try {
+    const parsedUrl = new URL(prUrl);
+    const parts = parsedUrl.pathname.split("/").filter(Boolean);
+    if (parts.length < 4) return null;
+
+    const [owner, repo, type, pullNumberRaw] = parts;
+    if (!owner || !repo || type !== "pull" || !pullNumberRaw) return null;
+
+    const pullNumber = Number.parseInt(pullNumberRaw, 10);
+    if (!Number.isFinite(pullNumber)) return null;
+
+    return { owner, repo, pullNumber };
+  } catch {
+    return null;
+  }
+}
+
+async function transitionMergedPrsToDone(): Promise<void> {
+  const succeededRuns = await getRunsByStatus("succeeded");
+  if (succeededRuns.length === 0) return;
+
+  const githubClient = getGithubClient();
+
+  for (const run of succeededRuns) {
+    if (!run.pr_url) continue;
+
+    // Avoid repeated transition attempts once issue is already done.
+    try {
+      const issue = await jira.getIssue(run.ticket_key, ["status"]);
+      if (issue.fields.status.statusCategory.key === "done") {
+        continue;
+      }
+    } catch (err) {
+      console.warn(
+        `[monitor] Failed to load Jira status for ${run.ticket_key}:`,
+        err
+      );
+      continue;
+    }
+
+    const parsed = parseGithubPullRequestUrl(run.pr_url);
+    if (!parsed) {
+      console.warn(
+        `[monitor] Could not parse GitHub PR URL for ${run.ticket_key}: ${run.pr_url}`
+      );
+      continue;
+    }
+
+    try {
+      const { data: pullRequest } = await githubClient.pulls.get({
+        owner: parsed.owner,
+        repo: parsed.repo,
+        pull_number: parsed.pullNumber,
+      });
+
+      if (!pullRequest.merged_at) continue;
+
+      const transitions = await jira.getTransitions(run.ticket_key);
+      const doneTransition = transitions.transitions.find(
+        (transition) => transition.name === "Done"
+      );
+      if (!doneTransition) {
+        console.warn(`[monitor] No Done transition found for ${run.ticket_key}`);
+        continue;
+      }
+
+      await jira.transitionIssue(run.ticket_key, doneTransition.id);
+      console.log(
+        `[monitor] ${run.ticket_key} moved to Done after PR merge: ${run.pr_url}`
+      );
+    } catch (err) {
+      console.warn(
+        `[monitor] Failed to process merged PR for ${run.ticket_key}:`,
+        err
+      );
+    }
+  }
+}
+
 /**
  * Check all currently-running dispatch runs against the Oz SDK.
  * Updates DB status for completed/failed/stale runs.
+ * Also advances succeeded tickets to Done when their PR has been merged.
  */
 export async function checkRuns(): Promise<void> {
   const runningRuns = await getRunsByStatus("running");
-  if (runningRuns.length === 0) return;
 
-  const client = getOzClient();
-  const maxDurationMs = env.MAX_RUN_DURATION_HOURS * 60 * 60 * 1000;
-  const now = new Date();
+  if (runningRuns.length > 0) {
+    const client = getOzClient();
+    const maxDurationMs = env.MAX_RUN_DURATION_HOURS * 60 * 60 * 1000;
+    const now = new Date();
 
-  for (const run of runningRuns) {
-    if (!run.run_id) {
-      console.warn(`[monitor] Run for ${run.ticket_key} has no run_id, skipping.`);
-      continue;
-    }
+    for (const run of runningRuns) {
+      if (!run.run_id) {
+        console.warn(`[monitor] Run for ${run.ticket_key} has no run_id, skipping.`);
+        continue;
+      }
 
     try {
       const ozRun = await client.agent.runs.retrieve(run.run_id);
@@ -97,77 +181,77 @@ export async function checkRuns(): Promise<void> {
           if (inReview) {
             await jira.transitionIssue(run.ticket_key, inReview.id);
           }
-        } catch (err) {
-          console.warn(
-            `[monitor] Failed to transition ${run.ticket_key} to In Review:`,
-            err
-          );
-        }
-
-        console.log(
-          `[monitor] ${run.ticket_key} succeeded. PR: ${prUrl ?? "none"}`
-        );
-      } else if (state === "FAILED" || state === "ERROR") {
-        const errorMsg =
-          ozRun.status_message?.message ??
-          `Run ended with state: ${state}`;
-
-        await updateRunStatus(run.ticket_key, {
-          status: "failed",
-          completed_at: now,
-          error: errorMsg,
-          session_link: ozRun.session_link ?? null,
-        });
-
-        console.error(
-          `[monitor] ${run.ticket_key} failed: ${errorMsg}`
-        );
-      } else if (state === "CANCELLED") {
-        // Treat external cancellation as stale
-        await updateRunStatus(run.ticket_key, {
-          status: "stale",
-          completed_at: now,
-          error: "Run was cancelled externally.",
-          session_link: ozRun.session_link ?? null,
-        });
-
-        console.warn(`[monitor] ${run.ticket_key} was cancelled externally.`);
-      } else if (INPROGRESS_STATES.has(state)) {
-        // Check for staleness
-        if (run.spawned_at) {
-          const elapsed = now.getTime() - run.spawned_at.getTime();
-          if (elapsed > maxDurationMs) {
-            // Try to cancel the run
-            try {
-              await client.agent.runs.cancel(run.run_id);
-            } catch {
-              // Ignore cancel errors — run may have already finished
-            }
-
-            await updateRunStatus(run.ticket_key, {
-              status: "stale",
-              completed_at: now,
-              error: `Run exceeded max duration of ${env.MAX_RUN_DURATION_HOURS}h.`,
-              session_link: ozRun.session_link ?? null,
-            });
-
+          } catch (err) {
             console.warn(
-              `[monitor] ${run.ticket_key} marked stale (exceeded ${env.MAX_RUN_DURATION_HOURS}h).`
+              `[monitor] Failed to transition ${run.ticket_key} to In Review:`,
+              err
             );
           }
+
+          console.log(
+            `[monitor] ${run.ticket_key} succeeded. PR: ${prUrl ?? "none"}`
+          );
+        } else if (state === "FAILED" || state === "ERROR") {
+          const errorMsg =
+            ozRun.status_message?.message ?? `Run ended with state: ${state}`;
+
+          await updateRunStatus(run.ticket_key, {
+            status: "failed",
+            completed_at: now,
+            error: errorMsg,
+            session_link: ozRun.session_link ?? null,
+          });
+
+          console.error(`[monitor] ${run.ticket_key} failed: ${errorMsg}`);
+        } else if (state === "CANCELLED") {
+          // Treat external cancellation as stale
+          await updateRunStatus(run.ticket_key, {
+            status: "stale",
+            completed_at: now,
+            error: "Run was cancelled externally.",
+            session_link: ozRun.session_link ?? null,
+          });
+
+          console.warn(`[monitor] ${run.ticket_key} was cancelled externally.`);
+        } else if (INPROGRESS_STATES.has(state)) {
+          // Check for staleness
+          if (run.spawned_at) {
+            const elapsed = now.getTime() - run.spawned_at.getTime();
+            if (elapsed > maxDurationMs) {
+              // Try to cancel the run
+              try {
+                await client.agent.runs.cancel(run.run_id);
+              } catch {
+                // Ignore cancel errors — run may have already finished
+              }
+
+              await updateRunStatus(run.ticket_key, {
+                status: "stale",
+                completed_at: now,
+                error: `Run exceeded max duration of ${env.MAX_RUN_DURATION_HOURS}h.`,
+                session_link: ozRun.session_link ?? null,
+              });
+
+              console.warn(
+                `[monitor] ${run.ticket_key} marked stale (exceeded ${env.MAX_RUN_DURATION_HOURS}h).`
+              );
+            }
+          }
+        } else {
+          // BLOCKED or any unknown state — log and leave as-is
+          console.log(`[monitor] ${run.ticket_key} is in state ${state}, waiting.`);
         }
-      } else {
-        // BLOCKED or any unknown state — log and leave as-is
-        console.log(`[monitor] ${run.ticket_key} is in state ${state}, waiting.`);
+      } catch (err) {
+        console.error(
+          `[monitor] Error checking run for ${run.ticket_key}:`,
+          err
+        );
+        // Do not crash the loop — continue with remaining runs
       }
-    } catch (err) {
-      console.error(
-        `[monitor] Error checking run for ${run.ticket_key}:`,
-        err
-      );
-      // Do not crash the loop — continue with remaining runs
     }
   }
+
+  await transitionMergedPrsToDone();
 }
 
 /**

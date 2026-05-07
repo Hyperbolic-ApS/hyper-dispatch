@@ -1,6 +1,8 @@
 import { Hono } from "hono";
 import { getAllDispatchRuns, getRunCountsByStatus } from "../db/config-queries.js";
 import { env } from "../config/env.js";
+import { brandIconSvg, faviconDataUri } from "./branding.js";
+import * as jira from "../jira/client.js";
 
 export const dashboardRouter = new Hono();
 
@@ -34,10 +36,22 @@ function statusBadge(status: string): string {
   const style = colors[status] ?? "background:#e5e7eb;color:#000";
   return `<span style="padding:2px 8px;border-radius:4px;font-size:0.75rem;font-weight:600;${style}">${status}</span>`;
 }
+function ticketStatusBadge(statusName: string | null, categoryKey: string | null): string {
+  if (!statusName) return "-";
+  const colors: Record<string, string> = {
+    done: "background:#22c55e;color:#fff",
+    "in-flight": "background:#3b82f6;color:#fff",
+    "new": "background:#eab308;color:#000",
+  };
+  const style = colors[categoryKey ?? ""] ?? "background:#e5e7eb;color:#000";
+  return `<span style="padding:2px 8px;border-radius:4px;font-size:0.75rem;font-weight:600;${style}">${statusName}</span>`;
+}
 
 const CSS = `
   body { font-family: system-ui, sans-serif; margin: 0; padding: 20px; background: #f9fafb; color: #111; }
-  .header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; }
+  .header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; gap: 16px; }
+  .header-left { display: flex; align-items: center; gap: 12px; }
+  .brand-logo { width: 34px; height: 34px; flex: 0 0 auto; display: inline-flex; }
   .header h1 { margin: 0; }
   h1 { margin: 0 0 16px; font-size: 1.4rem; }
   .btn { display: inline-block; padding: 8px 18px; border-radius: 6px; font-size: 0.875rem; font-weight: 500; cursor: pointer; border: none; text-decoration: none; }
@@ -59,6 +73,23 @@ dashboardRouter.get("/", async (c) => {
     getAllDispatchRuns(),
     getRunCountsByStatus(),
   ]);
+  const ticketStatusByKey = new Map<string, { name: string; categoryKey: string }>();
+  await Promise.all(
+    runs.map(async (run) => {
+      try {
+        const issue = await jira.getIssue(run.ticket_key, ["status"]);
+        const status = issue.fields.status;
+        if (status?.name && status?.statusCategory?.key) {
+          ticketStatusByKey.set(run.ticket_key, {
+            name: status.name,
+            categoryKey: status.statusCategory.key,
+          });
+        }
+      } catch {
+        // Best effort only — dashboard should still render if Jira is unavailable.
+      }
+    })
+  );
 
   const counts: Record<string, number> = {
     running: 0,
@@ -85,7 +116,11 @@ dashboardRouter.get("/", async (c) => {
 
   const rows = runs.map((run) => {
     const ticketUrl = `${env.JIRA_BASE_URL}/browse/${run.ticket_key}`;
+    const branchName = `agent/${run.ticket_key}`;
     const runtime = formatDuration(run.spawned_at, run.completed_at);
+    const ozTaskLink = run.session_link
+      ? `<a href="${run.session_link}" target="_blank">Open task</a>`
+      : "-";
     const blockedByHtml =
       run.blocked_by && run.blocked_by.length > 0
         ? `<div class="blocked-by">Blocked by: ${run.blocked_by.join(", ")}</div>`
@@ -100,9 +135,15 @@ dashboardRouter.get("/", async (c) => {
     return `<tr>
       <td><a href="${ticketUrl}" target="_blank">${run.ticket_key}</a></td>
       <td>${run.summary ? run.summary.slice(0, 80) : "-"}</td>
+      <td>${ticketStatusBadge(
+        ticketStatusByKey.get(run.ticket_key)?.name ?? null,
+        ticketStatusByKey.get(run.ticket_key)?.categoryKey ?? null
+      )}</td>
       <td>${statusBadge(run.status)}</td>
       <td>${formatDate(run.spawned_at)}</td>
       <td>${runtime}</td>
+      <td><code>${branchName}</code></td>
+      <td>${ozTaskLink}</td>
       <td>${actionLink}${blockedByHtml}</td>
     </tr>`;
   });
@@ -113,11 +154,15 @@ dashboardRouter.get("/", async (c) => {
   <meta charset="UTF-8">
   <meta http-equiv="refresh" content="15">
   <title>HyperDispatch</title>
+  <link rel="icon" href="${faviconDataUri()}">
   <style>${CSS}</style>
 </head>
 <body>
   <div class="header">
-    <h1>HyperDispatch Dashboard</h1>
+    <div class="header-left">
+      <span class="brand-logo">${brandIconSvg()}</span>
+      <h1>HyperDispatch Dashboard</h1>
+    </div>
     <a href="/config" class="btn btn-secondary">⚙ Configure Projects</a>
   </div>
   <div class="stats">
@@ -128,14 +173,17 @@ dashboardRouter.get("/", async (c) => {
       <tr>
         <th>Ticket</th>
         <th>Summary</th>
+        <th>Ticket Status</th>
         <th>Status</th>
         <th>Spawned At</th>
         <th>Runtime</th>
+        <th>Branch</th>
+        <th>Oz Task</th>
         <th>Links</th>
       </tr>
     </thead>
     <tbody>
-      ${runs.length === 0 ? '<tr><td colspan="6" style="text-align:center;color:#6b7280">No runs yet</td></tr>' : rows.join("\n")}
+      ${runs.length === 0 ? '<tr><td colspan="9" style="text-align:center;color:#6b7280">No runs yet</td></tr>' : rows.join("\n")}
     </tbody>
   </table>
 </body>
