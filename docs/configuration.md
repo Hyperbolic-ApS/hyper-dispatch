@@ -26,6 +26,7 @@ Key fields:
 - **Model override field** — Jira custom field ID (e.g., `customfield_10050`). If a ticket has a value in this field, it overrides the project default.
 - **Jira column name mappings** — per-project names for Backlog, To Do, In Progress, In Review, and Done. Defaults match Jira defaults, but can be customized for projects that renamed workflow columns/statuses.
 - **Skills** — selected from the GitHub repo's skill directories via the config UI.
+- **MCP servers JSON** — optional JSON object of MCP server definitions. On save, the config UI validates that the value is valid JSON and is an object; malformed JSON shows an error with the failing line number.
 
 ## Jira Automation Setup
 

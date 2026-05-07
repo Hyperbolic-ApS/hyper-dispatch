@@ -16,6 +16,7 @@ export interface ProjectConfig {
   in_review_column_name: string;
   done_column_name: string;
   skills: string[];
+  mcp_servers: Record<string, unknown> | null;
   active: boolean;
   created_at: Date;
   updated_at: Date;

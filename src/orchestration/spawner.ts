@@ -4,6 +4,7 @@ import * as jira from "../jira/client.js";
 import { updateRunStatus } from "../db/queries.js";
 import type { ProjectConfig } from "../db/queries.js";
 import type { JiraIssue } from "../jira/types.js";
+import type { McpServerConfig } from "oz-agent-sdk/resources/agent/agent";
 import { resolveJiraColumnMappings } from "../jira/columns.js";
 
 // Lazy singleton — avoids constructing the client at module load time
@@ -93,6 +94,7 @@ export async function spawnAgent(
 
   const model = resolveModel(issue, config);
   const prompt = buildPrompt(ticketKey, issue);
+  const mcpServers = config.mcp_servers as Record<string, McpServerConfig> | null;
 
   // First skill in the array is the run skill (oz-agent-sdk accepts one skill)
   const skillSpec = config.skills.length > 0 ? config.skills[0] : undefined;
@@ -104,6 +106,7 @@ export async function spawnAgent(
       environment_id: config.oz_env_id,
       ...(model ? { model_id: model } : {}),
       ...(skillSpec ? { skill_spec: skillSpec } : {}),
+      ...(mcpServers ? { mcp_servers: mcpServers } : {}),
     },
   });
 

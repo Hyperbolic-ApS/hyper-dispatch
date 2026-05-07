@@ -12,6 +12,7 @@ CREATE TABLE IF NOT EXISTS project_configs (
   in_review_column_name TEXT NOT NULL DEFAULT 'In Review',
   done_column_name TEXT NOT NULL DEFAULT 'Done',
   skills         TEXT[] NOT NULL DEFAULT ARRAY[]::TEXT[],
+  mcp_servers    JSONB,
   github_pat     TEXT,
   jira_api_token TEXT,
   jira_email     TEXT,

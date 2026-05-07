@@ -23,6 +23,7 @@ Stores per-project configuration. Managed via the config UI.
 | `in_review_column_name` | `TEXT` | Jira in-review column/status name (default: `In Review`) |
 | `done_column_name` | `TEXT` | Jira done column/status name (default: `Done`) |
 | `skills` | `TEXT[]` | Skill specs (e.g., `["org/repo:hyperdispatch-worker"]`) |
+| `mcp_servers` | `JSONB` | Optional MCP server map passed to Oz as `mcp_servers` when spawning |
 | `active` | `BOOLEAN` | Whether this project is active |
 | `created_at` | `TIMESTAMPTZ` | Row creation time |
 | `updated_at` | `TIMESTAMPTZ` | Last update time |

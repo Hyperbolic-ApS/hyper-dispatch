@@ -39,6 +39,10 @@ The config UI allows managing project configurations:
   - Discovery uses the current in-form `GitHub Repo` value immediately (no save required)
   - If entered, the current in-form `GitHub PAT` is used for discovery before save
 - Set default model and model override field
+- Configure optional **MCP Servers JSON** in the project form
+  - Must be a valid JSON object
+  - Save is blocked for invalid JSON
+  - Validation errors include the JSON line number
 - Validate Jira board setup
 
 ## JSON API

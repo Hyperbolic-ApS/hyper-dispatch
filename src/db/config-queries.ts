@@ -14,6 +14,7 @@ export interface ProjectConfig {
   in_review_column_name: string;
   done_column_name: string;
   skills: string[];
+  mcp_servers: Record<string, unknown> | null;
   github_pat: string | null;
   jira_api_token: string | null;
   jira_email: string | null;
@@ -36,6 +37,7 @@ export interface ProjectConfigInput {
   in_review_column_name?: string;
   done_column_name?: string;
   skills?: string[];
+  mcp_servers?: Record<string, unknown> | null;
   github_pat?: string | null;
   jira_api_token?: string | null;
   jira_email?: string | null;
@@ -99,6 +101,7 @@ export async function createProjectConfig(
       in_review_column_name,
       done_column_name,
       skills,
+      mcp_servers,
       github_pat,
       jira_api_token,
       jira_email,
@@ -117,6 +120,7 @@ export async function createProjectConfig(
       ${config.in_review_column_name ?? "In Review"},
       ${config.done_column_name ?? "Done"},
       ${sql.array(config.skills ?? [])},
+      ${config.mcp_servers ? JSON.stringify(config.mcp_servers) : null}::jsonb,
       ${config.github_pat ?? null},
       ${config.jira_api_token ?? null},
       ${config.jira_email ?? null},
@@ -150,6 +154,7 @@ export async function updateProjectConfig(
       in_review_column_name = ${merged.in_review_column_name ?? "In Review"},
       done_column_name = ${merged.done_column_name ?? "Done"},
       skills         = ${sql.array(merged.skills ?? [])},
+      mcp_servers    = ${merged.mcp_servers ? JSON.stringify(merged.mcp_servers) : null}::jsonb,
       github_pat     = ${merged.github_pat ?? null},
       jira_api_token = ${merged.jira_api_token ?? null},
       jira_email     = ${merged.jira_email ?? null},
