@@ -11,6 +11,7 @@ export interface ProjectConfig {
   default_model: string | null;
   model_field_id: string | null;
   skills: string[];
+  mcp_servers: Record<string, unknown> | null;
   active: boolean;
   created_at: Date;
   updated_at: Date;

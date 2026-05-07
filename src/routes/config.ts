@@ -56,6 +56,7 @@ const CSS = `
   .skill-tag { background:#dbeafe;color:#1e40af;padding:3px 10px;border-radius:4px;font-size:0.75rem; }
   #skills-picker { display: none; margin-top: 8px; border: 1px solid #d1d5db; border-radius: 6px; padding: 8px; background: #f9fafb; max-height: 200px; overflow-y: auto; }
   #skills-picker label { font-weight: normal; display: flex; align-items: center; gap: 6px; padding: 4px 0; cursor: pointer; }
+  .error-text { color: #b91c1c; font-size: 0.75rem; margin-top: 4px; }
 `;
 
 function layout(title: string, body: string): string {
@@ -81,6 +82,58 @@ function layout(title: string, body: string): string {
 </html>`;
 }
 
+function escapeHtml(value: string): string {
+  return value
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;");
+}
+
+function parseLineNumberFromJsonError(input: string, errorMessage: string): number | null {
+  const lineMatch = errorMessage.match(/line\s+(\d+)/i);
+  if (lineMatch) {
+    return Number(lineMatch[1]);
+  }
+
+  const positionMatch = errorMessage.match(/position\s+(\d+)/i);
+  if (positionMatch) {
+    const position = Number(positionMatch[1]);
+    if (Number.isFinite(position) && position >= 0) {
+      return input.slice(0, position).split(/\r?\n/).length;
+    }
+  }
+
+  return null;
+}
+
+function parseMcpServersFromInput(raw: string): Record<string, unknown> | null {
+  const trimmed = raw.trim();
+  if (!trimmed) return null;
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(trimmed);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    const line = parseLineNumberFromJsonError(trimmed, message);
+    const prefix = line ? `Invalid MCP servers JSON (line ${line})` : "Invalid MCP servers JSON";
+    throw new Error(`${prefix}: ${message}`);
+  }
+
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+    throw new Error("Invalid MCP servers JSON: expected a JSON object at line 1");
+  }
+
+  return parsed as Record<string, unknown>;
+}
+
+function formatMcpServersForTextarea(
+  mcpServers: Record<string, unknown> | null | undefined
+): string {
+  if (!mcpServers) return "";
+  return JSON.stringify(mcpServers, null, 2);
+}
+
 function projectForm(
   action: string,
   config?: Partial<ProjectConfig>,
@@ -88,6 +141,7 @@ function projectForm(
 ): string {
   const v = config ?? {};
   const skillsValue = (v.skills ?? []).join(", ");
+  const mcpServersValue = formatMcpServersForTextarea(v.mcp_servers);
 
   const skillsPickerScript = `
 <script>
@@ -138,6 +192,49 @@ function syncSkills() {
   const selected = Array.from(boxes).filter(b => b.checked).map(b => b.value);
   document.getElementById('skills').value = selected.join(', ');
 }
+function parseLineFromError(raw, errorMessage) {
+  const lineMatch = errorMessage.match(/line\\s+(\\d+)/i);
+  if (lineMatch) return Number(lineMatch[1]);
+  const posMatch = errorMessage.match(/position\\s+(\\d+)/i);
+  if (!posMatch) return null;
+  const position = Number(posMatch[1]);
+  if (!Number.isFinite(position) || position < 0) return null;
+  return raw.slice(0, position).split(/\\r?\\n/).length;
+}
+function validateMcpServersField() {
+  const input = document.getElementById('mcp_servers');
+  const error = document.getElementById('mcp_servers_error');
+  const raw = input.value.trim();
+  error.textContent = '';
+  if (!raw) return true;
+  try {
+    const parsed = JSON.parse(raw);
+    if (parsed === null || Array.isArray(parsed) || typeof parsed !== 'object') {
+      error.textContent = 'MCP servers must be a JSON object (line 1).';
+      return false;
+    }
+    return true;
+  } catch (e) {
+    const message = e instanceof Error ? e.message : String(e);
+    const line = parseLineFromError(raw, message);
+    error.textContent = line
+      ? 'Invalid MCP servers JSON at line ' + line + ': ' + message
+      : 'Invalid MCP servers JSON: ' + message;
+    return false;
+  }
+}
+document.addEventListener('DOMContentLoaded', () => {
+  const form = document.querySelector('form');
+  const input = document.getElementById('mcp_servers');
+  if (input) input.addEventListener('input', validateMcpServersField);
+  if (form) {
+    form.addEventListener('submit', (event) => {
+      if (!validateMcpServersField()) {
+        event.preventDefault();
+      }
+    });
+  }
+});
 </script>`;
 
   return `
@@ -185,6 +282,12 @@ function syncSkills() {
       <div class="hint">e.g. owner/repo:skill-name, owner/repo:other-skill</div>
       <button type="button" id="discover-btn" class="btn btn-secondary" style="margin-top:6px" onclick="loadSkills()">Discover Skills</button>
       <div id="skills-picker"></div>
+    </div>
+    <div class="field">
+      <label for="mcp_servers">MCP Servers JSON</label>
+      <textarea id="mcp_servers" name="mcp_servers" spellcheck="false">${escapeHtml(mcpServersValue)}</textarea>
+      <div class="hint">Optional JSON object passed to the spawned agent under <code>mcp_servers</code>.</div>
+      <div id="mcp_servers_error" class="error-text"></div>
     </div>
     <div class="field">
       <label for="github_pat">GitHub PAT <span style="font-weight:400;color:#6b7280">(per-project override)</span></label>
@@ -286,12 +389,20 @@ configRouter.get("/new", (c) => {
 
 configRouter.post("/", async (c) => {
   const form = await c.req.parseBody();
+  const mcpServersRaw = String(form.mcp_servers ?? "");
 
   const skillsRaw = String(form.skills ?? "");
   const skills = skillsRaw
     .split(",")
     .map((s) => s.trim())
     .filter(Boolean);
+  let mcpServers: Record<string, unknown> | null;
+  try {
+    mcpServers = parseMcpServersFromInput(mcpServersRaw);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return c.text(message, 400);
+  }
 
   await createProjectConfig({
     project_key: String(form.project_key),
@@ -302,6 +413,7 @@ configRouter.post("/", async (c) => {
     default_model: form.default_model ? String(form.default_model) : null,
     model_field_id: form.model_field_id ? String(form.model_field_id) : null,
     skills,
+    mcp_servers: mcpServers,
     github_pat: form.github_pat ? String(form.github_pat) : null,
     jira_api_token: form.jira_api_token ? String(form.jira_api_token) : null,
     jira_email: form.jira_email ? String(form.jira_email) : null,
@@ -337,12 +449,20 @@ ${projectForm(`/config/${config.project_key}`, config, config.project_key)}
 configRouter.post("/:projectKey", async (c) => {
   const { projectKey } = c.req.param();
   const form = await c.req.parseBody();
+  const mcpServersRaw = String(form.mcp_servers ?? "");
 
   const skillsRaw = String(form.skills ?? "");
   const skills = skillsRaw
     .split(",")
     .map((s) => s.trim())
     .filter(Boolean);
+  let mcpServers: Record<string, unknown> | null;
+  try {
+    mcpServers = parseMcpServersFromInput(mcpServersRaw);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return c.text(message, 400);
+  }
 
   // Only update tokens if a new value was submitted — empty field means "keep existing"
   const tokenUpdates: { github_pat?: string | null; jira_api_token?: string | null; jira_email?: string | null } = {};
@@ -358,6 +478,7 @@ configRouter.post("/:projectKey", async (c) => {
     default_model: form.default_model ? String(form.default_model) : null,
     model_field_id: form.model_field_id ? String(form.model_field_id) : null,
     skills,
+    mcp_servers: mcpServers,
     ...tokenUpdates,
     active: form.active === "true",
   });

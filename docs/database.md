@@ -18,6 +18,7 @@ Stores per-project configuration. Managed via the config UI.
 | `default_model` | `TEXT` | Default LLM model ID (null = Oz default) |
 | `model_field_id` | `TEXT` | Jira custom field ID for per-ticket model override |
 | `skills` | `TEXT[]` | Skill specs (e.g., `["org/repo:hyperdispatch-worker"]`) |
+| `mcp_servers` | `JSONB` | Optional MCP server map passed to Oz as `mcp_servers` when spawning |
 | `active` | `BOOLEAN` | Whether this project is active |
 | `created_at` | `TIMESTAMPTZ` | Row creation time |
 | `updated_at` | `TIMESTAMPTZ` | Last update time |

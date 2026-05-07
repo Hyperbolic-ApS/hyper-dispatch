@@ -9,6 +9,7 @@ export interface ProjectConfig {
   default_model: string | null;
   model_field_id: string | null;
   skills: string[];
+  mcp_servers: Record<string, unknown> | null;
   github_pat: string | null;
   jira_api_token: string | null;
   jira_email: string | null;
@@ -26,6 +27,7 @@ export interface ProjectConfigInput {
   default_model?: string | null;
   model_field_id?: string | null;
   skills?: string[];
+  mcp_servers?: Record<string, unknown> | null;
   github_pat?: string | null;
   jira_api_token?: string | null;
   jira_email?: string | null;
@@ -83,6 +85,7 @@ export async function createProjectConfig(
       default_model,
       model_field_id,
       skills,
+      mcp_servers,
       github_pat,
       jira_api_token,
       jira_email,
@@ -96,6 +99,7 @@ export async function createProjectConfig(
       ${config.default_model ?? null},
       ${config.model_field_id ?? null},
       ${sql.array(config.skills ?? [])},
+      ${config.mcp_servers ? JSON.stringify(config.mcp_servers) : null}::jsonb,
       ${config.github_pat ?? null},
       ${config.jira_api_token ?? null},
       ${config.jira_email ?? null},
@@ -124,6 +128,7 @@ export async function updateProjectConfig(
       default_model  = ${merged.default_model ?? null},
       model_field_id = ${merged.model_field_id ?? null},
       skills         = ${sql.array(merged.skills ?? [])},
+      mcp_servers    = ${merged.mcp_servers ? JSON.stringify(merged.mcp_servers) : null}::jsonb,
       github_pat     = ${merged.github_pat ?? null},
       jira_api_token = ${merged.jira_api_token ?? null},
       jira_email     = ${merged.jira_email ?? null},

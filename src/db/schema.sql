@@ -7,6 +7,7 @@ CREATE TABLE IF NOT EXISTS project_configs (
   default_model  TEXT,
   model_field_id TEXT,
   skills         TEXT[] NOT NULL DEFAULT ARRAY[]::TEXT[],
+  mcp_servers    JSONB,
   github_pat     TEXT,
   jira_api_token TEXT,
   jira_email     TEXT,

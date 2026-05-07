@@ -9,6 +9,7 @@ The Agent Spawner creates a run via the `oz-agent-sdk` with:
 - **environment_id**: from the project config.
 - **model_id**: per-ticket custom field → project default → Oz default (cascade).
 - **skill**: from the project config (one or more skill specs).
+- **mcp_servers**: optional map from project config (`mcp_servers`) when set.
 - **prompt**: constructed from the Jira ticket (key, summary, description, acceptance criteria).
 
 ## Skill Contract
