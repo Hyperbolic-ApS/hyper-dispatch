@@ -16,4 +16,4 @@ This folder contains the living documentation for HyperDispatch. It is the canon
 
 ## Keeping Docs Up to Date
 
-This documentation must stay in sync with the implementation. A project skill (`.warp/skills/keep-docs-updated/SKILL.md`) enforces this: any code change that affects behavior, APIs, schema, or configuration must include corresponding documentation updates in this folder.
+This documentation must stay in sync with the implementation. A project skill (`.agents/skills/keep-docs-updated/SKILL.md`) enforces this: any code change that affects behavior, APIs, schema, or configuration must include corresponding documentation updates in this folder.
