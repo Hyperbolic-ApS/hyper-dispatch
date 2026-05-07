@@ -245,8 +245,8 @@ configRouter.get("/", async (c) => {
   </ol>
   <pre style="background:#1e293b;color:#e2e8f0;padding:16px;border-radius:6px;font-size:0.8rem;overflow-x:auto;margin:0 0 12px">{
   &quot;issueKey&quot;: &quot;{{issue.key}}&quot;,
-  &quot;projectKey&quot;: &quot;{{issue.fields.project.key}}&quot;,
-  &quot;transitionTarget&quot;: &quot;{{transition.to_status.name}}&quot;
+  &quot;projectKey&quot;: &quot;{{issue.project.key}}&quot;,
+  &quot;transitionTarget&quot;: &quot;{{issue.status.name}}&quot;
 }</pre>
   <p style="margin:0;font-size:0.8rem;color:#6b7280">ℹ️ HyperDispatch silently ignores webhooks for projects that are not configured above.</p>
 </div>`;
