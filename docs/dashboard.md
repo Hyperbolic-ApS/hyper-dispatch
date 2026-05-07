@@ -31,6 +31,8 @@ Auto-refreshes every 15 seconds.
 
 The config UI allows managing project configurations:
 - Add/edit/deactivate projects
+- Projects overview (`/config`) shows the **+ New Project** button below the project list table
+- Projects overview row actions (Edit/Validate) are rendered as button-style controls with filled backgrounds and borders for clearer affordance
 - Select skills from the GitHub repo (dynamic dropdown)
   - Discovery uses the current in-form `GitHub Repo` value immediately (no save required)
   - If entered, the current in-form `GitHub PAT` is used for discovery before save
