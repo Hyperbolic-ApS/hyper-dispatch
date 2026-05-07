@@ -9,6 +9,15 @@ import {
 } from "../db/config-queries.js";
 import { discoverSkills } from "../github/skills.js";
 import { validateJiraProject } from "../validator/jira.js";
+import { getAuthUser, type AuthUser } from "../auth/middleware.js";
+import {
+  createInvite,
+  deleteSessionsForUser,
+  deleteUser,
+  listUsers,
+  updateUserRole,
+  type UserRole,
+} from "../auth/queries.js";
 
 export const configRouter = new Hono();
 
@@ -52,7 +61,16 @@ const CSS = `
   #skills-picker label { font-weight: normal; display: flex; align-items: center; gap: 6px; padding: 4px 0; cursor: pointer; }
 `;
 
-function layout(title: string, body: string): string {
+function layout(title: string, body: string, user?: AuthUser): string {
+  const userControls = user
+    ? `<span style="margin-left:auto;color:#374151;font-size:0.85rem">${user.email} (${user.role})</span>
+       <a href="/auth/account">Account</a>
+       <form method="POST" action="/auth/logout" style="display:inline">
+         <button type="submit" class="btn btn-secondary" style="padding:4px 10px">Sign out</button>
+       </form>`
+    : "";
+
+  const usersNav = user?.role === "admin" ? '<a href="/config/users">Users</a>' : "";
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -65,6 +83,8 @@ function layout(title: string, body: string): string {
     <a href="/dashboard">Dashboard</a>
     <a href="/config">Projects</a>
     <a href="/config/new">+ New Project</a>
+    ${usersNav}
+    ${userControls}
   </nav>
   ${body}
 </body>
@@ -206,6 +226,7 @@ ${skillsPickerScript}`;
 // ─── GET / — List all projects ─────────────────────────────────────────────────
 
 configRouter.get("/", async (c) => {
+  const user = getAuthUser(c);
   const configs = await listProjectConfigs();
 
   const rows = configs.map(
@@ -259,14 +280,15 @@ configRouter.get("/", async (c) => {
 </table>
 ${webhookInstructions}`;
 
-  return c.html(layout("Projects", body));
+  return c.html(layout("Projects", body, user));
 });
 
 // ─── GET /new — New project form ───────────────────────────────────────────────
 
 configRouter.get("/new", (c) => {
+  const user = getAuthUser(c);
   const body = `<h1>New Project</h1>${projectForm("/config")}`;
-  return c.html(layout("New Project", body));
+  return c.html(layout("New Project", body, user));
 });
 
 // ─── POST / — Create project ───────────────────────────────────────────────────
@@ -301,10 +323,11 @@ configRouter.post("/", async (c) => {
 // ─── GET /:projectKey — Edit form ──────────────────────────────────────────────
 
 configRouter.get("/:projectKey", async (c) => {
+  const user = getAuthUser(c);
   const { projectKey } = c.req.param();
   const config = await getProjectConfig(projectKey);
   if (!config) {
-    return c.html(layout("Not Found", `<p>Project <strong>${projectKey}</strong> not found. <a href="/config">Back</a></p>`), 404);
+    return c.html(layout("Not Found", `<p>Project <strong>${projectKey}</strong> not found. <a href="/config">Back</a></p>`, user), 404);
   }
 
   const body = `
@@ -316,7 +339,7 @@ ${projectForm(`/config/${config.project_key}`, config, config.project_key)}
   </form>
 </div>`;
 
-  return c.html(layout(`Edit ${projectKey}`, body));
+  return c.html(layout(`Edit ${projectKey}`, body, user));
 });
 
 // ─── POST /:projectKey — Update project ────────────────────────────────────────
@@ -437,6 +460,7 @@ configRouter.get("/:projectKey/skills", async (c) => {
 // ─── GET /:projectKey/validate — Validate Jira project ────────────────────────
 
 configRouter.get("/:projectKey/validate", async (c) => {
+  const user = getAuthUser(c);
   const { projectKey } = c.req.param();
   const config = await getProjectConfig(projectKey);
   if (!config) {
@@ -477,8 +501,119 @@ configRouter.get("/:projectKey/validate", async (c) => {
 </table>
 <a href="/config/${projectKey}">← Back to project</a>`;
 
-    return c.html(layout(`Validate ${projectKey}`, body));
+    return c.html(layout(`Validate ${projectKey}`, body, user));
   }
 
   return c.json(result);
+});
+
+configRouter.get("/users", async (c) => {
+  const user = getAuthUser(c);
+  if (!user || user.role !== "admin") {
+    return c.text("Forbidden", 403);
+  }
+
+  const inviteToken = c.req.query("invite");
+  const users = await listUsers();
+  const rows = users
+    .map((u) => {
+      const roleOptions =
+        u.role === "admin"
+          ? '<option value="admin" selected>admin</option><option value="member">member</option>'
+          : '<option value="admin">admin</option><option value="member" selected>member</option>';
+
+      return `<tr>
+        <td>${u.email}</td>
+        <td>${u.role}</td>
+        <td>${u.created_at.toISOString().replace("T", " ").slice(0, 19)} UTC</td>
+        <td style="white-space:nowrap">
+          <form method="POST" action="/config/users/${u.id}/role" style="display:inline-flex;gap:6px;align-items:center">
+            <select name="role">${roleOptions}</select>
+            <button type="submit" class="btn btn-secondary">Update role</button>
+          </form>
+          ${
+            u.id === user.id
+              ? ""
+              : `<form method="POST" action="/config/users/${u.id}/delete" style="display:inline" onsubmit="return confirm('Remove user ${u.email}?')">
+                   <button type="submit" class="btn btn-danger">Remove</button>
+                 </form>`
+          }
+        </td>
+      </tr>`;
+    })
+    .join("\n");
+
+  const inviteNotice = inviteToken
+    ? `<div style="background:#dcfce7;color:#166534;border:1px solid #86efac;padding:10px;border-radius:6px;margin-bottom:12px">
+         Invite link created: <code>/auth/invite/${inviteToken}</code>
+       </div>`
+    : "";
+
+  const body = `
+<h1>User Management</h1>
+${inviteNotice}
+<div class="form-card" style="margin-bottom:20px">
+  <h2>Create Invite Link</h2>
+  <p class="hint">Invite links can be used exactly once.</p>
+  <form method="POST" action="/config/users/invite">
+    <button type="submit" class="btn btn-primary">Create invite link</button>
+  </form>
+</div>
+<table>
+  <thead>
+    <tr>
+      <th>Email</th>
+      <th>Role</th>
+      <th>Created</th>
+      <th>Actions</th>
+    </tr>
+  </thead>
+  <tbody>
+    ${rows || '<tr><td colspan="4" style="text-align:center;color:#6b7280">No users found.</td></tr>'}
+  </tbody>
+</table>`;
+
+  return c.html(layout("Users", body, user));
+});
+
+configRouter.post("/users/invite", async (c) => {
+  const user = getAuthUser(c);
+  if (!user || user.role !== "admin") {
+    return c.text("Forbidden", 403);
+  }
+  const invite = await createInvite(user.id);
+  return c.redirect(`/config/users?invite=${invite.token}`);
+});
+
+configRouter.post("/users/:userId/role", async (c) => {
+  const user = getAuthUser(c);
+  if (!user || user.role !== "admin") {
+    return c.text("Forbidden", 403);
+  }
+
+  const { userId } = c.req.param();
+  const form = await c.req.parseBody();
+  const role = String(form.role ?? "") as UserRole;
+  if (role !== "admin" && role !== "member") {
+    return c.text("Invalid role", 400);
+  }
+
+  await updateUserRole(userId, role);
+  return c.redirect("/config/users");
+});
+
+configRouter.post("/users/:userId/delete", async (c) => {
+  const user = getAuthUser(c);
+  if (!user || user.role !== "admin") {
+    return c.text("Forbidden", 403);
+  }
+
+  const { userId } = c.req.param();
+  if (userId === user.id) {
+    return c.text("Cannot delete the current user", 400);
+  }
+
+  await deleteSessionsForUser(userId);
+  await deleteUser(userId);
+  return c.redirect("/config/users");
 });

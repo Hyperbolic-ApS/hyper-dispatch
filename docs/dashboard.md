@@ -1,39 +1,37 @@
-# Dashboard & Config UI
-
-Both the dashboard and configuration UI are server-rendered HTML pages served by the same Hono instance.
-
+# Dashboard, Auth & Config UI
+Dashboard, auth pages, and config pages are server-rendered HTML routes in the same Hono app.
+## Authentication
+- `GET /dashboard`, all `/config/*` pages, and `/api/*` require login.
+- Sessions are cookie-based.
+- User account actions are available from:
+  - `GET /auth/login`
+  - `GET /auth/invite/:token` (invite-only signup)
+  - `GET /auth/account` (password changes)
 ## Dashboard
-
 **Route**: `GET /dashboard`
-
 Displays all tracked dispatch runs in a table with:
 - Ticket key (linked to Jira)
 - Summary
-- Status badge (color-coded: green=succeeded, blue=running, yellow=queued, orange=blocked, red=failed)
-- Model used
-- Agent runtime (for running/completed entries)
-- Session link (clickable, for live runs — opens Oz session)
-- PR link (for completed runs)
-- Blocked-by info (for blocked entries)
-
-Summary stats bar at the top: counts of running / queued / blocked / succeeded / failed.
-
+- Status badge (color-coded by state)
+- Agent runtime
+- Session link (running)
+- PR link (succeeded)
+- Blocked-by info (blocked)
+Header actions:
+- Account page
+- Configure Projects
+- Sign out
+Summary stats show running / queued / blocked / succeeded / failed / stale.
 Auto-refreshes every 15 seconds.
-
-**Data source**: Primarily the `dispatch_runs` table (fast). For `running` entries, enriched with live Oz run data (runtime, session link) from the Oz API.
-
 ## Config UI
-
-**Routes**: See [api.md](./api.md) for the full route list under Configuration API.
-
-The config UI allows managing project configurations:
-- Add/edit/deactivate projects
-- Select skills from the GitHub repo (dynamic dropdown)
-  - Discovery uses the current in-form `GitHub Repo` value immediately (no save required)
-  - If entered, the current in-form `GitHub PAT` is used for discovery before save
-- Set default model and model override field
-- Validate Jira board setup
-
+**Routes**: see [api.md](./api.md) for all config endpoints.
+Features:
+- Add/edit/deactivate project configs
+- Skill discovery from current in-form repo/token values
+- Jira board validation
+- Admin-only user management on `GET /config/users`:
+  - Create one-time invite links
+  - Change user role between `member` and `admin`
+  - Remove users
 ## JSON API
-
-`GET /api/status` provides the same data as the dashboard in JSON format for programmatic access. Supports `project` and `status` query parameter filters.
+`GET /api/status` provides dashboard run data as JSON for authenticated clients.

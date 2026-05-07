@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import { getAllDispatchRuns, getRunCountsByStatus } from "../db/config-queries.js";
 import { env } from "../config/env.js";
+import { getAuthUser } from "../auth/middleware.js";
 
 export const dashboardRouter = new Hono();
 
@@ -38,6 +39,8 @@ function statusBadge(status: string): string {
 const CSS = `
   body { font-family: system-ui, sans-serif; margin: 0; padding: 20px; background: #f9fafb; color: #111; }
   .header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; }
+  .header-right { display:flex; gap:8px; align-items:center; }
+  .user-pill { font-size:0.8rem; color:#374151; background:#e5e7eb; border-radius:999px; padding:5px 10px; }
   .header h1 { margin: 0; }
   h1 { margin: 0 0 16px; font-size: 1.4rem; }
   .btn { display: inline-block; padding: 8px 18px; border-radius: 6px; font-size: 0.875rem; font-weight: 500; cursor: pointer; border: none; text-decoration: none; }
@@ -55,6 +58,7 @@ const CSS = `
 `;
 
 dashboardRouter.get("/", async (c) => {
+  const user = getAuthUser(c);
   const [runs, countRows] = await Promise.all([
     getAllDispatchRuns(),
     getRunCountsByStatus(),
@@ -118,7 +122,14 @@ dashboardRouter.get("/", async (c) => {
 <body>
   <div class="header">
     <h1>HyperDispatch Dashboard</h1>
-    <a href="/config" class="btn btn-secondary">⚙ Configure Projects</a>
+    <div class="header-right">
+      <span class="user-pill">${user?.email ?? "unknown"} (${user?.role ?? "member"})</span>
+      <a href="/auth/account" class="btn btn-secondary">Account</a>
+      <a href="/config" class="btn btn-secondary">⚙ Configure Projects</a>
+      <form method="POST" action="/auth/logout" style="display:inline">
+        <button type="submit" class="btn btn-secondary">Sign out</button>
+      </form>
+    </div>
   </div>
   <div class="stats">
     ${statsHtml}

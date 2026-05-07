@@ -35,3 +35,34 @@ CREATE TABLE IF NOT EXISTS dispatch_runs (
 
 CREATE INDEX IF NOT EXISTS idx_dispatch_runs_status ON dispatch_runs(status);
 CREATE INDEX IF NOT EXISTS idx_dispatch_runs_project ON dispatch_runs(project_key);
+
+CREATE TABLE IF NOT EXISTS users (
+  id            TEXT PRIMARY KEY,
+  email         TEXT NOT NULL UNIQUE,
+  password_hash TEXT NOT NULL,
+  role          TEXT NOT NULL CHECK (role IN ('admin', 'member')),
+  created_at    TIMESTAMPTZ DEFAULT NOW(),
+  updated_at    TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS sessions (
+  id            TEXT PRIMARY KEY,
+  user_id       TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  token_hash    TEXT NOT NULL UNIQUE,
+  expires_at    TIMESTAMPTZ NOT NULL,
+  created_at    TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_sessions_token_hash ON sessions(token_hash);
+CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON sessions(user_id);
+
+CREATE TABLE IF NOT EXISTS invite_links (
+  id                 TEXT PRIMARY KEY,
+  token_hash         TEXT NOT NULL UNIQUE,
+  created_by_user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  used_by_user_id    TEXT REFERENCES users(id) ON DELETE SET NULL,
+  used_at            TIMESTAMPTZ,
+  created_at         TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_invite_links_token_hash ON invite_links(token_hash);

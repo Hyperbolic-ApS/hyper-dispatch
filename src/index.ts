@@ -6,6 +6,8 @@ import { webhookRouter } from "./webhook/jira.js";
 import { dashboardRouter } from "./routes/dashboard.js";
 import { apiRouter } from "./routes/api.js";
 import { configRouter } from "./routes/config.js";
+import { authRouter } from "./routes/auth.js";
+import { requireAuth } from "./auth/middleware.js";
 import { startSchedulerLoop } from "./orchestration/scheduler.js";
 import { startMonitorLoop } from "./orchestration/monitor.js";
 
@@ -19,7 +21,18 @@ app.get("/", (c) => c.redirect("/dashboard"));
 
 // Route groups
 app.route("/webhook", webhookRouter);
+
+app.use("/auth/account", requireAuth);
+app.use("/auth/change-password", requireAuth);
+app.route("/auth", authRouter);
+
+app.use("/dashboard", requireAuth);
+app.use("/dashboard/*", requireAuth);
+app.use("/api/*", requireAuth);
 app.route("/api", apiRouter);
+
+app.use("/config", requireAuth);
+app.use("/config/*", requireAuth);
 app.route("/dashboard", dashboardRouter);
 app.route("/config", configRouter);
 
