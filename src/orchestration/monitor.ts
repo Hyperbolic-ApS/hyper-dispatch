@@ -2,8 +2,10 @@ import { Octokit } from "@octokit/rest";
 import OzAPI from "oz-agent-sdk";
 import type { ArtifactItem } from "oz-agent-sdk/resources/agent/runs.js";
 import { env } from "../config/env.js";
+import { getProjectConfig } from "../db/config-queries.js";
 import { getRunsByStatus, updateRunStatus } from "../db/queries.js";
 import * as jira from "../jira/client.js";
+import { buildPreviewUrl, parseGitHubPrUrl } from "../preview/url.js";
 
 const MONITOR_INTERVAL_MS = 30_000;
 
@@ -33,6 +35,34 @@ function getGithubClient(): Octokit {
   return _githubClient;
 }
 
+async function postPreviewComment(
+  prUrl: string,
+  deploymentUrl: string,
+  authToken: string,
+  ticketKey: string
+): Promise<void> {
+  const previewUrl = buildPreviewUrl(prUrl, deploymentUrl);
+  const parsed = parseGitHubPrUrl(prUrl);
+  if (!previewUrl || !parsed) return;
+
+  const octokit = new Octokit({ auth: authToken });
+  const body = `**Preview deployment**: ${previewUrl}\n\nThis environment was deployed automatically for PR #${parsed.prNumber}.`;
+
+  try {
+    await octokit.issues.createComment({
+      owner: parsed.owner,
+      repo: parsed.repo,
+      issue_number: parsed.prNumber,
+      body,
+    });
+    console.log(
+      `[monitor] Posted preview link to PR for ${ticketKey}: ${previewUrl}`
+    );
+  } catch (err) {
+    console.warn(`[monitor] Failed to post preview comment for ${ticketKey}:`, err);
+  }
+}
+
 /**
  * Extract the GitHub PR URL from a run's artifact list, if present.
  */
@@ -46,25 +76,6 @@ function extractPrUrl(artifacts: ArtifactItem[] | undefined): string | null {
   return null;
 }
 
-function parseGithubPullRequestUrl(
-  prUrl: string
-): { owner: string; repo: string; pullNumber: number } | null {
-  try {
-    const parsedUrl = new URL(prUrl);
-    const parts = parsedUrl.pathname.split("/").filter(Boolean);
-    if (parts.length < 4) return null;
-
-    const [owner, repo, type, pullNumberRaw] = parts;
-    if (!owner || !repo || type !== "pull" || !pullNumberRaw) return null;
-
-    const pullNumber = Number.parseInt(pullNumberRaw, 10);
-    if (!Number.isFinite(pullNumber)) return null;
-
-    return { owner, repo, pullNumber };
-  } catch {
-    return null;
-  }
-}
 
 async function transitionMergedPrsToDone(): Promise<void> {
   const succeededRuns = await getRunsByStatus("succeeded");
@@ -89,7 +100,7 @@ async function transitionMergedPrsToDone(): Promise<void> {
       continue;
     }
 
-    const parsed = parseGithubPullRequestUrl(run.pr_url);
+    const parsed = parseGitHubPrUrl(run.pr_url);
     if (!parsed) {
       console.warn(
         `[monitor] Could not parse GitHub PR URL for ${run.ticket_key}: ${run.pr_url}`
@@ -101,7 +112,7 @@ async function transitionMergedPrsToDone(): Promise<void> {
       const { data: pullRequest } = await githubClient.pulls.get({
         owner: parsed.owner,
         repo: parsed.repo,
-        pull_number: parsed.pullNumber,
+        pull_number: parsed.prNumber,
       });
 
       if (!pullRequest.merged_at) continue;
@@ -176,6 +187,31 @@ export async function checkRuns(): Promise<void> {
               `[monitor] Failed to transition ${run.ticket_key} to In Review:`,
               err
             );
+          }
+
+          if (prUrl) {
+            try {
+              const cfg = await getProjectConfig(run.project_key);
+              const deploymentUrl = cfg?.deployment_url ?? null;
+              const authToken = cfg?.github_pat ?? env.GITHUB_TOKEN;
+              if (deploymentUrl && authToken) {
+                await postPreviewComment(
+                  prUrl,
+                  deploymentUrl,
+                  authToken,
+                  run.ticket_key
+                );
+              } else {
+                console.log(
+                  `[monitor] Skipping preview comment for ${run.ticket_key}: missing deployment_url or auth token`
+                );
+              }
+            } catch (err) {
+              console.warn(
+                `[monitor] Preview-comment step failed for ${run.ticket_key}:`,
+                err
+              );
+            }
           }
 
           console.log(

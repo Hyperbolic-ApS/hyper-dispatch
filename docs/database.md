@@ -15,6 +15,7 @@ Stores per-project configuration. Managed via the config UI.
 | `board_id` | `INTEGER` | Board ID for validation |
 | `oz_env_id` | `TEXT` | Oz environment ID |
 | `github_repo` | `TEXT` | GitHub repo (e.g., "org/mono-repo") |
+| `deployment_url` | `TEXT` | Base host for per-PR preview URLs (e.g., `preview.example.com`) |
 | `default_model` | `TEXT` | Default LLM model ID (null = Oz default) |
 | `model_field_id` | `TEXT` | Jira custom field ID for per-ticket model override |
 | `skills` | `TEXT[]` | Skill specs (e.g., `["org/repo:hyperdispatch-worker"]`) |

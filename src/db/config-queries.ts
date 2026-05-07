@@ -6,6 +6,7 @@ export interface ProjectConfig {
   board_id: number;
   oz_env_id: string;
   github_repo: string;
+  deployment_url: string | null;
   default_model: string | null;
   model_field_id: string | null;
   skills: string[];
@@ -23,6 +24,7 @@ export interface ProjectConfigInput {
   board_id: number;
   oz_env_id: string;
   github_repo: string;
+  deployment_url?: string | null;
   default_model?: string | null;
   model_field_id?: string | null;
   skills?: string[];
@@ -80,6 +82,7 @@ export async function createProjectConfig(
       board_id,
       oz_env_id,
       github_repo,
+      deployment_url,
       default_model,
       model_field_id,
       skills,
@@ -93,6 +96,7 @@ export async function createProjectConfig(
       ${config.board_id},
       ${config.oz_env_id},
       ${config.github_repo},
+      ${config.deployment_url ?? null},
       ${config.default_model ?? null},
       ${config.model_field_id ?? null},
       ${sql.array(config.skills ?? [])},
@@ -121,6 +125,7 @@ export async function updateProjectConfig(
       board_id       = ${merged.board_id},
       oz_env_id      = ${merged.oz_env_id},
       github_repo    = ${merged.github_repo},
+      deployment_url = ${merged.deployment_url ?? null},
       default_model  = ${merged.default_model ?? null},
       model_field_id = ${merged.model_field_id ?? null},
       skills         = ${sql.array(merged.skills ?? [])},
