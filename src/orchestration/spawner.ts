@@ -22,7 +22,7 @@ function getOzClient(): OzAPI {
 /**
  * Recursively extract plain text from an Atlassian Document Format (ADF) node.
  */
-function adfToText(node: unknown, depth = 0): string {
+export function adfToText(node: unknown, depth = 0): string {
   if (typeof node === "string") return node;
   if (typeof node !== "object" || node === null) return "";
 
@@ -45,7 +45,7 @@ function adfToText(node: unknown, depth = 0): string {
 /**
  * Build a plain-text prompt for the agent from a Jira issue.
  */
-function buildPrompt(ticketKey: string, issue: JiraIssue): string {
+export function buildPrompt(ticketKey: string, issue: JiraIssue): string {
   const summary = issue.fields.summary;
   const description = issue.fields.description
     ? adfToText(issue.fields.description)
@@ -64,7 +64,7 @@ function buildPrompt(ticketKey: string, issue: JiraIssue): string {
  *   2. Project default model
  *   3. undefined → let Oz use the workspace default
  */
-function resolveModel(
+export function resolveModel(
   issue: JiraIssue,
   config: ProjectConfig
 ): string | undefined {
@@ -72,6 +72,16 @@ function resolveModel(
     const fieldValue = issue.fields[config.model_field_id];
     if (typeof fieldValue === "string" && fieldValue.trim()) {
       return fieldValue.trim();
+    }
+    if (
+      typeof fieldValue === "object" &&
+      fieldValue !== null &&
+      "value" in fieldValue
+    ) {
+      const nestedValue = (fieldValue as { value?: unknown }).value;
+      if (typeof nestedValue === "string" && nestedValue.trim()) {
+        return nestedValue.trim();
+      }
     }
   }
   return config.default_model ?? undefined;

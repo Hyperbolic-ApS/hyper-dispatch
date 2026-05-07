@@ -76,7 +76,8 @@ export async function syncTicketInToDo(
  * Map Jira priority names to a numeric priority for queue ordering.
  * Higher number = higher priority.
  */
-function priorityNameToNumber(name: string): number {
+export function priorityNameToNumber(name: string | null | undefined): number {
+  if (!name) return 3;
   const map: Record<string, number> = {
     Highest: 5,
     High: 4,

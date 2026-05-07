@@ -37,7 +37,7 @@ function getGithubClient(): Octokit {
 /**
  * Extract the GitHub PR URL from a run's artifact list, if present.
  */
-function extractPrUrl(artifacts: ArtifactItem[] | undefined): string | null {
+export function extractPrUrl(artifacts: ArtifactItem[] | undefined): string | null {
   if (!artifacts) return null;
   for (const artifact of artifacts) {
     if (artifact.artifact_type === "PULL_REQUEST") {
@@ -47,7 +47,7 @@ function extractPrUrl(artifacts: ArtifactItem[] | undefined): string | null {
   return null;
 }
 
-function parseGithubPullRequestUrl(
+export function parseGithubPullRequestUrl(
   prUrl: string
 ): { owner: string; repo: string; pullNumber: number } | null {
   try {
