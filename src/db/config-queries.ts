@@ -54,6 +54,7 @@ export interface DispatchRun {
   spawned_at: Date | null;
   completed_at: Date | null;
   pr_url: string | null;
+  pr_has_conflicts: boolean | null;
   session_link: string | null;
   error: string | null;
   created_at: Date;

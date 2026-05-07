@@ -44,6 +44,7 @@ Tracks ticket → agent run state. Managed by the orchestration loop.
 | `spawned_at` | `TIMESTAMPTZ` | When the agent was spawned |
 | `completed_at` | `TIMESTAMPTZ` | When the run completed |
 | `pr_url` | `TEXT` | Pull request URL |
+| `pr_has_conflicts` | `BOOLEAN` | Whether GitHub currently reports merge conflicts for the PR (`true`/`false`/`null` unknown) |
 | `session_link` | `TEXT` | Oz session link for live monitoring |
 | `error` | `TEXT` | Last failure reason |
 | `created_at` | `TIMESTAMPTZ` | Row creation time |

@@ -22,6 +22,10 @@ export async function runMigrations(): Promise<void> {
       ADD COLUMN IF NOT EXISTS in_review_column_name TEXT NOT NULL DEFAULT 'In Review',
       ADD COLUMN IF NOT EXISTS done_column_name TEXT NOT NULL DEFAULT 'Done';
   `);
+  await sql.unsafe(`
+    ALTER TABLE dispatch_runs
+      ADD COLUMN IF NOT EXISTS pr_has_conflicts BOOLEAN;
+  `);
 
   console.log("Database migrations applied successfully");
 }
