@@ -46,6 +46,16 @@ function ticketStatusBadge(statusName: string | null, categoryKey: string | null
   const style = colors[categoryKey ?? ""] ?? "background:#e5e7eb;color:#000";
   return `<span style="padding:2px 8px;border-radius:4px;font-size:0.75rem;font-weight:600;${style}">${statusName}</span>`;
 }
+function prConflictBadge(hasConflicts: boolean | null, hasPr: boolean): string {
+  if (!hasPr) return "-";
+  if (hasConflicts === true) {
+    return '<span style="padding:2px 8px;border-radius:4px;font-size:0.75rem;font-weight:600;background:#ef4444;color:#fff">Merge conflicts</span>';
+  }
+  if (hasConflicts === false) {
+    return '<span style="padding:2px 8px;border-radius:4px;font-size:0.75rem;font-weight:600;background:#22c55e;color:#fff">No conflicts</span>';
+  }
+  return '<span style="padding:2px 8px;border-radius:4px;font-size:0.75rem;font-weight:600;background:#e5e7eb;color:#111">Unknown</span>';
+}
 
 const CSS = `
   body { font-family: system-ui, sans-serif; margin: 0; padding: 20px; background: #f9fafb; color: #111; }
@@ -66,6 +76,10 @@ const CSS = `
   a { color: #3b82f6; text-decoration: none; }
   a:hover { text-decoration: underline; }
   .blocked-by { font-size: 0.75rem; color: #6b7280; }
+  .branch-cell { display: inline-flex; align-items: center; gap: 8px; }
+  .copy-branch-btn { border: 1px solid #d1d5db; background: #fff; color: #374151; border-radius: 6px; padding: 3px 5px; line-height: 0; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; }
+  .copy-branch-btn:hover { background: #f9fafb; }
+  .copy-branch-btn.copied { background: #dcfce7; border-color: #86efac; color: #166534; }
 `;
 
 dashboardRouter.get("/", async (c) => {
@@ -142,8 +156,14 @@ dashboardRouter.get("/", async (c) => {
       <td>${statusBadge(run.status)}</td>
       <td>${formatDate(run.spawned_at)}</td>
       <td>${runtime}</td>
-      <td><code>${branchName}</code></td>
+      <td>
+        <span class="branch-cell">
+          <code>${branchName}</code>
+          <button class="copy-branch-btn" type="button" data-copy-branch="${branchName}" aria-label="Copy ${branchName} to clipboard"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="2" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button>
+        </span>
+      </td>
       <td>${ozTaskLink}</td>
+      <td>${prConflictBadge(run.pr_has_conflicts, Boolean(run.pr_url))}</td>
       <td>${actionLink}${blockedByHtml}</td>
     </tr>`;
   });
@@ -179,13 +199,41 @@ dashboardRouter.get("/", async (c) => {
         <th>Runtime</th>
         <th>Branch</th>
         <th>Oz Task</th>
+        <th>PR Mergeability</th>
         <th>Links</th>
       </tr>
     </thead>
     <tbody>
-      ${runs.length === 0 ? '<tr><td colspan="9" style="text-align:center;color:#6b7280">No runs yet</td></tr>' : rows.join("\n")}
+      ${runs.length === 0 ? '<tr><td colspan="10" style="text-align:center;color:#6b7280">No runs yet</td></tr>' : rows.join("\n")}
     </tbody>
   </table>
+  <script>
+    document.addEventListener("click", async (event) => {
+      const button = event.target instanceof HTMLElement ? event.target.closest("[data-copy-branch]") : null;
+      if (!(button instanceof HTMLButtonElement)) return;
+      const branch = button.dataset.copyBranch;
+      if (!branch) return;
+      try {
+        await navigator.clipboard.writeText(branch);
+      } catch {
+        const textarea = document.createElement("textarea");
+        textarea.value = branch;
+        textarea.style.position = "fixed";
+        textarea.style.opacity = "0";
+        document.body.appendChild(textarea);
+        textarea.focus();
+        textarea.select();
+        document.execCommand("copy");
+        document.body.removeChild(textarea);
+      }
+      button.classList.add("copied");
+      button.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>';
+      setTimeout(() => {
+        button.classList.remove("copied");
+        button.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="2" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>';
+      }, 1200);
+    });
+  </script>
 </body>
 </html>`;
 

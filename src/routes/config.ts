@@ -9,9 +9,21 @@ import {
 } from "../db/config-queries.js";
 import { discoverSkills } from "../github/skills.js";
 import { validateJiraProject } from "../validator/jira.js";
+import { DEFAULT_JIRA_COLUMN_MAPPINGS } from "../jira/columns.js";
 import { brandIconSvg, faviconDataUri } from "./branding.js";
 
 export const configRouter = new Hono();
+
+function formColumnName(
+  form: Record<string, unknown>,
+  key: string,
+  fallback: string
+): string {
+  const value = form[key];
+  if (typeof value !== "string") return fallback;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : fallback;
+}
 
 // ─── Shared CSS ────────────────────────────────────────────────────────────────
 
@@ -59,7 +71,12 @@ const CSS = `
   .error-text { color: #b91c1c; font-size: 0.75rem; margin-top: 4px; }
 `;
 
-function layout(title: string, body: string): string {
+function layout(
+  title: string,
+  body: string,
+  options: { showProjectsLink?: boolean } = {}
+): string {
+  const { showProjectsLink = true } = options;
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -75,7 +92,7 @@ function layout(title: string, body: string): string {
   </div>
   <nav>
     <a href="/dashboard">Dashboard</a>
-    <a href="/config">Projects</a>
+    ${showProjectsLink ? '<a href="/config">Projects</a>' : ""}
   </nav>
   ${body}
 </body>
@@ -277,6 +294,31 @@ document.addEventListener('DOMContentLoaded', () => {
       <div class="hint">In Jira, go to Settings &rarr; Issues &rarr; Custom Fields. Click the field &rarr; the ID is in the URL, e.g. <code>customfield_10050</code></div>
     </div>
     <div class="field">
+      <label for="backlog_column_name">Backlog Column Name</label>
+      <input type="text" id="backlog_column_name" name="backlog_column_name" value="${v.backlog_column_name ?? DEFAULT_JIRA_COLUMN_MAPPINGS.backlog}">
+      <div class="hint">Column/status name used as Backlog for this project.</div>
+    </div>
+    <div class="field">
+      <label for="to_do_column_name">To Do Column Name</label>
+      <input type="text" id="to_do_column_name" name="to_do_column_name" value="${v.to_do_column_name ?? DEFAULT_JIRA_COLUMN_MAPPINGS.toDo}">
+      <div class="hint">Incoming webhook transitions to this status will queue work.</div>
+    </div>
+    <div class="field">
+      <label for="in_progress_column_name">In Progress Column Name</label>
+      <input type="text" id="in_progress_column_name" name="in_progress_column_name" value="${v.in_progress_column_name ?? DEFAULT_JIRA_COLUMN_MAPPINGS.inProgress}">
+      <div class="hint">Used when HyperDispatch transitions a ticket after spawning an agent.</div>
+    </div>
+    <div class="field">
+      <label for="in_review_column_name">In Review Column Name</label>
+      <input type="text" id="in_review_column_name" name="in_review_column_name" value="${v.in_review_column_name ?? DEFAULT_JIRA_COLUMN_MAPPINGS.inReview}">
+      <div class="hint">Used when HyperDispatch transitions a succeeded ticket.</div>
+    </div>
+    <div class="field">
+      <label for="done_column_name">Done Column Name</label>
+      <input type="text" id="done_column_name" name="done_column_name" value="${v.done_column_name ?? DEFAULT_JIRA_COLUMN_MAPPINGS.done}">
+      <div class="hint">Incoming webhook transitions to this status trigger unblock checks.</div>
+    </div>
+    <div class="field">
       <label for="skills">Skills (comma-separated specs)</label>
       <input type="text" id="skills" name="skills" value="${skillsValue}">
       <div class="hint">e.g. owner/repo:skill-name, owner/repo:other-skill</div>
@@ -375,7 +417,7 @@ configRouter.get("/", async (c) => {
 </div>
 ${webhookInstructions}`;
 
-  return c.html(layout("Projects", body));
+  return c.html(layout("Projects", body, { showProjectsLink: false }));
 });
 
 // ─── GET /new — New project form ───────────────────────────────────────────────
@@ -411,6 +453,31 @@ configRouter.post("/", async (c) => {
     oz_env_id: String(form.oz_env_id),
     github_repo: String(form.github_repo),
     default_model: form.default_model ? String(form.default_model) : null,
+    backlog_column_name: formColumnName(
+      form as Record<string, unknown>,
+      "backlog_column_name",
+      DEFAULT_JIRA_COLUMN_MAPPINGS.backlog
+    ),
+    to_do_column_name: formColumnName(
+      form as Record<string, unknown>,
+      "to_do_column_name",
+      DEFAULT_JIRA_COLUMN_MAPPINGS.toDo
+    ),
+    in_progress_column_name: formColumnName(
+      form as Record<string, unknown>,
+      "in_progress_column_name",
+      DEFAULT_JIRA_COLUMN_MAPPINGS.inProgress
+    ),
+    in_review_column_name: formColumnName(
+      form as Record<string, unknown>,
+      "in_review_column_name",
+      DEFAULT_JIRA_COLUMN_MAPPINGS.inReview
+    ),
+    done_column_name: formColumnName(
+      form as Record<string, unknown>,
+      "done_column_name",
+      DEFAULT_JIRA_COLUMN_MAPPINGS.done
+    ),
     model_field_id: form.model_field_id ? String(form.model_field_id) : null,
     skills,
     mcp_servers: mcpServers,
@@ -477,6 +544,31 @@ configRouter.post("/:projectKey", async (c) => {
     github_repo: String(form.github_repo),
     default_model: form.default_model ? String(form.default_model) : null,
     model_field_id: form.model_field_id ? String(form.model_field_id) : null,
+    backlog_column_name: formColumnName(
+      form as Record<string, unknown>,
+      "backlog_column_name",
+      DEFAULT_JIRA_COLUMN_MAPPINGS.backlog
+    ),
+    to_do_column_name: formColumnName(
+      form as Record<string, unknown>,
+      "to_do_column_name",
+      DEFAULT_JIRA_COLUMN_MAPPINGS.toDo
+    ),
+    in_progress_column_name: formColumnName(
+      form as Record<string, unknown>,
+      "in_progress_column_name",
+      DEFAULT_JIRA_COLUMN_MAPPINGS.inProgress
+    ),
+    in_review_column_name: formColumnName(
+      form as Record<string, unknown>,
+      "in_review_column_name",
+      DEFAULT_JIRA_COLUMN_MAPPINGS.inReview
+    ),
+    done_column_name: formColumnName(
+      form as Record<string, unknown>,
+      "done_column_name",
+      DEFAULT_JIRA_COLUMN_MAPPINGS.done
+    ),
     skills,
     mcp_servers: mcpServers,
     ...tokenUpdates,
@@ -580,6 +672,13 @@ configRouter.get("/:projectKey/validate", async (c) => {
   const result = await validateJiraProject(
     config.board_id,
     config.model_field_id,
+    {
+      backlog: config.backlog_column_name,
+      toDo: config.to_do_column_name,
+      inProgress: config.in_progress_column_name,
+      inReview: config.in_review_column_name,
+      done: config.done_column_name,
+    },
     config.jira_email && config.jira_api_token
       ? { email: config.jira_email, apiToken: config.jira_api_token }
       : undefined
