@@ -92,6 +92,9 @@ dashboardRouter.get("/", async (c) => {
       }
     })
   );
+  const visibleRuns = hideDone
+    ? runs.filter((run) => ticketStatusByKey.get(run.ticket_key)?.categoryKey !== "done")
+    : runs;
 
   const counts: Record<string, number> = {
     running: 0,
@@ -115,13 +118,6 @@ dashboardRouter.get("/", async (c) => {
     `<div class="stat" style="background:#ef4444;color:#fff">${counts.failed ?? 0} Failed</div>`,
     `<div class="stat" style="background:#6b7280;color:#fff">${counts.stale ?? 0} Stale</div>`,
   ].join("\n");
-
-  const visibleRuns = hideDone
-    ? runs.filter(
-        (run) => ticketStatusByKey.get(run.ticket_key)?.categoryKey !== "done"
-      )
-    : runs;
-
   const rows = visibleRuns.map((run) => {
     const ticketUrl = `${env.JIRA_BASE_URL}/browse/${run.ticket_key}`;
     const branchName = `agent/${run.ticket_key}`;
