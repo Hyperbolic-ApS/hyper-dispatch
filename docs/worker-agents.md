@@ -64,7 +64,7 @@ To use this workflow in a target repo, copy `.github/workflows/agent-revision.ym
 
 ## Default Worker Skill
 
-The default skill (`.warp/skills/hyperdispatch-worker/SKILL.md`) implements a standard workflow:
+The default skill (`.agents/skills/hyperdispatch-worker/SKILL.md`) implements a standard workflow:
 
 1. Parse ticket details from prompt (key, summary, description)
 2. Create branch `agent/{ticket-key}`
@@ -73,8 +73,8 @@ The default skill (`.warp/skills/hyperdispatch-worker/SKILL.md`) implements a st
 5. Configure headless Playwright MCP for automated screenshots (`@playwright/mcp`, isolated Chromium profile, screenshot output directory)
 6. Implement (scoped tightly to minimize parallel merge conflicts)
 7. If UI files changed, run a screenshot-and-evaluate loop (desktop/mobile captures + accessibility snapshot) with a hard cap of 4 iterations
-8. Run tests, iterate on failures
-9. Run lint/type checks
+8. Read `docs/testing.md`, run `npm test` and `npm run test:coverage`, and add/update tests when required by scope
+9. Run lint/type checks (including explicit `npm run typecheck`)
 10. Commit with `{ticket-key}: {summary}` format + co-author line
 11. Create PR via `gh pr create` with Jira link in body, plus UI iteration trail for UI-touching tickets
 12. Upload final desktop/mobile screenshots to Jira and comment with embedded images for UI-touching tickets
