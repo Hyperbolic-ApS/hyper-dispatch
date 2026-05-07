@@ -5,8 +5,12 @@ import * as jira from "../jira/client.js";
 
 export const dashboardRouter = new Hono();
 const dashboardDateTimeFormatter = new Intl.DateTimeFormat(undefined, {
-  dateStyle: "medium",
-  timeStyle: "short",
+  year: "numeric",
+  month: "short",
+  day: "numeric",
+  hour: "2-digit",
+  minute: "2-digit",
+  hour12: false,
 });
 
 function formatDuration(start: Date | null, end: Date | null): string {
