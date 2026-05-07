@@ -10,9 +10,11 @@ Both pages now share the HyperDispatch brand icon (header logo) and include the 
 Displays all tracked dispatch runs in a table with:
 - Ticket key (linked to Jira)
 - Summary
+- Ticket status (live Jira workflow status, e.g. To Do / In Progress / Done)
 - Status badge (color-coded: green=succeeded, blue=running, yellow=queued, orange=blocked, red=failed)
-- Model used
 - Agent runtime (for running/completed entries)
+- Branch (`agent/{ticket-key}`)
+- Oz task link (opens the run task/session in Oz when available)
 - Session link (clickable, for live runs — opens Oz session)
 - PR link (for completed runs)
 - Blocked-by info (for blocked entries)
@@ -21,7 +23,7 @@ Summary stats bar at the top: counts of running / queued / blocked / succeeded /
 
 Auto-refreshes every 15 seconds.
 
-**Data source**: Primarily the `dispatch_runs` table (fast). For `running` entries, enriched with live Oz run data (runtime, session link) from the Oz API.
+**Data source**: Primarily the `dispatch_runs` table (fast), enriched with live Jira issue status per ticket and Oz run data (runtime, session link) when available.
 
 ## Config UI
 

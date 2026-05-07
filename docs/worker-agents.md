@@ -32,8 +32,9 @@ The model used for a worker agent is determined by (in order of precedence):
 1. HyperDispatch spawns the agent → status becomes `running`.
 2. The run monitor polls Oz every 30s.
 3. On `SUCCEEDED` → HyperDispatch transitions the Jira ticket to "In Review" and records the PR URL.
-4. On `FAILED` → status becomes `failed`, ticket stays in "In Progress" for manual triage.
-5. On stale (running > `MAX_RUN_DURATION_HOURS`) → cancelled and marked `stale`.
+4. While the run remains `succeeded`, HyperDispatch polls the PR; once GitHub reports it as merged, HyperDispatch transitions the Jira ticket to "Done".
+5. On `FAILED` → status becomes `failed`, ticket stays in "In Progress" for manual triage.
+6. On stale (running > `MAX_RUN_DURATION_HOURS`) → cancelled and marked `stale`.
 
 ## PR Review Feedback Loop
 
