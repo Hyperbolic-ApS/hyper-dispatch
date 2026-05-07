@@ -13,11 +13,13 @@ Displays all tracked dispatch runs in a table with:
 - Ticket status (live Jira workflow status, e.g. To Do / In Progress / Done)
 - Status badge (color-coded: green=succeeded, blue=running, yellow=queued, orange=blocked, red=failed)
 - Agent runtime (for running/completed entries)
-- Branch (`agent/{ticket-key}`)
+- Branch (`agent/{ticket-key}`) with an inline clipboard icon button that copies the branch name to clipboard (shows a checkmark on success)
 - Oz task link (opens the run task/session in Oz when available)
+- PR mergeability badge (`Merge conflicts`, `No conflicts`, or `Unknown` once a PR exists)
 - Session link (clickable, for live runs — opens Oz session)
 - PR link (for completed runs)
 - Blocked-by info (for blocked entries)
+- Header filter toggle to hide/show rows whose Jira ticket status category is `Done`
 
 Summary stats bar at the top: counts of running / queued / blocked / succeeded / failed.
 
@@ -32,11 +34,16 @@ Auto-refreshes every 15 seconds.
 The config UI allows managing project configurations:
 - Add/edit/deactivate projects
 - Projects overview (`/config`) shows the **+ New Project** button below the project list table
+- Projects overview (`/config`) omits the `Projects` nav link/button since users are already on that page
 - Projects overview row actions (Edit/Validate) are rendered as button-style controls with filled backgrounds and borders for clearer affordance
 - Select skills from the GitHub repo (dynamic dropdown)
   - Discovery uses the current in-form `GitHub Repo` value immediately (no save required)
   - If entered, the current in-form `GitHub PAT` is used for discovery before save
 - Set default model and model override field
+- Configure optional **MCP Servers JSON** in the project form
+  - Must be a valid JSON object
+  - Save is blocked for invalid JSON
+  - Validation errors include the JSON line number
 - Validate Jira board setup
 
 ## JSON API
