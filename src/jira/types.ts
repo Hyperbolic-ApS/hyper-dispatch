@@ -77,6 +77,13 @@ export interface JiraIssue {
   fields: JiraIssueFields;
 }
 
+export interface JiraSearchResponse {
+  startAt: number;
+  maxResults: number;
+  total: number;
+  issues: JiraIssue[];
+}
+
 export interface JiraTransition {
   id: string;
   name: string;

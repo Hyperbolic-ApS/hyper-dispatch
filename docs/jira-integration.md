@@ -46,6 +46,12 @@ See [configuration.md](./configuration.md) for the Jira Automation rule setup. T
 - `to_do_column_name` triggers queueing logic.
 - `done_column_name` triggers unblock checks.
 
+## Polling Backfill
+
+In addition to webhook-triggered ingestion, the scheduler loop performs a Jira reconciliation poll each cycle:
+- It queries each active project's configured `to_do_column_name` and auto-ingests tickets that are in To Do but missing from `dispatch_runs` (same cycle/dependency checks as webhook ingestion).
+- It verifies tracked `dispatch_runs` tickets still exist in Jira and removes rows for issues that now return Jira `404` (deleted issues), so stale dashboard entries are cleaned up automatically.
+
 ## PR Merge to Done
 
 When a worker run completes successfully, HyperDispatch stores the PR URL artifact and moves the issue to `In Review`. The monitor then polls GitHub for `succeeded` runs with PR URLs. Once a PR is merged, HyperDispatch transitions the matching Jira issue to `Done`.

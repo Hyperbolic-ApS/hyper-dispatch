@@ -70,6 +70,18 @@ export async function getProjectConfig(
 }
 
 /**
+ * Return all active project configs.
+ */
+export async function listActiveProjectConfigs(): Promise<ProjectConfig[]> {
+  return sql<ProjectConfig[]>`
+    SELECT *
+    FROM project_configs
+    WHERE active = true
+    ORDER BY project_key ASC
+  `;
+}
+
+/**
  * Insert or update a dispatch run.
  * On conflict (ticket_key), updates mutable fields but preserves run_id and spawned_at
  * if already set (so running/succeeded runs are not inadvertently reset).
@@ -203,5 +215,27 @@ export async function getAllRuns(): Promise<DispatchRun[]> {
     SELECT *
     FROM dispatch_runs
     ORDER BY created_at DESC
+  `;
+}
+
+/**
+ * Return all runs for a given project.
+ */
+export async function getRunsByProject(projectKey: string): Promise<DispatchRun[]> {
+  return sql<DispatchRun[]>`
+    SELECT *
+    FROM dispatch_runs
+    WHERE project_key = ${projectKey}
+    ORDER BY created_at DESC
+  `;
+}
+
+/**
+ * Delete a run from the dispatch table by ticket key.
+ */
+export async function deleteRun(ticketKey: string): Promise<void> {
+  await sql`
+    DELETE FROM dispatch_runs
+    WHERE ticket_key = ${ticketKey}
   `;
 }
