@@ -15,8 +15,9 @@ Displays all tracked dispatch runs in a table with:
 - Agent runtime (for running/completed entries)
 - Branch (`agent/{ticket-key}`)
 - Oz task link (opens the run task/session in Oz when available)
-- Session link (clickable, for live runs — opens Oz session)
-- PR link (for completed runs)
+- Links column (no dedicated PR column):
+  - Session link (for live runs — opens Oz session)
+  - PR link (for completed runs)
 - Blocked-by info (for blocked entries)
 
 Summary stats bar at the top: counts of running / queued / blocked / succeeded / failed.
