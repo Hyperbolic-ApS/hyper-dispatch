@@ -70,7 +70,12 @@ const CSS = `
   #skills-picker label { font-weight: normal; display: flex; align-items: center; gap: 6px; padding: 4px 0; cursor: pointer; }
 `;
 
-function layout(title: string, body: string): string {
+function layout(
+  title: string,
+  body: string,
+  options: { showProjectsLink?: boolean } = {}
+): string {
+  const { showProjectsLink = true } = options;
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -86,7 +91,7 @@ function layout(title: string, body: string): string {
   </div>
   <nav>
     <a href="/dashboard">Dashboard</a>
-    <a href="/config">Projects</a>
+    ${showProjectsLink ? '<a href="/config">Projects</a>' : ""}
   </nav>
   ${body}
 </body>
@@ -309,7 +314,7 @@ configRouter.get("/", async (c) => {
 </div>
 ${webhookInstructions}`;
 
-  return c.html(layout("Projects", body));
+  return c.html(layout("Projects", body, { showProjectsLink: false }));
 });
 
 // ─── GET /new — New project form ───────────────────────────────────────────────
