@@ -22,6 +22,7 @@ All per-project settings are stored in the `project_configs` database table and 
 
 Key fields:
 - **Oz environment ID** — one per Jira project (mono-repo checked out in each).
+- **Preview deployment URL** — optional Coolify preview host (no scheme), used to generate `https://pr-{N}.{host}` links.
 - **Default model** — LLM model for agent runs. Can be overridden per-ticket via a Jira custom field.
 - **Model override field** — Jira custom field ID (e.g., `customfield_10050`). If a ticket has a value in this field, it overrides the project default.
 - **Skills** — selected from the GitHub repo's skill directories via the config UI.

@@ -45,7 +45,7 @@ See [configuration.md](./configuration.md) for the Jira Automation rule setup. T
 
 ## PR Merge to Done
 
-When a worker run completes successfully, HyperDispatch stores the PR URL artifact and moves the issue to `In Review`. The monitor then polls GitHub for `succeeded` runs with PR URLs. Once a PR is merged, HyperDispatch transitions the matching Jira issue to `Done`.
+When a worker run completes successfully, HyperDispatch stores the PR URL artifact and moves the issue to `In Review`. If the project has `deployment_url` configured, it also posts a one-time preview link comment to the PR using `https://pr-{N}.{deployment_url}`. The monitor then polls GitHub for `succeeded` runs with PR URLs. Once a PR is merged, HyperDispatch transitions the matching Jira issue to `Done`.
 
 ## Board Validation
 

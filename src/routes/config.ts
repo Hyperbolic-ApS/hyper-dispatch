@@ -160,6 +160,11 @@ function syncSkills() {
       <div class="hint">Format: owner/repo</div>
     </div>
     <div class="field">
+      <label for="deployment_url">Preview Deployment URL <span style="font-weight:400;color:#6b7280">(optional)</span></label>
+      <input type="text" id="deployment_url" name="deployment_url" value="${v.deployment_url ?? ""}" placeholder="preview.example.com">
+      <div class="hint">Base domain (no scheme) for Coolify per-PR previews. Resulting URLs look like <code>https://pr-123.preview.example.com</code>. Leave blank to disable preview links.</div>
+    </div>
+    <div class="field">
       <label for="default_model">Default Model</label>
       <input type="text" id="default_model" name="default_model" value="${v.default_model ?? ""}">
       <div class="hint">e.g. claude-sonnet-4-5</div>
@@ -286,6 +291,7 @@ configRouter.post("/", async (c) => {
     board_id: parseInt(String(form.board_id), 10),
     oz_env_id: String(form.oz_env_id),
     github_repo: String(form.github_repo),
+    deployment_url: form.deployment_url ? String(form.deployment_url) : null,
     default_model: form.default_model ? String(form.default_model) : null,
     model_field_id: form.model_field_id ? String(form.model_field_id) : null,
     skills,
@@ -342,6 +348,7 @@ configRouter.post("/:projectKey", async (c) => {
     board_id: parseInt(String(form.board_id), 10),
     oz_env_id: String(form.oz_env_id),
     github_repo: String(form.github_repo),
+    deployment_url: form.deployment_url ? String(form.deployment_url) : null,
     default_model: form.default_model ? String(form.default_model) : null,
     model_field_id: form.model_field_id ? String(form.model_field_id) : null,
     skills,

@@ -4,6 +4,7 @@ CREATE TABLE IF NOT EXISTS project_configs (
   board_id       INTEGER NOT NULL,
   oz_env_id      TEXT NOT NULL,
   github_repo    TEXT NOT NULL,
+  deployment_url TEXT,
   default_model  TEXT,
   model_field_id TEXT,
   skills         TEXT[] NOT NULL DEFAULT ARRAY[]::TEXT[],

@@ -12,7 +12,7 @@ Jira Automation (webhook) → HyperDispatch → Oz Cloud Agents → PRs
 2. HyperDispatch checks dependencies — if all blockers are resolved, the ticket is eligible.
 3. The scheduler checks concurrency limits and queues or dispatches.
 4. The agent spawner creates an Oz cloud agent run with the configured skill, model, and environment.
-5. The run monitor polls Oz for completion, then updates the state store and transitions the Jira ticket.
+5. The run monitor polls Oz for completion, updates the state store, transitions the Jira ticket, and posts a preview deployment link on the GitHub PR when configured.
 
 ## Components
 

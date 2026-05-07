@@ -1,6 +1,11 @@
 import { Hono } from "hono";
-import { getAllDispatchRuns, getRunCountsByStatus } from "../db/config-queries.js";
+import {
+  getAllDispatchRuns,
+  getRunCountsByStatus,
+  listProjectConfigs,
+} from "../db/config-queries.js";
 import { env } from "../config/env.js";
+import { buildPreviewUrl } from "../preview/url.js";
 
 export const dashboardRouter = new Hono();
 
@@ -55,10 +60,12 @@ const CSS = `
 `;
 
 dashboardRouter.get("/", async (c) => {
-  const [runs, countRows] = await Promise.all([
+  const [runs, countRows, configs] = await Promise.all([
     getAllDispatchRuns(),
     getRunCountsByStatus(),
+    listProjectConfigs(),
   ]);
+  const configByKey = new Map(configs.map((cfg) => [cfg.project_key, cfg]));
 
   const counts: Record<string, number> = {
     running: 0,
@@ -94,12 +101,19 @@ dashboardRouter.get("/", async (c) => {
       run.blocked_by && run.blocked_by.length > 0
         ? `<div class="blocked-by">Blocked by: ${run.blocked_by.join(", ")}</div>`
         : "";
-    const actionLink =
-      run.status === "running" && run.session_link
-        ? `<a href="${run.session_link}" target="_blank">Session</a>`
-        : run.status === "succeeded" && run.pr_url
-          ? `<a href="${run.pr_url}" target="_blank">PR</a>`
-          : "-";
+    const cfg = configByKey.get(run.project_key);
+    const previewUrl = buildPreviewUrl(run.pr_url, cfg?.deployment_url ?? null);
+    const links: string[] = [];
+    if (run.status === "running" && run.session_link) {
+      links.push(`<a href="${run.session_link}" target="_blank">Session</a>`);
+    }
+    if (run.pr_url) {
+      links.push(`<a href="${run.pr_url}" target="_blank">PR</a>`);
+    }
+    if (previewUrl) {
+      links.push(`<a href="${previewUrl}" target="_blank">Preview</a>`);
+    }
+    const actionCell = links.length > 0 ? links.join(" · ") : "-";
 
     return `<tr>
       <td><a href="${ticketUrl}" target="_blank">${run.ticket_key}</a></td>
@@ -109,7 +123,7 @@ dashboardRouter.get("/", async (c) => {
       <td>${runtime}</td>
       <td><code>${branchName}</code></td>
       <td>${ozTaskLink}</td>
-      <td>${actionLink}${blockedByHtml}</td>
+      <td>${actionCell}${blockedByHtml}</td>
     </tr>`;
   });
 
