@@ -33,6 +33,7 @@ jobs:
         uses: warpdotdev/oz-agent-action@v1
         with:
           skill: pr-review-commenting
+          model: gpt-5-3-codex-low
           mcp: |
             {
               "ref": {
