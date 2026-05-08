@@ -161,10 +161,6 @@ def trigger_hit(name, di, meta):
 
     if "diff" in spec:
         if not re.search(spec["diff"], di["diff"], re.I):
-            # If there's also a file pattern that matched, diff is optional
-            if "file" not in spec:
-                return False
-            # Both file AND diff required when both specified
             return False
 
     if "branch" in spec and not re.search(spec["branch"], meta["branch"], re.I):

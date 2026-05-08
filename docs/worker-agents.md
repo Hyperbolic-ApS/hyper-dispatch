@@ -52,7 +52,7 @@ Workflow file: `.github/workflows/agent-revision.yml`
 
 1. Extracts the Jira ticket key from the branch name (`agent/{ticket-key}` → `{ticket-key}`).
 2. Collects the review summary and all inline comments from the latest "changes requested" review.
-3. Spawns an Oz agent via `warpdotdev/oz-agent-action@main` with a prompt containing the PR URL, branch, and all review feedback.
+3. Spawns an Oz agent via `warpdotdev/oz-agent-action@v1` with a prompt containing the PR URL, branch, and all review feedback.
 4. The agent commits its changes directly to the existing PR branch and does **not** open a new PR.
 
 ### Setup
