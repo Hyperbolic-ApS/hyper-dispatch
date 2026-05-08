@@ -28,7 +28,7 @@ high_risk_review:
     - data deletion or destructive updates
 
 critical_review:
-  model: gpt-5-3-codex
+  model: gpt-5-3-codex-xhigh
   trigger:
     - production incident fix
     - large refactor in critical path
