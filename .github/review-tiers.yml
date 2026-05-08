@@ -1,0 +1,42 @@
+# PR review model selection tiers.
+# The selector script (.github/scripts/select-review-tier.py) evaluates the
+# diff against each tier's triggers, highest tier first. First match wins.
+# If nothing matches, the default tier is used.
+
+default_review:
+  model: gpt-5.1-codex
+  reasoning_effort: low
+  max_output_tokens: 1200
+  purpose: "catch real bugs cheaply"
+
+escalated_review:
+  model: gpt-5.1-codex
+  reasoning_effort: medium
+  trigger:
+    - risk_score >= 3
+    - tests changed
+    - public API changed
+    - database query logic changed
+    - auth-adjacent code changed
+
+high_risk_review:
+  model: gpt-5.2-codex
+  reasoning_effort: high
+  trigger:
+    - migrations
+    - permissions
+    - payment or billing logic
+    - concurrency
+    - event processing
+    - security boundary
+    - data deletion or destructive updates
+
+critical_review:
+  model: gpt-5.3-codex
+  reasoning_effort: xhigh
+  trigger:
+    - production incident fix
+    - large refactor in critical path
+    - authentication/authorization rewrite
+    - schema migration with irreversible data changes
+    - model uncertainty after lower-tier review

@@ -21,6 +21,18 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Select review tier
+        id: tier
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
+          PR_BRANCH: ${{ github.event.pull_request.head.ref }}
+        run: python3 .github/scripts/select-review-tier.py
 
       - name: Install and authenticate Atlassian CLI
         run: |
@@ -33,7 +45,7 @@ jobs:
         uses: warpdotdev/oz-agent-action@v1
         with:
           skill: pr-review-commenting
-          model: gpt-5-3-codex-low
+          model: ${{ steps.tier.outputs.model }}
           mcp: |
             {
               "ref": {
