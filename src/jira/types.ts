@@ -78,10 +78,8 @@ export interface JiraIssue {
 }
 
 export interface JiraSearchResponse {
-  startAt: number;
-  maxResults: number;
-  total: number;
   issues: JiraIssue[];
+  nextPageToken?: string;
 }
 
 export interface JiraTransition {
