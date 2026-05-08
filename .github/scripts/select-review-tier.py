@@ -57,14 +57,24 @@ def run(cmd):
     return subprocess.run(cmd, shell=True, capture_output=True, text=True).stdout.strip()
 
 
+# Files that should not trigger risk signals (docs, config, assets, CI)
+NON_CODE = re.compile(
+    r"(\.(md|txt|rst|adoc|csv|svg|png|jpg|gif|ico|lock|toml|yml|yaml|json)$"
+    r"|\.github/)", re.I
+)
+
+
 def diff_info(base, head):
-    files = [f for f in run(f"git diff --name-only {base}..{head}").splitlines() if f]
+    all_files = [f for f in run(f"git diff --name-only {base}..{head}").splitlines() if f]
+    code_files = [f for f in all_files if not NON_CODE.search(f)]
     stat = run(f"git diff --shortstat {base}..{head}")
     nums = re.findall(r"(\d+)", stat)
     lines = sum(int(n) for n in nums[1:]) if len(nums) > 1 else 0
-    # Only fetch full diff content if file count is manageable
-    diff_text = run(f"git diff {base}..{head}") if len(files) <= 200 else ""
-    return {"files": files, "file_count": len(files), "lines": lines, "diff": diff_text}
+    # Only fetch diff for code files to avoid false positives in docs
+    diff_text = ""
+    if code_files and len(code_files) <= 200:
+        diff_text = run(f"git diff {base}..{head} -- {' '.join(repr(f) for f in code_files)}")
+    return {"files": code_files, "all_files": all_files, "file_count": len(all_files), "lines": lines, "diff": diff_text}
 
 # ---------------------------------------------------------------------------
 # Trigger → pattern mapping
@@ -96,8 +106,8 @@ TRIGGERS = {
         "file": r"payment|billing|invoice|subscription|ledger|pricing|charge|stripe",
     },
     "concurrency": {
-        "file": r"lock|mutex|semaphore|concurrent|atomic|worker|thread|queue",
-        "diff": r"synchronized|ReentrantLock|Mutex|\.lock\(|atomic|WaitGroup|Semaphore",
+        "file": r"lock|mutex|semaphore|concurrent|atomic|thread|worker.*(pool|thread|process)|queue.*(process|consum|handl)",
+        "diff": r"synchronized|ReentrantLock|Mutex|\.lock\(|atomic|WaitGroup|Semaphore|Promise\.all|asyncio\.gather",
     },
     "event processing": {
         "file": r"event.*(process|handler)|consumer|producer|subscriber|listener|broker",
