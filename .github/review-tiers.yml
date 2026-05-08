@@ -4,14 +4,11 @@
 # If nothing matches, the default tier is used.
 
 default_review:
-  model: gpt-5-2-codex
-  reasoning_effort: low
-  max_output_tokens: 1200
+  model: gpt-5-2-codex-low
   purpose: "catch real bugs cheaply"
 
 escalated_review:
-  model: gpt-5-2-codex
-  reasoning_effort: medium
+  model: gpt-5-2-codex-medium
   trigger:
     - risk_score >= 3
     - tests changed
@@ -20,8 +17,7 @@ escalated_review:
     - auth-adjacent code changed
 
 high_risk_review:
-  model: gpt-5-2-codex
-  reasoning_effort: high
+  model: gpt-5-2-codex-high
   trigger:
     - migrations
     - permissions
@@ -33,7 +29,6 @@ high_risk_review:
 
 critical_review:
   model: gpt-5-3-codex
-  reasoning_effort: xhigh
   trigger:
     - production incident fix
     - large refactor in critical path

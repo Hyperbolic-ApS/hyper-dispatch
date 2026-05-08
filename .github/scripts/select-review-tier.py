@@ -226,8 +226,7 @@ def main():
 
     tier_name, tier, signals = select_tier(config, di, meta)
 
-    model = tier.get("model", "gpt-5.1-codex")
-    effort = tier.get("reasoning_effort", "low")
+    model = tier.get("model", "gpt-5-2-codex-low")
 
     # Emit step outputs
     gh_out = os.environ.get("GITHUB_OUTPUT", "")
@@ -235,10 +234,9 @@ def main():
         with open(gh_out, "a") as f:
             f.write(f"tier={tier_name}\n")
             f.write(f"model={model}\n")
-            f.write(f"reasoning_effort={effort}\n")
 
     fired = [name for name in TRIGGERS if trigger_hit(name, di, meta)]
-    print(f"Tier: {tier_name}  |  Model: {model}  |  Effort: {effort}")
+    print(f"Tier: {tier_name}  |  Model: {model}")
     print(f"Signals: {signals}  |  Files: {di['file_count']}  |  Lines: {di['lines']}")
     if fired:
         print(f"Matched: {', '.join(fired)}")
