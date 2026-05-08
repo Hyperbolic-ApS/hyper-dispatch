@@ -54,7 +54,8 @@ def parse_config(text):
 # ---------------------------------------------------------------------------
 
 def run(cmd):
-    return subprocess.run(cmd, shell=True, capture_output=True, text=True).stdout.strip()
+    """Run a command given as a list of arguments. Never uses shell=True."""
+    return subprocess.run(cmd, capture_output=True, text=True).stdout.strip()
 
 
 # Files that should not trigger risk signals (docs, config, assets, CI)
@@ -65,15 +66,16 @@ NON_CODE = re.compile(
 
 
 def diff_info(base, head):
-    all_files = [f for f in run(f"git diff --name-only {base}..{head}").splitlines() if f]
+    ref = f"{base}..{head}"
+    all_files = [f for f in run(["git", "diff", "--name-only", ref]).splitlines() if f]
     code_files = [f for f in all_files if not NON_CODE.search(f)]
-    stat = run(f"git diff --shortstat {base}..{head}")
+    stat = run(["git", "diff", "--shortstat", ref])
     nums = re.findall(r"(\d+)", stat)
     lines = sum(int(n) for n in nums[1:]) if len(nums) > 1 else 0
     # Only fetch diff for code files to avoid false positives in docs
     diff_text = ""
     if code_files and len(code_files) <= 200:
-        diff_text = run(f"git diff {base}..{head} -- {' '.join(repr(f) for f in code_files)}")
+        diff_text = run(["git", "diff", ref, "--"] + code_files)
     return {"files": code_files, "all_files": all_files, "file_count": len(all_files), "lines": lines, "diff": diff_text}
 
 # ---------------------------------------------------------------------------

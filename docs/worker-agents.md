@@ -82,8 +82,12 @@ Workflow file: `.github/workflows/oz-pr-review-commenting.yml`
 
 ### Setup
 
-- **Required secret**: `WARP_API_KEY`
-- **Optional var**: `WARP_AGENT_PROFILE`
+- **Required secrets**: `WARP_API_KEY`, `REF_API_KEY`, `EXA_API_KEY`
+- **Optional var**: `WARP_AGENT_PROFILE` — Oz agent profile (uses the Oz platform default if unset).
+- **Conditional secrets** (only required when the PR title or branch name references a Jira ticket key, e.g. `PROJ-123`):
+  - `JIRA_API_TOKEN` — Atlassian API token
+  - `JIRA_EMAIL` — Atlassian account email
+  - `JIRA_SITE` (var) — Atlassian site name (e.g. `your-org`)
 
 ## Default Worker Skill
 
