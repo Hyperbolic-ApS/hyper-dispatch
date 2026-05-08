@@ -99,9 +99,26 @@ actions:
    - If provided, validate it matches `pr-technical-review` output format.
    - If missing, execute `pr-technical-review` for the same PR context and use that artifact.
 2. Build the comment body exactly once from the review artifact.
-3. Post as a top-level PR comment.
-4. If an earlier bot comment from the same run exists, update that comment instead of duplicating.
-5. Confirm the posted comment URL in output.
+3. Write the full comment body to a fixed file path in a **single shell command**:
+   ```bash
+   cat > /tmp/pr_review_comment.md << 'COMMENT_EOF'
+   <full comment body here>
+   COMMENT_EOF
+   ```
+   Do NOT store the path in a shell variable and reference it in a later shell call — each tool call runs in a separate shell and variables do not persist between calls.
+4. Post or update using the file directly:
+   - **Create** (no existing comment):
+     ```bash
+     jq -n --rawfile body /tmp/pr_review_comment.md '{"body": $body}' \
+       | gh api repos/{owner}/{repo}/issues/{pr_number}/comments -X POST --input -
+     ```
+   - **Update** (existing comment found):
+     ```bash
+     jq -n --rawfile body /tmp/pr_review_comment.md '{"body": $body}' \
+       | gh api repos/{owner}/{repo}/issues/comments/{comment_id} -X PATCH --input -
+     ```
+   Using `--input -` with piped JSON avoids shell variable expansion and correctly handles multiline content and special characters.
+5. Confirm the posted/updated comment URL in output.
 
 ## Quality Bar
 
