@@ -20,7 +20,7 @@ jobs:
       github.event.pull_request.user.login != 'github-actions[bot]'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Install and authenticate Atlassian CLI
         run: |
@@ -57,3 +57,5 @@ jobs:
             Ensure the comment follows the pr-review-commenting format with severity-grouped findings and explicit action items.
           warp_api_key: ${{ secrets.WARP_API_KEY }}
           profile: ${{ vars.WARP_AGENT_PROFILE || '' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
