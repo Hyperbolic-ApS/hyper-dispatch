@@ -122,8 +122,10 @@ Run the project's test suite:
   - `npm test`
   - `npm run test:coverage`
 - If tests fail due to your changes, fix them and re-run. Iterate until green.
+- Standard runs must not rely on skipped tests (`it.skip` / `describe.skip`); use env-gated inclusion for external integrations instead.
 - Co-locate new tests as `<source>.test.ts` and reuse fixtures from `src/test/fixtures.ts`.
 - Backend tickets touching `src/orchestration/`, `src/webhook/`, `src/validator/`, or `src/db/queries.ts` MUST add or update unit tests.
+- Coverage target for backend initiatives is ≥75% in `src/orchestration/`, `src/webhook/`, and `src/validator/`.
 
 ## 9. Lint & Type Check
 
