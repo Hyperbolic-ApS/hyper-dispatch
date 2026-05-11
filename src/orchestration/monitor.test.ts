@@ -6,15 +6,27 @@ import {
   makeProjectConfig,
 } from "../test/fixtures.js";
 
-const getRunsByStatusMock = vi.fn();
-const updateRunStatusMock = vi.fn();
-const getProjectConfigMock = vi.fn();
-const jiraGetTransitionsMock = vi.fn();
-const jiraTransitionIssueMock = vi.fn();
-const jiraGetIssueMock = vi.fn();
-const ozRetrieveMock = vi.fn();
-const ozCancelMock = vi.fn();
-const githubPullGetMock = vi.fn();
+const {
+  getRunsByStatusMock,
+  updateRunStatusMock,
+  getProjectConfigMock,
+  jiraGetTransitionsMock,
+  jiraTransitionIssueMock,
+  jiraGetIssueMock,
+  ozRetrieveMock,
+  ozCancelMock,
+  githubPullGetMock,
+} = vi.hoisted(() => ({
+  getRunsByStatusMock: vi.fn(),
+  updateRunStatusMock: vi.fn(),
+  getProjectConfigMock: vi.fn(),
+  jiraGetTransitionsMock: vi.fn(),
+  jiraTransitionIssueMock: vi.fn(),
+  jiraGetIssueMock: vi.fn(),
+  ozRetrieveMock: vi.fn(),
+  ozCancelMock: vi.fn(),
+  githubPullGetMock: vi.fn(),
+}));
 vi.mock("../config/env.js", () => ({
   env: {
     WARP_API_KEY: "test-key",
@@ -162,6 +174,45 @@ describe("extractPrUrl", () => {
 
     expect(extractPrUrl(artifacts)).toBe("https://github.com/warp/hyper-dispatch/pull/789");
   });
+
+  it("falls back to status message pull request URL when artifacts are missing", () => {
+    const statusMessage =
+      "Implemented HYDI-33 and opened draft PR https://github.com/warp/hyper-dispatch/pull/456.";
+
+    expect(extractPrUrl(undefined, statusMessage)).toBe(
+      "https://github.com/warp/hyper-dispatch/pull/456"
+    );
+  });
+
+  it("prefers artifact pull request URL over status message fallback", () => {
+    const artifacts = [
+      {
+        artifact_type: "PULL_REQUEST",
+        data: { url: "https://github.com/warp/hyper-dispatch/pull/789" },
+      },
+    ] as unknown as ArtifactItem[];
+    const statusMessage =
+      "Opened draft PR https://github.com/warp/hyper-dispatch/pull/456 while running tests.";
+
+    expect(extractPrUrl(artifacts, statusMessage)).toBe(
+      "https://github.com/warp/hyper-dispatch/pull/789"
+    );
+  });
+
+  it("falls back to status message when pull-request artifact URL is invalid", () => {
+    const artifacts = [
+      {
+        artifact_type: "PULL_REQUEST",
+        data: { url: "https://github.com/warp/hyper-dispatch/issues/456" },
+      },
+    ] as unknown as ArtifactItem[];
+    const statusMessage =
+      "Opened draft PR https://github.com/warp/hyper-dispatch/pull/456 while running tests.";
+
+    expect(extractPrUrl(artifacts, statusMessage)).toBe(
+      "https://github.com/warp/hyper-dispatch/pull/456"
+    );
+  });
 });
 describe("checkRuns", () => {
   it("marks succeeded running runs and transitions Jira to In Review", async () => {
@@ -307,5 +358,43 @@ describe("checkRuns", () => {
       expect.objectContaining({ pr_has_conflicts: true })
     );
     expect(jiraTransitionIssueMock).toHaveBeenCalledWith("HYDI-9", "100");
+  });
+
+  it("stores PR URL from status message when PR artifact is missing", async () => {
+    getRunsByStatusMock
+      .mockResolvedValueOnce([
+        makeDispatchRun({
+          ticket_key: "HYDI-33",
+          status: "running",
+          run_id: "run_33",
+          project_key: "HYDI",
+        }),
+      ])
+      .mockResolvedValueOnce([]);
+    ozRetrieveMock.mockResolvedValue(
+      makeOzRun({
+        state: "SUCCEEDED",
+        status_message: {
+          message:
+            "Implemented HYDI-33 and opened draft PR https://github.com/org/repo/pull/28.",
+        },
+        artifacts: [],
+      })
+    );
+    getProjectConfigMock.mockResolvedValue(makeProjectConfig());
+    jiraGetTransitionsMock.mockResolvedValue({
+      transitions: [{ id: "22", name: "In Review" }],
+    });
+
+    const { checkRuns } = await import("./monitor.js");
+    await checkRuns();
+
+    expect(updateRunStatusMock).toHaveBeenCalledWith(
+      "HYDI-33",
+      expect.objectContaining({
+        status: "succeeded",
+        pr_url: "https://github.com/org/repo/pull/28",
+      })
+    );
   });
 });

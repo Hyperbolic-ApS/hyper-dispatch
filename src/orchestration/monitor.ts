@@ -35,16 +35,40 @@ function getGithubClient(): Octokit {
 }
 
 /**
- * Extract the GitHub PR URL from a run's artifact list, if present.
+ * Extract a GitHub pull-request URL from a run status message.
  */
-export function extractPrUrl(artifacts: ArtifactItem[] | undefined): string | null {
-  if (!artifacts) return null;
-  for (const artifact of artifacts) {
-    if (artifact.artifact_type === "PULL_REQUEST") {
-      return artifact.data.url ?? null;
+export function extractPrUrlFromStatusMessage(
+  statusMessage: string | null | undefined
+): string | null {
+  if (!statusMessage) return null;
+
+  const candidates = statusMessage.match(/https:\/\/github\.com\/[^\s)]+/gi) ?? [];
+  for (const candidate of candidates) {
+    const normalized = candidate.replace(/[.,);]+$/, "");
+    if (parseGithubPullRequestUrl(normalized)) {
+      return normalized;
     }
   }
   return null;
+}
+
+/**
+ * Extract the GitHub PR URL from run artifacts, falling back to status text.
+ */
+export function extractPrUrl(
+  artifacts: ArtifactItem[] | undefined,
+  statusMessage?: string | null
+): string | null {
+  if (artifacts) {
+    for (const artifact of artifacts) {
+      if (artifact.artifact_type !== "PULL_REQUEST") continue;
+      const artifactUrl = artifact.data.url;
+      if (typeof artifactUrl === "string" && parseGithubPullRequestUrl(artifactUrl)) {
+        return artifactUrl;
+      }
+    }
+  }
+  return extractPrUrlFromStatusMessage(statusMessage);
 }
 
 export function parseGithubPullRequestUrl(
@@ -158,7 +182,7 @@ export async function checkRuns(): Promise<void> {
       const state = ozRun.state;
 
       if (state === "SUCCEEDED") {
-        const prUrl = extractPrUrl(ozRun.artifacts);
+        const prUrl = extractPrUrl(ozRun.artifacts, ozRun.status_message?.message);
         const sessionLink = ozRun.session_link ?? null;
 
         await updateRunStatus(run.ticket_key, {
