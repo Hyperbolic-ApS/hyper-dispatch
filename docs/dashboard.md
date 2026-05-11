@@ -45,6 +45,7 @@ The config UI allows managing project configurations:
   - Must be a valid JSON object
   - Save is blocked for invalid JSON
   - Validation errors include the JSON line number
+- New project create validates required fields server-side and re-renders the form with an inline missing-fields error when required values are blank
 - Validate Jira board setup
 
 ## JSON API

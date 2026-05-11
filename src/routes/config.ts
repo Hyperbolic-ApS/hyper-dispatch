@@ -432,6 +432,46 @@ configRouter.get("/new", (c) => {
 configRouter.post("/", async (c) => {
   const form = await c.req.parseBody();
   const mcpServersRaw = String(form.mcp_servers ?? "");
+  const requiredFields = [
+    "project_key",
+    "jira_cloud_id",
+    "board_id",
+    "oz_env_id",
+    "github_repo",
+  ];
+  const missingRequiredFields = requiredFields.filter((field) => {
+    const value = form[field];
+    return typeof value !== "string" || value.trim().length === 0;
+  });
+
+  if (missingRequiredFields.length > 0) {
+    const body = `
+<h1>New Project</h1>
+<p class="error-text">Missing required fields: ${missingRequiredFields.join(", ")}</p>
+${projectForm("/config", {
+      project_key: String(form.project_key ?? ""),
+      jira_cloud_id: String(form.jira_cloud_id ?? ""),
+      board_id: Number.parseInt(String(form.board_id ?? ""), 10),
+      oz_env_id: String(form.oz_env_id ?? ""),
+      github_repo: String(form.github_repo ?? ""),
+      default_model: form.default_model ? String(form.default_model) : null,
+      model_field_id: form.model_field_id ? String(form.model_field_id) : null,
+      backlog_column_name: String(form.backlog_column_name ?? ""),
+      to_do_column_name: String(form.to_do_column_name ?? ""),
+      in_progress_column_name: String(form.in_progress_column_name ?? ""),
+      in_review_column_name: String(form.in_review_column_name ?? ""),
+      done_column_name: String(form.done_column_name ?? ""),
+      skills: String(form.skills ?? "")
+        .split(",")
+        .map((s) => s.trim())
+        .filter(Boolean),
+      mcp_servers: null,
+      jira_email: form.jira_email ? String(form.jira_email) : null,
+      active: form.active === "true",
+    })}
+`;
+    return c.html(layout("New Project", body), 400);
+  }
 
   const skillsRaw = String(form.skills ?? "");
   const skills = skillsRaw
@@ -488,6 +528,49 @@ configRouter.post("/", async (c) => {
   });
 
   return c.redirect("/config");
+});
+configRouter.post("/skills", async (c) => {
+  let payload:
+    | { repo?: unknown; projectKey?: unknown; githubPat?: unknown }
+    | undefined;
+  try {
+    payload = await c.req.json();
+  } catch {
+    return c.json({ error: "Invalid JSON payload" }, 400);
+  }
+
+  const repoParam = typeof payload?.repo === "string" ? payload.repo : "";
+  const projectKey =
+    typeof payload?.projectKey === "string" ? payload.projectKey : "";
+  const githubPat =
+    typeof payload?.githubPat === "string" ? payload.githubPat : "";
+
+  if (!repoParam) {
+    return c.json({ error: "Missing repo value (format: owner/repo)" }, 400);
+  }
+
+  const parts = repoParam.split("/");
+  if (parts.length < 2 || !parts[0] || !parts[1]) {
+    return c.json({ error: "Invalid repo format. Use owner/repo" }, 400);
+  }
+
+  const [owner, repo] = parts;
+
+  try {
+    const existingConfig =
+      projectKey.trim().length > 0
+        ? await getProjectConfig(projectKey.trim())
+        : null;
+    const tokenForDiscovery =
+      githubPat.trim().length > 0
+        ? githubPat.trim()
+        : existingConfig?.github_pat ?? undefined;
+    const skills = await discoverSkills(owner!, repo!, "main", tokenForDiscovery);
+    return c.json(skills);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    return c.json({ error: message }, 500);
+  }
 });
 
 // ─── GET /:projectKey — Edit form ──────────────────────────────────────────────
@@ -586,50 +669,6 @@ configRouter.post("/:projectKey/delete", async (c) => {
   return c.redirect("/config");
 });
 
-// ─── GET /:projectKey/skills — Discover skills from GitHub repo ────────────────
-configRouter.post("/skills", async (c) => {
-  let payload:
-    | { repo?: unknown; projectKey?: unknown; githubPat?: unknown }
-    | undefined;
-  try {
-    payload = await c.req.json();
-  } catch {
-    return c.json({ error: "Invalid JSON payload" }, 400);
-  }
-
-  const repoParam = typeof payload?.repo === "string" ? payload.repo : "";
-  const projectKey =
-    typeof payload?.projectKey === "string" ? payload.projectKey : "";
-  const githubPat =
-    typeof payload?.githubPat === "string" ? payload.githubPat : "";
-
-  if (!repoParam) {
-    return c.json({ error: "Missing repo value (format: owner/repo)" }, 400);
-  }
-
-  const parts = repoParam.split("/");
-  if (parts.length < 2 || !parts[0] || !parts[1]) {
-    return c.json({ error: "Invalid repo format. Use owner/repo" }, 400);
-  }
-
-  const [owner, repo] = parts;
-
-  try {
-    const existingConfig =
-      projectKey.trim().length > 0
-        ? await getProjectConfig(projectKey.trim())
-        : null;
-    const tokenForDiscovery =
-      githubPat.trim().length > 0
-        ? githubPat.trim()
-        : existingConfig?.github_pat ?? undefined;
-    const skills = await discoverSkills(owner!, repo!, "main", tokenForDiscovery);
-    return c.json(skills);
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    return c.json({ error: message }, 500);
-  }
-});
 
 configRouter.get("/:projectKey/skills", async (c) => {
   const repoParam = c.req.query("repo");

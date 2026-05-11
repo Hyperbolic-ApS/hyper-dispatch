@@ -63,6 +63,11 @@ View/edit form for a project (HTML page).
 ### `POST /config`
 Create a new project configuration.
 
+Behavior:
+- Requires non-empty values for `project_key`, `jira_cloud_id`, `board_id`, `oz_env_id`, and `github_repo`.
+- On missing required fields, responds with `400` and re-renders the New Project form including an inline `Missing required fields: ...` error message.
+- `mcp_servers` must be valid JSON object input when provided; invalid input returns `400` with a parse message that includes line information when available.
+
 ### `PUT /config/:projectKey`
 Update an existing project configuration.
 
