@@ -3,7 +3,13 @@ import OzAPI from "oz-agent-sdk";
 import type { ArtifactItem } from "oz-agent-sdk/resources/agent/runs.js";
 import { env } from "../config/env.js";
 import * as jira from "../jira/client.js";
-import { getRunsByStatus, updateRunStatus, getProjectConfig } from "../db/queries.js";
+import {
+  getRunsByStatus,
+  updateRunStatus,
+  getProjectConfig,
+  getRunsBlockedBy,
+  removeBlocker,
+} from "../db/queries.js";
 import { resolveJiraColumnMappings } from "../jira/columns.js";
 
 const MONITOR_INTERVAL_MS = 30_000;
@@ -146,8 +152,21 @@ async function transitionMergedPrsToDone(): Promise<void> {
       }
 
       await jira.transitionIssue(run.ticket_key, doneTransition.id);
+      let unblockedCount = 0;
+      try {
+        const blockedRuns = await getRunsBlockedBy(run.ticket_key);
+        for (const blockedRun of blockedRuns) {
+          const updated = await removeBlocker(blockedRun.ticket_key, run.ticket_key);
+          if (updated) unblockedCount++;
+        }
+      } catch (err) {
+        console.warn(
+          `[monitor] Failed to unblock dependents for ${run.ticket_key}:`,
+          err
+        );
+      }
       console.log(
-        `[monitor] ${run.ticket_key} moved to Done after PR merge: ${run.pr_url}`
+        `[monitor] ${run.ticket_key} moved to Done after PR merge: ${run.pr_url} (unblocked: ${unblockedCount})`
       );
     } catch (err) {
       console.warn(

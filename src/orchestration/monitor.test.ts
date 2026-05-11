@@ -10,6 +10,8 @@ const {
   getRunsByStatusMock,
   updateRunStatusMock,
   getProjectConfigMock,
+  getRunsBlockedByMock,
+  removeBlockerMock,
   jiraGetTransitionsMock,
   jiraTransitionIssueMock,
   jiraGetIssueMock,
@@ -20,6 +22,8 @@ const {
   getRunsByStatusMock: vi.fn(),
   updateRunStatusMock: vi.fn(),
   getProjectConfigMock: vi.fn(),
+  getRunsBlockedByMock: vi.fn(),
+  removeBlockerMock: vi.fn(),
   jiraGetTransitionsMock: vi.fn(),
   jiraTransitionIssueMock: vi.fn(),
   jiraGetIssueMock: vi.fn(),
@@ -39,6 +43,8 @@ vi.mock("../db/queries.js", () => ({
   getRunsByStatus: getRunsByStatusMock,
   updateRunStatus: updateRunStatusMock,
   getProjectConfig: getProjectConfigMock,
+  getRunsBlockedBy: getRunsBlockedByMock,
+  removeBlocker: removeBlockerMock,
 }));
 
 vi.mock("../jira/client.js", () => ({
@@ -75,6 +81,8 @@ beforeEach(() => {
   getRunsByStatusMock.mockReset();
   updateRunStatusMock.mockReset();
   getProjectConfigMock.mockReset();
+  getRunsBlockedByMock.mockReset();
+  removeBlockerMock.mockReset();
   jiraGetTransitionsMock.mockReset();
   jiraTransitionIssueMock.mockReset();
   jiraGetIssueMock.mockReset();
@@ -349,6 +357,20 @@ describe("checkRuns", () => {
     jiraGetTransitionsMock.mockResolvedValue({
       transitions: [{ id: "100", name: "Done" }],
     });
+    getRunsBlockedByMock.mockResolvedValue([
+      makeDispatchRun({
+        ticket_key: "HYDI-10",
+        status: "blocked",
+        blocked_by: ["HYDI-9"],
+      }),
+    ]);
+    removeBlockerMock.mockResolvedValue(
+      makeDispatchRun({
+        ticket_key: "HYDI-10",
+        status: "queued",
+        blocked_by: [],
+      })
+    );
 
     const { checkRuns } = await import("./monitor.js");
     await checkRuns();
@@ -358,6 +380,8 @@ describe("checkRuns", () => {
       expect.objectContaining({ pr_has_conflicts: true })
     );
     expect(jiraTransitionIssueMock).toHaveBeenCalledWith("HYDI-9", "100");
+    expect(getRunsBlockedByMock).toHaveBeenCalledWith("HYDI-9");
+    expect(removeBlockerMock).toHaveBeenCalledWith("HYDI-10", "HYDI-9");
   });
 
   it("stores PR URL from status message when PR artifact is missing", async () => {
