@@ -62,16 +62,12 @@ View/edit form for a project (HTML page).
 
 ### `POST /config`
 Create a new project configuration.
-Required fields: `project_key`, `jira_cloud_id`, `board_id`, `oz_env_id`, `github_repo`.
-If any required field is blank, the server returns `400` and re-renders the form with an error message.
-When `mcp_servers` is provided, it must be valid JSON object content; malformed input returns `400` with a parse error that includes a line number when available.
+If required fields are missing (`project_key`, `jira_cloud_id`, `board_id`, `oz_env_id`, `github_repo`), the server responds with `400` and re-renders the form HTML with an inline error message.
 
-### `POST /config/:projectKey`
+### `PUT /config/:projectKey`
 Update an existing project configuration.
-Blank token inputs (`github_pat`, `jira_api_token`, `jira_email`) preserve existing saved tokens.
-Column override fields are trimmed and blank values fall back to default Jira mappings.
 
-### `POST /config/:projectKey/delete`
+### `DELETE /config/:projectKey`
 Deactivate a project configuration.
 
 ### `GET /config/:projectKey/validate`
@@ -93,10 +89,10 @@ Discovers skills from the current config form values without requiring a saved p
 
 Notes:
 - `repo` is required.
-- Invalid `repo` format returns `400`.
 - `projectKey` is optional and is used to look up a saved per-project token fallback.
 - `githubPat` is optional and, when present, is used immediately for discovery.
-- GitHub discovery errors return `500` with an `error` message payload.
+- Returns `400` for malformed JSON payloads or invalid `repo` format.
+- Propagates upstream GitHub status codes when available (for example, `404` for missing repositories).
 
 **Response:**
 ```json

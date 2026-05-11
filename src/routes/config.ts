@@ -1,4 +1,4 @@
-import { Hono } from "hono";
+import { Hono, type Context } from "hono";
 import {
   listProjectConfigs,
   getProjectConfig,
@@ -9,13 +9,21 @@ import {
 } from "../db/config-queries.js";
 import { discoverSkills } from "../github/skills.js";
 import { validateJiraProject } from "../validator/jira.js";
-import {
-  DEFAULT_JIRA_COLUMN_MAPPINGS,
-  resolveJiraColumnMappings,
-} from "../jira/columns.js";
+import { DEFAULT_JIRA_COLUMN_MAPPINGS } from "../jira/columns.js";
 import { brandIconSvg, faviconDataUri } from "./branding.js";
 
 export const configRouter = new Hono();
+
+function formColumnName(
+  form: Record<string, unknown>,
+  key: string,
+  fallback: string
+): string {
+  const value = form[key];
+  if (typeof value !== "string") return fallback;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : fallback;
+}
 
 // ─── Shared CSS ────────────────────────────────────────────────────────────────
 
@@ -111,8 +119,8 @@ function parseLineNumberFromJsonError(input: string, errorMessage: string): numb
       return input.slice(0, position).split(/\r?\n/).length;
     }
   }
-  const lineCount = input.split(/\r?\n/).length;
-  return lineCount > 1 ? lineCount : null;
+
+  return null;
 }
 
 function parseMcpServersFromInput(raw: string): Record<string, unknown> | null {
@@ -350,6 +358,57 @@ document.addEventListener('DOMContentLoaded', () => {
 ${skillsPickerScript}`;
 }
 
+async function handleSkillDiscoveryPost(c: Context): Promise<Response> {
+  let payload:
+    | { repo?: unknown; projectKey?: unknown; githubPat?: unknown }
+    | undefined;
+  try {
+    payload = await c.req.json();
+  } catch {
+    return c.json({ error: "Invalid JSON payload" }, 400);
+  }
+
+  const repoParam = typeof payload?.repo === "string" ? payload.repo : "";
+  const projectKey =
+    typeof payload?.projectKey === "string" ? payload.projectKey : "";
+  const githubPat =
+    typeof payload?.githubPat === "string" ? payload.githubPat : "";
+
+  if (!repoParam) {
+    return c.json({ error: "Missing repo value (format: owner/repo)" }, 400);
+  }
+
+  const parts = repoParam.split("/");
+  if (parts.length < 2 || !parts[0] || !parts[1]) {
+    return c.json({ error: "Invalid repo format. Use owner/repo" }, 400);
+  }
+
+  const [owner, repo] = parts;
+
+  try {
+    const existingConfig =
+      projectKey.trim().length > 0
+        ? await getProjectConfig(projectKey.trim())
+        : null;
+    const tokenForDiscovery =
+      githubPat.trim().length > 0
+        ? githubPat.trim()
+        : existingConfig?.github_pat ?? undefined;
+    const skills = await discoverSkills(owner!, repo!, "main", tokenForDiscovery);
+    return c.json(skills);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    const status =
+      typeof err === "object" &&
+      err !== null &&
+      "status" in err &&
+      typeof (err as { status?: unknown }).status === "number"
+        ? (err as { status: number }).status
+        : 500;
+    return c.json({ error: message }, status as never);
+  }
+}
+
 // ─── GET / — List all projects ─────────────────────────────────────────────────
 
 configRouter.get("/", async (c) => {
@@ -424,16 +483,22 @@ configRouter.get("/new", (c) => {
 configRouter.post("/", async (c) => {
   const form = await c.req.parseBody();
   const mcpServersRaw = String(form.mcp_servers ?? "");
-  const projectKey = String(form.project_key ?? "").trim();
-  const jiraCloudId = String(form.jira_cloud_id ?? "").trim();
-  const boardIdRaw = String(form.board_id ?? "").trim();
-  const ozEnvId = String(form.oz_env_id ?? "").trim();
-  const githubRepo = String(form.github_repo ?? "").trim();
+  const requiredFields = [
+    "project_key",
+    "jira_cloud_id",
+    "board_id",
+    "oz_env_id",
+    "github_repo",
+  ] as const;
+  const missingFields = requiredFields.filter((field) => {
+    const value = form[field];
+    return typeof value !== "string" || value.trim().length === 0;
+  });
 
-  if (!projectKey || !jiraCloudId || !boardIdRaw || !ozEnvId || !githubRepo) {
+  if (missingFields.length > 0) {
     const body = `
 <h1>New Project</h1>
-<p class="error-text">Missing required fields: project_key, jira_cloud_id, board_id, oz_env_id, github_repo</p>
+<p class="error-text">Missing required fields: ${missingFields.join(", ")}</p>
 ${projectForm("/config")}`;
     return c.html(layout("New Project", body), 400);
   }
@@ -443,17 +508,6 @@ ${projectForm("/config")}`;
     .split(",")
     .map((s) => s.trim())
     .filter(Boolean);
-  const columnMappings = resolveJiraColumnMappings({
-    backlog: typeof form.backlog_column_name === "string" ? form.backlog_column_name : undefined,
-    toDo: typeof form.to_do_column_name === "string" ? form.to_do_column_name : undefined,
-    inProgress:
-      typeof form.in_progress_column_name === "string"
-        ? form.in_progress_column_name
-        : undefined,
-    inReview:
-      typeof form.in_review_column_name === "string" ? form.in_review_column_name : undefined,
-    done: typeof form.done_column_name === "string" ? form.done_column_name : undefined,
-  });
   let mcpServers: Record<string, unknown> | null;
   try {
     mcpServers = parseMcpServersFromInput(mcpServersRaw);
@@ -463,17 +517,37 @@ ${projectForm("/config")}`;
   }
 
   await createProjectConfig({
-    project_key: projectKey,
-    jira_cloud_id: jiraCloudId,
-    board_id: parseInt(boardIdRaw, 10),
-    oz_env_id: ozEnvId,
-    github_repo: githubRepo,
+    project_key: String(form.project_key),
+    jira_cloud_id: String(form.jira_cloud_id),
+    board_id: parseInt(String(form.board_id), 10),
+    oz_env_id: String(form.oz_env_id),
+    github_repo: String(form.github_repo),
     default_model: form.default_model ? String(form.default_model) : null,
-    backlog_column_name: columnMappings.backlog,
-    to_do_column_name: columnMappings.toDo,
-    in_progress_column_name: columnMappings.inProgress,
-    in_review_column_name: columnMappings.inReview,
-    done_column_name: columnMappings.done,
+    backlog_column_name: formColumnName(
+      form as Record<string, unknown>,
+      "backlog_column_name",
+      DEFAULT_JIRA_COLUMN_MAPPINGS.backlog
+    ),
+    to_do_column_name: formColumnName(
+      form as Record<string, unknown>,
+      "to_do_column_name",
+      DEFAULT_JIRA_COLUMN_MAPPINGS.toDo
+    ),
+    in_progress_column_name: formColumnName(
+      form as Record<string, unknown>,
+      "in_progress_column_name",
+      DEFAULT_JIRA_COLUMN_MAPPINGS.inProgress
+    ),
+    in_review_column_name: formColumnName(
+      form as Record<string, unknown>,
+      "in_review_column_name",
+      DEFAULT_JIRA_COLUMN_MAPPINGS.inReview
+    ),
+    done_column_name: formColumnName(
+      form as Record<string, unknown>,
+      "done_column_name",
+      DEFAULT_JIRA_COLUMN_MAPPINGS.done
+    ),
     model_field_id: form.model_field_id ? String(form.model_field_id) : null,
     skills,
     mcp_servers: mcpServers,
@@ -509,52 +583,11 @@ ${projectForm(`/config/${config.project_key}`, config, config.project_key)}
 
 // ─── POST /:projectKey — Update project ────────────────────────────────────────
 
-configRouter.post("/skills", async (c) => {
-  let payload:
-    | { repo?: unknown; projectKey?: unknown; githubPat?: unknown }
-    | undefined;
-  try {
-    payload = await c.req.json();
-  } catch {
-    return c.json({ error: "Invalid JSON payload" }, 400);
-  }
-
-  const repoParam = typeof payload?.repo === "string" ? payload.repo : "";
-  const projectKey =
-    typeof payload?.projectKey === "string" ? payload.projectKey : "";
-  const githubPat =
-    typeof payload?.githubPat === "string" ? payload.githubPat : "";
-
-  if (!repoParam) {
-    return c.json({ error: "Missing repo value (format: owner/repo)" }, 400);
-  }
-
-  const parts = repoParam.split("/");
-  if (parts.length < 2 || !parts[0] || !parts[1]) {
-    return c.json({ error: "Invalid repo format. Use owner/repo" }, 400);
-  }
-
-  const [owner, repo] = parts;
-
-  try {
-    const existingConfig =
-      projectKey.trim().length > 0
-        ? await getProjectConfig(projectKey.trim())
-        : null;
-    const tokenForDiscovery =
-      githubPat.trim().length > 0
-        ? githubPat.trim()
-        : existingConfig?.github_pat ?? undefined;
-    const skills = await discoverSkills(owner!, repo!, "main", tokenForDiscovery);
-    return c.json(skills);
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    return c.json({ error: message }, 500);
-  }
-});
-
 configRouter.post("/:projectKey", async (c) => {
   const { projectKey } = c.req.param();
+  if (projectKey === "skills") {
+    return handleSkillDiscoveryPost(c);
+  }
   const form = await c.req.parseBody();
   const mcpServersRaw = String(form.mcp_servers ?? "");
 
@@ -563,17 +596,6 @@ configRouter.post("/:projectKey", async (c) => {
     .split(",")
     .map((s) => s.trim())
     .filter(Boolean);
-  const columnMappings = resolveJiraColumnMappings({
-    backlog: typeof form.backlog_column_name === "string" ? form.backlog_column_name : undefined,
-    toDo: typeof form.to_do_column_name === "string" ? form.to_do_column_name : undefined,
-    inProgress:
-      typeof form.in_progress_column_name === "string"
-        ? form.in_progress_column_name
-        : undefined,
-    inReview:
-      typeof form.in_review_column_name === "string" ? form.in_review_column_name : undefined,
-    done: typeof form.done_column_name === "string" ? form.done_column_name : undefined,
-  });
   let mcpServers: Record<string, unknown> | null;
   try {
     mcpServers = parseMcpServersFromInput(mcpServersRaw);
@@ -595,11 +617,31 @@ configRouter.post("/:projectKey", async (c) => {
     github_repo: String(form.github_repo),
     default_model: form.default_model ? String(form.default_model) : null,
     model_field_id: form.model_field_id ? String(form.model_field_id) : null,
-    backlog_column_name: columnMappings.backlog,
-    to_do_column_name: columnMappings.toDo,
-    in_progress_column_name: columnMappings.inProgress,
-    in_review_column_name: columnMappings.inReview,
-    done_column_name: columnMappings.done,
+    backlog_column_name: formColumnName(
+      form as Record<string, unknown>,
+      "backlog_column_name",
+      DEFAULT_JIRA_COLUMN_MAPPINGS.backlog
+    ),
+    to_do_column_name: formColumnName(
+      form as Record<string, unknown>,
+      "to_do_column_name",
+      DEFAULT_JIRA_COLUMN_MAPPINGS.toDo
+    ),
+    in_progress_column_name: formColumnName(
+      form as Record<string, unknown>,
+      "in_progress_column_name",
+      DEFAULT_JIRA_COLUMN_MAPPINGS.inProgress
+    ),
+    in_review_column_name: formColumnName(
+      form as Record<string, unknown>,
+      "in_review_column_name",
+      DEFAULT_JIRA_COLUMN_MAPPINGS.inReview
+    ),
+    done_column_name: formColumnName(
+      form as Record<string, unknown>,
+      "done_column_name",
+      DEFAULT_JIRA_COLUMN_MAPPINGS.done
+    ),
     skills,
     mcp_servers: mcpServers,
     ...tokenUpdates,
@@ -617,6 +659,8 @@ configRouter.post("/:projectKey/delete", async (c) => {
   return c.redirect("/config");
 });
 
+// ─── GET /:projectKey/skills — Discover skills from GitHub repo ────────────────
+configRouter.post("/skills", handleSkillDiscoveryPost);
 
 configRouter.get("/:projectKey/skills", async (c) => {
   const repoParam = c.req.query("repo");

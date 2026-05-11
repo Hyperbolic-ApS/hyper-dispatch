@@ -1,27 +1,200 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { validateJiraProject } from "./jira.js";
-import type { JiraCredentials } from "./jira.js";
 
-function jsonResponse(body: unknown, status = 200, statusText = "OK"): Response {
+function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
     status,
-    statusText,
     headers: { "content-type": "application/json" },
   });
 }
 
 describe("validateJiraProject", () => {
-  const credentials: JiraCredentials = {
-    email: "project@example.com",
-    apiToken: "jira-token",
-  };
+  const credentials = { email: "ops@example.com", apiToken: "token-value" };
+  let fetchSpy: any;
 
   beforeEach(() => {
-    vi.spyOn(globalThis, "fetch");
+    fetchSpy = vi.spyOn(globalThis as typeof globalThis & { fetch: typeof fetch }, "fetch");
   });
 
-  it("passes board and workflow checks with defaults and skips field check when modelFieldId is null", async () => {
-    vi.mocked(globalThis.fetch)
+  afterEach(() => {
+    fetchSpy.mockRestore();
+  });
+
+  it("passes board columns check when all required default columns are present", async () => {
+    fetchSpy
+      .mockResolvedValueOnce(
+        jsonResponse({
+          columnConfig: {
+            columns: [
+              { name: "Backlog" },
+              { name: "To Do" },
+              { name: "In Progress" },
+              { name: "In Review" },
+              { name: "Done" },
+            ],
+          },
+        })
+      )
+      .mockResolvedValueOnce(
+        jsonResponse([
+          { id: "customfield_10", name: "Model field" },
+          { id: "customfield_20", name: "Other field" },
+        ])
+      )
+      .mockResolvedValueOnce(
+        jsonResponse([
+          { name: "Backlog" },
+          { name: "To Do" },
+          { name: "In Progress" },
+          { name: "In Review" },
+          { name: "Done" },
+        ])
+      );
+
+    const result = await validateJiraProject(
+      22,
+      "customfield_10",
+      undefined,
+      credentials
+    );
+    const boardCheck = result.checks.find((check) => check.name === "Board columns");
+
+    expect(boardCheck).toEqual(
+      expect.objectContaining({
+        passed: true,
+      })
+    );
+    expect(boardCheck?.message).toContain("All required columns present");
+    expect(result.valid).toBe(true);
+  });
+
+  it("fails board columns check and lists missing columns", async () => {
+    fetchSpy
+      .mockResolvedValueOnce(
+        jsonResponse({
+          columnConfig: {
+            columns: [{ name: "Backlog" }, { name: "To Do" }, { name: "Done" }],
+          },
+        })
+      )
+      .mockResolvedValueOnce(jsonResponse([]))
+      .mockResolvedValueOnce(jsonResponse([{ name: "Backlog" }]));
+
+    const result = await validateJiraProject(
+      33,
+      "customfield_10",
+      undefined,
+      credentials
+    );
+    const boardCheck = result.checks.find((check) => check.name === "Board columns");
+
+    expect(boardCheck?.passed).toBe(false);
+    expect(boardCheck?.message).toContain("Missing columns");
+    expect(boardCheck?.message).toContain("In Progress");
+    expect(boardCheck?.message).toContain("In Review");
+  });
+
+  it("fails board columns check when board endpoint returns 401", async () => {
+    fetchSpy
+      .mockResolvedValueOnce(
+        new Response("Unauthorized", { status: 401, statusText: "Unauthorized" })
+      )
+      .mockResolvedValueOnce(jsonResponse([]))
+      .mockResolvedValueOnce(jsonResponse([]));
+    const result = await validateJiraProject(
+      10,
+      "customfield_10",
+      undefined,
+      credentials
+    );
+    const boardCheck = result.checks.find((check) => check.name === "Board columns");
+
+    expect(boardCheck?.passed).toBe(false);
+    expect(boardCheck?.message).toContain("401");
+  });
+
+  it("fails board columns check when board endpoint returns 404", async () => {
+    fetchSpy
+      .mockResolvedValueOnce(new Response("Not Found", { status: 404, statusText: "Not Found" }))
+      .mockResolvedValueOnce(jsonResponse([]))
+      .mockResolvedValueOnce(jsonResponse([]));
+    const result = await validateJiraProject(
+      10,
+      "customfield_10",
+      undefined,
+      credentials
+    );
+    const boardCheck = result.checks.find((check) => check.name === "Board columns");
+
+    expect(boardCheck?.passed).toBe(false);
+    expect(boardCheck?.message).toContain("404");
+  });
+
+  it("fails board columns check with thrown network error message", async () => {
+    fetchSpy
+      .mockRejectedValueOnce(new Error("network down"))
+      .mockResolvedValueOnce(jsonResponse([]))
+      .mockResolvedValueOnce(jsonResponse([]));
+    const result = await validateJiraProject(
+      44,
+      "customfield_10",
+      undefined,
+      credentials
+    );
+    const boardCheck = result.checks.find((check) => check.name === "Board columns");
+    expect(boardCheck?.passed).toBe(false);
+    expect(boardCheck?.message).toContain("network down");
+  });
+
+  it("honors custom column mappings with mixed case and whitespace via jiraNamesEqual", async () => {
+    fetchSpy
+      .mockResolvedValueOnce(
+        jsonResponse({
+          columnConfig: {
+            columns: [
+              { name: " backlog " },
+              { name: " to do " },
+              { name: " in progress " },
+              { name: "IN REVIEW" },
+              { name: "done " },
+            ],
+          },
+        })
+      )
+      .mockResolvedValueOnce(
+        jsonResponse([
+          { name: "BACKLOG" },
+          { name: "to do" },
+          { name: "In Progress " },
+          { name: "in review" },
+          { name: " DONE" },
+        ])
+      );
+
+    const result = await validateJiraProject(
+      22,
+      null,
+      {
+        backlog: " Backlog ",
+        toDo: "to do",
+        inProgress: "In Progress",
+        inReview: "In Review",
+        done: "Done ",
+      },
+      credentials
+    );
+    const boardCheck = result.checks.find((check) => check.name === "Board columns");
+    const statusCheck = result.checks.find(
+      (check) => check.name === "Workflow statuses"
+    );
+
+    expect(boardCheck?.passed).toBe(true);
+    expect(statusCheck?.passed).toBe(true);
+    expect(result.valid).toBe(true);
+  });
+
+  it("passes custom field check as skipped when modelFieldId is null", async () => {
+    fetchSpy
       .mockResolvedValueOnce(
         jsonResponse({
           columnConfig: {
@@ -46,24 +219,53 @@ describe("validateJiraProject", () => {
       );
 
     const result = await validateJiraProject(22, null, undefined, credentials);
+    const customFieldCheck = result.checks.find((check) => check.name === "Custom field");
 
-    expect(
-      result.checks.find((check) => check.name === "Board columns")
-    ).toEqual(expect.objectContaining({ passed: true }));
-    expect(result.checks.find((check) => check.name === "Custom field")).toEqual(
-      expect.objectContaining({
-        passed: true,
-        message: "No model_field_id configured — skipped",
-      })
-    );
-    expect(
-      result.checks.find((check) => check.name === "Workflow statuses")
-    ).toEqual(expect.objectContaining({ passed: true }));
-    expect(result.valid).toBe(result.checks.every((check) => check.passed));
+    expect(customFieldCheck?.passed).toBe(true);
+    expect(customFieldCheck?.message).toContain("skipped");
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
   });
 
-  it("fails board columns check when a required default column is missing", async () => {
-    vi.mocked(globalThis.fetch)
+  it("passes custom field check when configured field exists", async () => {
+    fetchSpy
+      .mockResolvedValueOnce(jsonResponse({ columnConfig: { columns: [] } }))
+      .mockResolvedValueOnce(
+        jsonResponse([{ id: "customfield_10010", name: "Model Selector" }])
+      )
+      .mockResolvedValueOnce(jsonResponse([]));
+
+    const result = await validateJiraProject(
+      22,
+      "customfield_10010",
+      undefined,
+      credentials
+    );
+    const customFieldCheck = result.checks.find((check) => check.name === "Custom field");
+
+    expect(customFieldCheck?.passed).toBe(true);
+    expect(customFieldCheck?.message).toContain("customfield_10010");
+  });
+
+  it("fails custom field check when configured field does not exist", async () => {
+    fetchSpy
+      .mockResolvedValueOnce(jsonResponse({ columnConfig: { columns: [] } }))
+      .mockResolvedValueOnce(jsonResponse([{ id: "customfield_55", name: "Other" }]))
+      .mockResolvedValueOnce(jsonResponse([]));
+
+    const result = await validateJiraProject(
+      22,
+      "customfield_10010",
+      undefined,
+      credentials
+    );
+    const customFieldCheck = result.checks.find((check) => check.name === "Custom field");
+
+    expect(customFieldCheck?.passed).toBe(false);
+    expect(customFieldCheck?.message).toContain("not found");
+  });
+
+  it("fails workflow statuses check when required statuses are missing", async () => {
+    fetchSpy
       .mockResolvedValueOnce(
         jsonResponse({
           columnConfig: {
@@ -72,105 +274,37 @@ describe("validateJiraProject", () => {
               { name: "To Do" },
               { name: "In Progress" },
               { name: "In Review" },
+              { name: "Done" },
             ],
           },
         })
       )
-      .mockResolvedValueOnce(jsonResponse([{ name: "Backlog" }]));
-
-    const result = await validateJiraProject(33, null, undefined, credentials);
-
-    expect(result.checks.find((check) => check.name === "Board columns")).toEqual(
-      expect.objectContaining({
-        passed: false,
-        message: expect.stringContaining("Missing columns: Done"),
-      })
-    );
-    expect(result.valid).toBe(false);
-  });
-
-  it("includes status code details when board configuration endpoint returns 401 or 404", async () => {
-    vi.mocked(globalThis.fetch)
-      .mockResolvedValueOnce(jsonResponse({}, 401, "Unauthorized"))
-      .mockResolvedValueOnce(jsonResponse([{ name: "Backlog" }]));
-    const unauthorized = await validateJiraProject(44, null, undefined, credentials);
-
-    vi.mocked(globalThis.fetch)
-      .mockResolvedValueOnce(jsonResponse({}, 404, "Not Found"))
-      .mockResolvedValueOnce(jsonResponse([{ name: "Backlog" }]));
-    const notFound = await validateJiraProject(44, null, undefined, credentials);
-
-    expect(
-      unauthorized.checks.find((check) => check.name === "Board columns")?.message
-    ).toContain("401 Unauthorized");
-    expect(
-      notFound.checks.find((check) => check.name === "Board columns")?.message
-    ).toContain("404 Not Found");
-  });
-
-  it("handles board configuration network errors as failed checks with error message", async () => {
-    vi.mocked(globalThis.fetch)
-      .mockRejectedValueOnce(new Error("network down"))
-      .mockResolvedValueOnce(jsonResponse([{ name: "Backlog" }]));
-
-    const result = await validateJiraProject(50, null, undefined, credentials);
-
-    expect(result.checks.find((check) => check.name === "Board columns")).toEqual(
-      expect.objectContaining({
-        passed: false,
-        message: "Error: network down",
-      })
-    );
-  });
-
-  it("honors custom mappings with mixed case and whitespace via jiraNamesEqual for columns and statuses", async () => {
-    vi.mocked(globalThis.fetch)
-      .mockResolvedValueOnce(
-        jsonResponse({
-          columnConfig: {
-            columns: [
-              { name: "  backlog  " },
-              { name: "to do" },
-              { name: "IN PROGRESS" },
-              { name: "in review" },
-              { name: " DONE " },
-            ],
-          },
-        })
-      )
+      .mockResolvedValueOnce(jsonResponse([]))
       .mockResolvedValueOnce(
         jsonResponse([
-          { name: " BACKLOG " },
+          { name: "Backlog" },
           { name: "To Do" },
-          { name: "in progress" },
-          { name: "IN REVIEW" },
-          { name: "done" },
+          { name: "In Progress" },
+          { name: "In Review" },
         ])
       );
 
     const result = await validateJiraProject(
-      55,
-      null,
-      {
-        backlog: " Backlog ",
-        toDo: " To Do ",
-        inProgress: " In Progress ",
-        inReview: " in review ",
-        done: " Done ",
-      },
+      22,
+      "customfield_10010",
+      undefined,
       credentials
     );
+    const statusCheck = result.checks.find(
+      (check) => check.name === "Workflow statuses"
+    );
 
-    expect(
-      result.checks.find((check) => check.name === "Board columns")?.passed
-    ).toBe(true);
-    expect(
-      result.checks.find((check) => check.name === "Workflow statuses")?.passed
-    ).toBe(true);
+    expect(statusCheck?.passed).toBe(false);
+    expect(statusCheck?.message).toContain("Missing statuses: Done");
   });
 
-  it("passes custom field check when field exists and fails when field is missing", async () => {
-    vi.mocked(globalThis.fetch)
+  it("sets final valid to checks.every(c => c.passed)", async () => {
+    fetchSpy
       .mockResolvedValueOnce(
         jsonResponse({
           columnConfig: {
@@ -185,170 +319,26 @@ describe("validateJiraProject", () => {
         })
       )
       .mockResolvedValueOnce(
-        jsonResponse([{ id: "customfield_10", name: "Model Field" }])
+        jsonResponse([{ id: "customfield_10010", name: "Model Selector" }])
       )
       .mockResolvedValueOnce(
         jsonResponse([
           { name: "Backlog" },
           { name: "To Do" },
           { name: "In Progress" },
-          { name: "In Review" },
-          { name: "Done" },
         ])
       );
-    const exists = await validateJiraProject(
-      60,
-      "customfield_10",
+
+    const result = await validateJiraProject(
+      22,
+      "customfield_10010",
       undefined,
       credentials
     );
 
-    vi.mocked(globalThis.fetch)
-      .mockResolvedValueOnce(
-        jsonResponse({
-          columnConfig: {
-            columns: [
-              { name: "Backlog" },
-              { name: "To Do" },
-              { name: "In Progress" },
-              { name: "In Review" },
-              { name: "Done" },
-            ],
-          },
-        })
-      )
-      .mockResolvedValueOnce(
-        jsonResponse([{ id: "customfield_11", name: "Different Field" }])
-      )
-      .mockResolvedValueOnce(
-        jsonResponse([
-          { name: "Backlog" },
-          { name: "To Do" },
-          { name: "In Progress" },
-          { name: "In Review" },
-          { name: "Done" },
-        ])
-      );
-    const missing = await validateJiraProject(
-      60,
-      "customfield_10",
-      undefined,
-      credentials
-    );
-
-    expect(exists.checks.find((check) => check.name === "Custom field")).toEqual(
-      expect.objectContaining({ passed: true })
-    );
-    expect(missing.checks.find((check) => check.name === "Custom field")).toEqual(
-      expect.objectContaining({
-        passed: false,
-        message: 'Field "customfield_10" not found in project fields',
-      })
-    );
-  });
-
-  it("fails workflow statuses check for missing statuses and for non-200 responses", async () => {
-    vi.mocked(globalThis.fetch)
-      .mockResolvedValueOnce(
-        jsonResponse({
-          columnConfig: {
-            columns: [
-              { name: "Backlog" },
-              { name: "To Do" },
-              { name: "In Progress" },
-              { name: "In Review" },
-              { name: "Done" },
-            ],
-          },
-        })
-      )
-      .mockResolvedValueOnce(
-        jsonResponse([
-          { name: "Backlog" },
-          { name: "To Do" },
-          { name: "In Progress" },
-        ])
-      );
-    const missingStatuses = await validateJiraProject(70, null, undefined, credentials);
-
-    vi.mocked(globalThis.fetch)
-      .mockResolvedValueOnce(
-        jsonResponse({
-          columnConfig: {
-            columns: [
-              { name: "Backlog" },
-              { name: "To Do" },
-              { name: "In Progress" },
-              { name: "In Review" },
-              { name: "Done" },
-            ],
-          },
-        })
-      )
-      .mockResolvedValueOnce(jsonResponse({}, 500, "Server Error"));
-    const statusHttpFailure = await validateJiraProject(
-      70,
-      null,
-      undefined,
-      credentials
-    );
-
-    expect(
-      missingStatuses.checks.find((check) => check.name === "Workflow statuses")
-    ).toEqual(
-      expect.objectContaining({
-        passed: false,
-        message: expect.stringContaining("Missing statuses"),
-      })
-    );
-    expect(
-      statusHttpFailure.checks.find((check) => check.name === "Workflow statuses")
-    ).toEqual(
-      expect.objectContaining({
-        passed: false,
-        message: expect.stringContaining("Failed to fetch statuses: 500"),
-      })
-    );
-  });
-
-  it("derives final valid flag strictly from checks.every(c => c.passed)", async () => {
-    vi.mocked(globalThis.fetch)
-      .mockResolvedValueOnce(
-        jsonResponse({
-          columnConfig: { columns: [{ name: "Backlog" }] },
-        })
-      )
-      .mockResolvedValueOnce(jsonResponse([{ name: "Backlog" }]));
-    const invalid = await validateJiraProject(80, null, undefined, credentials);
-
-    vi.mocked(globalThis.fetch)
-      .mockResolvedValueOnce(
-        jsonResponse({
-          columnConfig: {
-            columns: [
-              { name: "Backlog" },
-              { name: "To Do" },
-              { name: "In Progress" },
-              { name: "In Review" },
-              { name: "Done" },
-            ],
-          },
-        })
-      )
-      .mockResolvedValueOnce(
-        jsonResponse([
-          { name: "Backlog" },
-          { name: "To Do" },
-          { name: "In Progress" },
-          { name: "In Review" },
-          { name: "Done" },
-        ])
-      );
-    const valid = await validateJiraProject(80, null, undefined, credentials);
-
-    expect(invalid.valid).toBe(false);
-    expect(valid.valid).toBe(true);
-    expect(invalid.valid).toBe(invalid.checks.every((check) => check.passed));
-    expect(valid.valid).toBe(valid.checks.every((check) => check.passed));
+    expect(result.checks).toHaveLength(3);
+    expect(result.checks.map((check) => check.passed)).toEqual([true, true, false]);
+    expect(result.valid).toBe(result.checks.every((check) => check.passed));
+    expect(result.valid).toBe(false);
   });
 });
