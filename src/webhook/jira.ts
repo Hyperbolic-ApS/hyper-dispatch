@@ -10,6 +10,7 @@ import {
   jiraNamesEqual,
 } from "../jira/columns.js";
 import { syncTicketInToDo } from "../orchestration/ticket-sync.js";
+export { priorityNameToNumber } from "../orchestration/ticket-sync.js";
 
 export const webhookRouter = new Hono();
 

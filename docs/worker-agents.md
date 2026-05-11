@@ -27,6 +27,7 @@ The model used for a worker agent is determined by (in order of precedence):
 1. Per-ticket Jira custom field (configured as `model_field_id` in project config).
 2. Project default model (`default_model` in project config).
 3. Oz platform default (if neither is set).
+When reading the per-ticket Jira custom field, HyperDispatch accepts either a direct string value or an object-shaped Jira value like `{ value: "..." }` (common for select-list custom fields).
 
 ## Lifecycle
 
