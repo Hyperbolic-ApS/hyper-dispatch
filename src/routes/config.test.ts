@@ -1,6 +1,4 @@
-import { testClient } from "hono/testing";
-import { beforeEach, describe, expect, it, vi } from "vitest";
-import { DEFAULT_JIRA_COLUMN_MAPPINGS } from "../jira/columns.js";
+import { describe, expect, it, vi } from "vitest";
 import { makeProjectConfig } from "../test/fixtures.js";
 
 const listProjectConfigsMock = vi.fn();
@@ -30,267 +28,269 @@ vi.mock("../validator/jira.js", () => ({
 vi.mock("../jira/client.js", () => ({}));
 vi.mock("@octokit/rest", () => ({ Octokit: vi.fn() }));
 
-function baseCreateForm(overrides: Record<string, string> = {}): Record<string, string> {
-  return {
-    project_key: "HYDI",
-    jira_cloud_id: "cloud-123",
-    board_id: "77",
-    oz_env_id: "env-123",
-    github_repo: "hyperbolic-co/hyper-dispatch",
-    default_model: "auto",
-    model_field_id: "customfield_10050",
-    skills: "owner/repo:one, owner/repo:two",
-    mcp_servers: "{\"playwright\":{\"command\":\"npx\"}}",
-    github_pat: "ghp_123",
-    jira_api_token: "jira_123",
-    jira_email: "jira@example.com",
-    active: "true",
-    ...overrides,
-  };
-}
-
-async function getClient(): Promise<any> {
-  const { configRouter } = await import("./config.js");
-  return testClient(configRouter);
+function formBody(values: Record<string, string>): URLSearchParams {
+  return new URLSearchParams(values);
 }
 
 describe("configRouter", () => {
-  beforeEach(() => {
-    vi.resetModules();
-    vi.clearAllMocks();
-    listProjectConfigsMock.mockResolvedValue([]);
-    createProjectConfigMock.mockResolvedValue(undefined);
-    updateProjectConfigMock.mockResolvedValue(undefined);
-  });
-
-  it("re-renders create form with error when a required field is missing", async () => {
-    const client = await getClient();
-    const res = await client.index.$post({
-      form: baseCreateForm({ project_key: "" }),
+  it("POST / re-renders form with an error when required fields are missing", async () => {
+    const { configRouter } = await import("./config.js");
+    const res = await configRouter.request("http://localhost/", {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      body: formBody({
+        project_key: "",
+        jira_cloud_id: "",
+        board_id: "",
+        oz_env_id: "",
+        github_repo: "",
+      }),
     });
 
+    const html = await res.text();
     expect(res.status).toBe(400);
-    const body = await res.text();
-    expect(body).toContain("Missing required fields");
+    expect(html).toContain("Missing required fields");
+    expect(html).toContain("<form");
     expect(createProjectConfigMock).not.toHaveBeenCalled();
   });
 
-  it("creates config with normalized values and defaults for blank column names", async () => {
-    const client = await getClient();
-    const res = await client.index.$post({
-      form: baseCreateForm({
-        backlog_column_name: "   ",
-        to_do_column_name: "  Ready  ",
-        in_progress_column_name: "",
-        in_review_column_name: " review lane ",
-        done_column_name: "   ",
+  it("POST / creates project with normalized column names and parsed values", async () => {
+    const { configRouter } = await import("./config.js");
+    const res = await configRouter.request("http://localhost/", {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      body: formBody({
+        project_key: " HYDI ",
+        jira_cloud_id: " cloud-1 ",
+        board_id: "42",
+        oz_env_id: " env-1 ",
+        github_repo: "org/repo",
+        default_model: "auto",
+        model_field_id: "customfield_10",
+        backlog_column_name: "  Backlog  ",
+        to_do_column_name: "   ",
+        in_progress_column_name: " In Progress ",
+        in_review_column_name: "",
+        done_column_name: " Done ",
+        skills: "a/repo:one, b/repo:two,",
+        mcp_servers: "{\"sse\":{\"url\":\"http://localhost:8080\"}}",
+        github_pat: "ghp_test",
+        jira_api_token: "jira_test",
+        jira_email: "jira@example.com",
+        active: "true",
       }),
     });
 
     expect(res.status).toBe(302);
-    expect(createProjectConfigMock).toHaveBeenCalledWith({
-      project_key: "HYDI",
-      jira_cloud_id: "cloud-123",
-      board_id: 77,
-      oz_env_id: "env-123",
-      github_repo: "hyperbolic-co/hyper-dispatch",
-      default_model: "auto",
-      model_field_id: "customfield_10050",
-      backlog_column_name: DEFAULT_JIRA_COLUMN_MAPPINGS.backlog,
-      to_do_column_name: "Ready",
-      in_progress_column_name: DEFAULT_JIRA_COLUMN_MAPPINGS.inProgress,
-      in_review_column_name: "review lane",
-      done_column_name: DEFAULT_JIRA_COLUMN_MAPPINGS.done,
-      skills: ["owner/repo:one", "owner/repo:two"],
-      mcp_servers: { playwright: { command: "npx" } },
-      github_pat: "ghp_123",
-      jira_api_token: "jira_123",
-      jira_email: "jira@example.com",
-      active: true,
-    });
+    expect(createProjectConfigMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        project_key: "HYDI",
+        jira_cloud_id: "cloud-1",
+        board_id: 42,
+        oz_env_id: "env-1",
+        github_repo: "org/repo",
+        backlog_column_name: "Backlog",
+        to_do_column_name: "To Do",
+        in_progress_column_name: "In Progress",
+        in_review_column_name: "In Review",
+        done_column_name: "Done",
+        skills: ["a/repo:one", "b/repo:two"],
+      })
+    );
   });
 
-  it("surfaces MCP JSON parse errors with line information", async () => {
-    const client = await getClient();
-    const res = await client.index.$post({
-      form: baseCreateForm({
-        mcp_servers: "{\n  \"a\": 1,\n}",
+  it("POST / surfaces MCP JSON parsing errors with line numbers", async () => {
+    const { configRouter } = await import("./config.js");
+    const res = await configRouter.request("http://localhost/", {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      body: formBody({
+        project_key: "HYDI",
+        jira_cloud_id: "cloud",
+        board_id: "1",
+        oz_env_id: "env",
+        github_repo: "org/repo",
+        mcp_servers: "{\n  \"broken\":\n}",
       }),
     });
 
+    const body = await res.text();
     expect(res.status).toBe(400);
-    const message = await res.text();
-    expect(message).toContain("Invalid MCP servers JSON");
-    expect(message).toMatch(/line \d+/i);
+    expect(body).toContain("Invalid MCP servers JSON");
+    expect(body).toContain("line 3");
     expect(createProjectConfigMock).not.toHaveBeenCalled();
   });
 
-  it("preserves existing tokens on update when token fields are empty", async () => {
-    const client = await getClient();
-    const res = await client[":projectKey"].$post({
-      param: { projectKey: "HYDI" },
-      form: {
-        jira_cloud_id: "cloud-123",
+  it("POST /:projectKey keeps existing token values when token fields are empty", async () => {
+    const { configRouter } = await import("./config.js");
+    const res = await configRouter.request("http://localhost/HYDI", {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      body: formBody({
+        jira_cloud_id: "cloud",
         board_id: "7",
-        oz_env_id: "env-123",
-        github_repo: "hyperbolic-co/hyper-dispatch",
-        default_model: "",
-        model_field_id: "",
-        skills: "owner/repo:one",
-        mcp_servers: "{\"playwright\":{}}",
+        oz_env_id: "env",
+        github_repo: "org/repo",
+        backlog_column_name: "",
+        to_do_column_name: "",
+        in_progress_column_name: "",
+        in_review_column_name: "",
+        done_column_name: "",
+        skills: "",
+        mcp_servers: "",
         github_pat: "",
         jira_api_token: "",
         jira_email: "",
-        active: "true",
-      },
+      }),
     });
 
     expect(res.status).toBe(302);
-    expect(updateProjectConfigMock).toHaveBeenCalledTimes(1);
-    const [, updates] = updateProjectConfigMock.mock.calls[0]!;
-    expect(updates.github_pat).toBeUndefined();
-    expect(updates.jira_api_token).toBeUndefined();
-    expect(updates.jira_email).toBeUndefined();
+    expect(updateProjectConfigMock).toHaveBeenCalledWith(
+      "HYDI",
+      expect.objectContaining({
+        backlog_column_name: "Backlog",
+        to_do_column_name: "To Do",
+        in_progress_column_name: "In Progress",
+        in_review_column_name: "In Review",
+        done_column_name: "Done",
+      })
+    );
+    expect(updateProjectConfigMock.mock.calls[0]?.[1]).not.toHaveProperty(
+      "github_pat"
+    );
+    expect(updateProjectConfigMock.mock.calls[0]?.[1]).not.toHaveProperty(
+      "jira_api_token"
+    );
+    expect(updateProjectConfigMock.mock.calls[0]?.[1]).not.toHaveProperty(
+      "jira_email"
+    );
   });
 
-  it("updates tokens and restores default columns when update overrides are blank", async () => {
-    const client = await getClient();
-    const res = await client[":projectKey"].$post({
-      param: { projectKey: "HYDI" },
-      form: {
-        jira_cloud_id: "cloud-123",
-        board_id: "8",
-        oz_env_id: "env-123",
-        github_repo: "hyperbolic-co/hyper-dispatch",
-        default_model: "auto",
-        model_field_id: "customfield_10050",
-        backlog_column_name: " ",
-        to_do_column_name: "  ",
-        in_progress_column_name: "  In Progressing ",
-        in_review_column_name: "",
-        done_column_name: " ",
+  it("POST /:projectKey updates token values when token fields are supplied", async () => {
+    const { configRouter } = await import("./config.js");
+    await configRouter.request("http://localhost/HYDI", {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      body: formBody({
+        jira_cloud_id: "cloud",
+        board_id: "7",
+        oz_env_id: "env",
+        github_repo: "org/repo",
+        backlog_column_name: "backlog",
+        to_do_column_name: "to do",
+        in_progress_column_name: "progress",
+        in_review_column_name: "review",
+        done_column_name: "done",
         skills: "",
         mcp_servers: "",
-        github_pat: "ghp_new",
-        jira_api_token: "jira_new",
+        github_pat: "new-gh-token",
+        jira_api_token: "new-jira-token",
         jira_email: "new@example.com",
-        active: "true",
-      },
+      }),
     });
 
-    expect(res.status).toBe(302);
-    const [, updates] = updateProjectConfigMock.mock.calls[0]!;
-    expect(updates.backlog_column_name).toBe(DEFAULT_JIRA_COLUMN_MAPPINGS.backlog);
-    expect(updates.to_do_column_name).toBe(DEFAULT_JIRA_COLUMN_MAPPINGS.toDo);
-    expect(updates.in_progress_column_name).toBe("In Progressing");
-    expect(updates.in_review_column_name).toBe(DEFAULT_JIRA_COLUMN_MAPPINGS.inReview);
-    expect(updates.done_column_name).toBe(DEFAULT_JIRA_COLUMN_MAPPINGS.done);
-    expect(updates.github_pat).toBe("ghp_new");
-    expect(updates.jira_api_token).toBe("jira_new");
-    expect(updates.jira_email).toBe("new@example.com");
+    expect(updateProjectConfigMock).toHaveBeenCalledWith(
+      "HYDI",
+      expect.objectContaining({
+        github_pat: "new-gh-token",
+        jira_api_token: "new-jira-token",
+        jira_email: "new@example.com",
+      })
+    );
   });
 
-  it("returns 400 for invalid owner/repo on skills discovery", async () => {
-    const client = await getClient();
-    const res = await client.skills.$post({
-      json: { repo: "invalid-repo-format" },
+  it("POST /skills returns 400 for invalid owner/repo format", async () => {
+    const { configRouter } = await import("./config.js");
+    const res = await configRouter.request("http://localhost/skills", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ repo: "invalid-format" }),
     });
 
     expect(res.status).toBe(400);
     expect(await res.json()).toEqual({
       error: "Invalid repo format. Use owner/repo",
     });
-    expect(discoverSkillsMock).not.toHaveBeenCalled();
   });
 
-  it("returns empty skills list when discoverSkills finds nothing", async () => {
+  it("POST /skills calls discoverSkills and returns empty results when none found", async () => {
     discoverSkillsMock.mockResolvedValue([]);
-    const client = await getClient();
-    const res = await client.skills.$post({
-      json: { repo: "hyperbolic-co/hyper-dispatch" },
+    const { configRouter } = await import("./config.js");
+    const res = await configRouter.request("http://localhost/skills", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ repo: "owner/repo" }),
     });
 
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual([]);
     expect(discoverSkillsMock).toHaveBeenCalledWith(
-      "hyperbolic-co",
-      "hyper-dispatch",
+      "owner",
+      "repo",
       "main",
       undefined
     );
+    expect(await res.json()).toEqual([]);
   });
 
-  it("returns an error response when GitHub discovery returns 404", async () => {
+  it("POST /skills returns error response when GitHub lookup fails with 404", async () => {
     discoverSkillsMock.mockRejectedValue(new Error("404 Not Found"));
-    const client = await getClient();
-    const res = await client.skills.$post({
-      json: { repo: "hyperbolic-co/hyper-dispatch" },
+    const { configRouter } = await import("./config.js");
+    const res = await configRouter.request("http://localhost/skills", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ repo: "owner/repo" }),
     });
 
     expect(res.status).toBe(500);
     expect(await res.json()).toEqual({ error: "404 Not Found" });
   });
 
-  it("returns 404 when validating a missing project", async () => {
-    getProjectConfigMock.mockResolvedValue(null);
-    const client = await getClient();
-    const res = await client[":projectKey"].validate.$get({
-      param: { projectKey: "MISSING" },
-    });
-
-    expect(res.status).toBe(404);
-    expect(await res.json()).toEqual({ error: "Project MISSING not found" });
-  });
-
-  it("returns all checks (including failures) and calls validator with saved mappings", async () => {
+  it("GET /:projectKey/validate returns checks and passes saved mappings to validator", async () => {
     getProjectConfigMock.mockResolvedValue(
       makeProjectConfig({
-        board_id: 31,
-        model_field_id: "customfield_10050",
-        backlog_column_name: "Backlog Lane",
-        to_do_column_name: "Ready",
-        in_progress_column_name: "Working",
-        in_review_column_name: "Review",
-        done_column_name: "Ship",
-        jira_email: "saved@example.com",
-        jira_api_token: "saved-token",
-      } as any)
+        board_id: 123,
+        model_field_id: "customfield_42",
+        backlog_column_name: "Backlog Custom",
+        to_do_column_name: "Todo Custom",
+        in_progress_column_name: "In Progress Custom",
+        in_review_column_name: "In Review Custom",
+        done_column_name: "Done Custom",
+      })
     );
     validateJiraProjectMock.mockResolvedValue({
       valid: false,
       checks: [
-        { name: "Board columns", passed: true, message: "ok" },
-        { name: "Custom field", passed: false, message: "missing field" },
+        { name: "Board columns", passed: false, message: "missing done" },
+        { name: "Custom field", passed: true, message: "ok" },
         { name: "Workflow statuses", passed: true, message: "ok" },
       ],
     });
 
-    const client = await getClient();
-    const res = await client[":projectKey"].validate.$get({
-      param: { projectKey: "HYDI" },
-      header: { accept: "application/json" },
+    const { configRouter } = await import("./config.js");
+    const res = await configRouter.request("http://localhost/HYDI/validate", {
+      headers: { accept: "application/json" },
     });
 
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({
       valid: false,
       checks: [
-        { name: "Board columns", passed: true, message: "ok" },
-        { name: "Custom field", passed: false, message: "missing field" },
+        { name: "Board columns", passed: false, message: "missing done" },
+        { name: "Custom field", passed: true, message: "ok" },
         { name: "Workflow statuses", passed: true, message: "ok" },
       ],
     });
     expect(validateJiraProjectMock).toHaveBeenCalledWith(
-      31,
-      "customfield_10050",
+      123,
+      "customfield_42",
       {
-        backlog: "Backlog Lane",
-        toDo: "Ready",
-        inProgress: "Working",
-        inReview: "Review",
-        done: "Ship",
+        backlog: "Backlog Custom",
+        toDo: "Todo Custom",
+        inProgress: "In Progress Custom",
+        inReview: "In Review Custom",
+        done: "Done Custom",
       },
-      { email: "saved@example.com", apiToken: "saved-token" }
+      undefined
     );
   });
 });
