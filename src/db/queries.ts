@@ -184,7 +184,8 @@ export async function removeBlocker(
     SET
       blocked_by = array_remove(blocked_by, ${blockerKey}),
       status     = CASE
-                     WHEN array_length(array_remove(blocked_by, ${blockerKey}), 1) IS NULL
+                     WHEN status = 'blocked'
+                      AND array_length(array_remove(blocked_by, ${blockerKey}), 1) IS NULL
                      THEN 'queued'
                      ELSE status
                    END,
