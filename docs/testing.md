@@ -39,6 +39,13 @@ This document defines the testing contract for HyperDispatch. All new tests adde
 ## Coverage policy
 - Coverage is informational and not currently merge-gating.
 - PRs touching `src/orchestration/`, `src/webhook/`, `src/validator/`, or `src/db/queries.ts` must include new or updated tests.
+- The backend coverage initiative target is **at least 75%** coverage for:
+  - `src/orchestration/`
+  - `src/webhook/`
+  - `src/validator/`
+## Execution policy
+- `npm test` must run cleanly with no skipped tests in standard CI/local runs.
+- Integration tests that need external services (for example Postgres) must be opt-in by environment gate (for example `RUN_DB_TESTS=1`) and should not require `it.skip`/`describe.skip` in the default run path.
 ## Naming and structure
 - Use `describe("functionName", ...)`.
 - Use `it("does X when Y", ...)`.
