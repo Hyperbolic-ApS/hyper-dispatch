@@ -196,38 +196,38 @@ export async function checkRuns(): Promise<void> {
         continue;
       }
 
-    try {
-      const ozRun = await client.agent.runs.retrieve(run.run_id);
-      const state = ozRun.state;
+      try {
+        const ozRun = await client.agent.runs.retrieve(run.run_id);
+        const state = ozRun.state;
 
-      if (state === "SUCCEEDED") {
-        const prUrl = extractPrUrl(ozRun.artifacts, ozRun.status_message?.message);
-        const sessionLink = ozRun.session_link ?? null;
+        if (state === "SUCCEEDED") {
+          const prUrl = extractPrUrl(ozRun.artifacts, ozRun.status_message?.message);
+          const sessionLink = ozRun.session_link ?? null;
 
-        await updateRunStatus(run.ticket_key, {
-          status: "succeeded",
-          completed_at: now,
-          pr_url: prUrl,
-          session_link: sessionLink,
-        });
-
-        // Transition Jira to "In Review" (best-effort)
-        try {
-          const config = await getProjectConfig(run.project_key);
-          const columnMappings = resolveJiraColumnMappings({
-            backlog: config?.backlog_column_name,
-            toDo: config?.to_do_column_name,
-            inProgress: config?.in_progress_column_name,
-            inReview: config?.in_review_column_name,
-            done: config?.done_column_name,
+          await updateRunStatus(run.ticket_key, {
+            status: "succeeded",
+            completed_at: now,
+            pr_url: prUrl,
+            session_link: sessionLink,
           });
-          const transitions = await jira.getTransitions(run.ticket_key);
-          const inReview = transitions.transitions.find(
-            (t) => t.name.trim().toLowerCase() === columnMappings.inReview.toLowerCase()
-          );
-          if (inReview) {
-            await jira.transitionIssue(run.ticket_key, inReview.id);
-          }
+
+          // Transition Jira to "In Review" (best-effort)
+          try {
+            const config = await getProjectConfig(run.project_key);
+            const columnMappings = resolveJiraColumnMappings({
+              backlog: config?.backlog_column_name,
+              toDo: config?.to_do_column_name,
+              inProgress: config?.in_progress_column_name,
+              inReview: config?.in_review_column_name,
+              done: config?.done_column_name,
+            });
+            const transitions = await jira.getTransitions(run.ticket_key);
+            const inReview = transitions.transitions.find(
+              (t) => t.name.trim().toLowerCase() === columnMappings.inReview.toLowerCase()
+            );
+            if (inReview) {
+              await jira.transitionIssue(run.ticket_key, inReview.id);
+            }
           } catch (err) {
             console.warn(
               `[monitor] Failed to transition ${run.ticket_key} to In Review:`,

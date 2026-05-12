@@ -31,6 +31,7 @@ const {
   ozCancelMock: vi.fn(),
   githubPullGetMock: vi.fn(),
 }));
+
 vi.mock("../config/env.js", () => ({
   env: {
     WARP_API_KEY: "test-key",
@@ -72,12 +73,21 @@ vi.mock("@octokit/rest", () => ({
   },
 }));
 
-import { extractPrUrl, parseGithubPullRequestUrl } from "./monitor.js";
+async function importMonitor() {
+  return import("./monitor.js");
+}
 
 let fetchSpy: any;
+let warnSpy: any;
+let errorSpy: any;
+let logSpy: any;
 
 beforeEach(() => {
+  vi.resetModules();
   fetchSpy = vi.spyOn(globalThis, "fetch");
+  warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+  errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+  logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
   getRunsByStatusMock.mockReset();
   updateRunStatusMock.mockReset();
   getProjectConfigMock.mockReset();
@@ -94,10 +104,14 @@ beforeEach(() => {
 afterEach(() => {
   expect(fetchSpy).not.toHaveBeenCalled();
   fetchSpy.mockRestore();
+  warnSpy.mockRestore();
+  errorSpy.mockRestore();
+  logSpy.mockRestore();
 });
 
 describe("parseGithubPullRequestUrl", () => {
-  it("parses owner, repo, and pull number for a valid pull URL", () => {
+  it("parses owner, repo, and pull number for a valid pull URL", async () => {
+    const { parseGithubPullRequestUrl } = await importMonitor();
     expect(
       parseGithubPullRequestUrl("https://github.com/warp/hyper-dispatch/pull/123")
     ).toEqual({
@@ -107,34 +121,46 @@ describe("parseGithubPullRequestUrl", () => {
     });
   });
 
-  it("returns null for a non-pull URL", () => {
+  it("returns null for a non-pull URL", async () => {
+    const { parseGithubPullRequestUrl } = await importMonitor();
     expect(
       parseGithubPullRequestUrl("https://github.com/warp/hyper-dispatch/issues/123")
     ).toBeNull();
   });
 
-  it("returns null when pull number is missing", () => {
-    expect(parseGithubPullRequestUrl("https://github.com/warp/hyper-dispatch/pull/")).toBeNull();
-  });
-
-  it("returns null when pull number is non-numeric", () => {
+  it("returns null when pull number is missing", async () => {
+    const { parseGithubPullRequestUrl } = await importMonitor();
     expect(
-      parseGithubPullRequestUrl("https://github.com/warp/hyper-dispatch/pull/not-a-number")
+      parseGithubPullRequestUrl("https://github.com/warp/hyper-dispatch/pull/")
     ).toBeNull();
   });
 
-  it("returns null for malformed URLs", () => {
-    expect(parseGithubPullRequestUrl("github.com/warp/hyper-dispatch/pull/123")).toBeNull();
+  it("returns null when pull number is non-numeric", async () => {
+    const { parseGithubPullRequestUrl } = await importMonitor();
+    expect(
+      parseGithubPullRequestUrl(
+        "https://github.com/warp/hyper-dispatch/pull/not-a-number"
+      )
+    ).toBeNull();
+  });
+
+  it("returns null for malformed URLs", async () => {
+    const { parseGithubPullRequestUrl } = await importMonitor();
+    expect(
+      parseGithubPullRequestUrl("github.com/warp/hyper-dispatch/pull/123")
+    ).toBeNull();
   });
 });
 
 describe("extractPrUrl", () => {
-  it("returns null for undefined or empty artifacts", () => {
+  it("returns null for undefined or empty artifacts", async () => {
+    const { extractPrUrl } = await importMonitor();
     expect(extractPrUrl(undefined)).toBeNull();
     expect(extractPrUrl([])).toBeNull();
   });
 
-  it("returns PR URL when pull-request artifact includes url", () => {
+  it("returns PR URL when pull-request artifact includes url", async () => {
+    const { extractPrUrl } = await importMonitor();
     const artifacts = [
       {
         artifact_type: "PULL_REQUEST",
@@ -142,10 +168,13 @@ describe("extractPrUrl", () => {
       },
     ] as unknown as ArtifactItem[];
 
-    expect(extractPrUrl(artifacts)).toBe("https://github.com/warp/hyper-dispatch/pull/456");
+    expect(extractPrUrl(artifacts)).toBe(
+      "https://github.com/warp/hyper-dispatch/pull/456"
+    );
   });
 
-  it("returns null when pull-request artifact has no url", () => {
+  it("returns null when pull-request artifact has no url", async () => {
+    const { extractPrUrl } = await importMonitor();
     const artifacts = [
       {
         artifact_type: "PULL_REQUEST",
@@ -156,7 +185,8 @@ describe("extractPrUrl", () => {
     expect(extractPrUrl(artifacts)).toBeNull();
   });
 
-  it("filters out non-PR artifacts", () => {
+  it("filters out non-PR artifacts", async () => {
+    const { extractPrUrl } = await importMonitor();
     const artifacts = [
       {
         artifact_type: "SESSION_LINK",
@@ -167,7 +197,8 @@ describe("extractPrUrl", () => {
     expect(extractPrUrl(artifacts)).toBeNull();
   });
 
-  it("returns first matching pull request URL when multiple artifacts exist", () => {
+  it("returns first matching pull request URL when multiple artifacts exist", async () => {
+    const { extractPrUrl } = await importMonitor();
     const artifacts = [
       { artifact_type: "SESSION_LINK", data: { url: "https://warp.dev/run/1" } },
       {
@@ -180,10 +211,13 @@ describe("extractPrUrl", () => {
       },
     ] as unknown as ArtifactItem[];
 
-    expect(extractPrUrl(artifacts)).toBe("https://github.com/warp/hyper-dispatch/pull/789");
+    expect(extractPrUrl(artifacts)).toBe(
+      "https://github.com/warp/hyper-dispatch/pull/789"
+    );
   });
 
-  it("falls back to status message pull request URL when artifacts are missing", () => {
+  it("falls back to status message pull request URL when artifacts are missing", async () => {
+    const { extractPrUrl } = await importMonitor();
     const statusMessage =
       "Implemented HYDI-33 and opened draft PR https://github.com/warp/hyper-dispatch/pull/456.";
 
@@ -192,7 +226,8 @@ describe("extractPrUrl", () => {
     );
   });
 
-  it("prefers artifact pull request URL over status message fallback", () => {
+  it("prefers artifact pull request URL over status message fallback", async () => {
+    const { extractPrUrl } = await importMonitor();
     const artifacts = [
       {
         artifact_type: "PULL_REQUEST",
@@ -207,7 +242,8 @@ describe("extractPrUrl", () => {
     );
   });
 
-  it("falls back to status message when pull-request artifact URL is invalid", () => {
+  it("falls back to status message when pull-request artifact URL is invalid", async () => {
+    const { extractPrUrl } = await importMonitor();
     const artifacts = [
       {
         artifact_type: "PULL_REQUEST",
@@ -222,14 +258,63 @@ describe("extractPrUrl", () => {
     );
   });
 });
+
 describe("checkRuns", () => {
-  it("marks succeeded running runs and transitions Jira to In Review", async () => {
+  it("does not call Oz when no runs are running and still invokes merged-PR sweep", async () => {
+    getRunsByStatusMock.mockResolvedValueOnce([]).mockResolvedValueOnce([]);
+
+    const { checkRuns } = await importMonitor();
+    await checkRuns();
+
+    expect(getRunsByStatusMock).toHaveBeenNthCalledWith(1, "running");
+    expect(getRunsByStatusMock).toHaveBeenNthCalledWith(2, "succeeded");
+    expect(ozRetrieveMock).not.toHaveBeenCalled();
+    expect(githubPullGetMock).not.toHaveBeenCalled();
+  });
+
+  it("warns and skips runs with null run_id while continuing the loop", async () => {
     getRunsByStatusMock
       .mockResolvedValueOnce([
         makeDispatchRun({
           ticket_key: "HYDI-1",
           status: "running",
-          run_id: "run_1",
+          run_id: null,
+        }),
+        makeDispatchRun({
+          ticket_key: "HYDI-2",
+          status: "running",
+          run_id: "run_2",
+        }),
+      ])
+      .mockResolvedValueOnce([]);
+    ozRetrieveMock.mockResolvedValue(
+      makeOzRun({
+        state: "FAILED",
+        status_message: { message: "boom" },
+      })
+    );
+
+    const { checkRuns } = await importMonitor();
+    await checkRuns();
+
+    expect(warnSpy).toHaveBeenCalledWith(
+      "[monitor] Run for HYDI-1 has no run_id, skipping."
+    );
+    expect(updateRunStatusMock).toHaveBeenCalledWith(
+      "HYDI-2",
+      expect.objectContaining({
+        status: "failed",
+      })
+    );
+  });
+
+  it("marks SUCCEEDED runs and swallows In Review transition errors", async () => {
+    getRunsByStatusMock
+      .mockResolvedValueOnce([
+        makeDispatchRun({
+          ticket_key: "HYDI-3",
+          status: "running",
+          run_id: "run_3",
           project_key: "HYDI",
         }),
       ])
@@ -243,44 +328,78 @@ describe("checkRuns", () => {
             data: { url: "https://github.com/org/repo/pull/123" },
           },
         ],
+        session_link: "https://warp.dev/sessions/abc",
       })
     );
     getProjectConfigMock.mockResolvedValue(makeProjectConfig());
     jiraGetTransitionsMock.mockResolvedValue({
       transitions: [{ id: "22", name: "In Review" }],
     });
-    jiraGetIssueMock.mockResolvedValue({
-      fields: { status: { statusCategory: { key: "in-progress" } } },
-    });
-    githubPullGetMock.mockResolvedValue({
-      data: { merged_at: null, mergeable_state: "clean", mergeable: true },
-    });
+    jiraTransitionIssueMock.mockRejectedValue(new Error("transition failed"));
 
-    const { checkRuns } = await import("./monitor.js");
+    const { checkRuns } = await importMonitor();
     await checkRuns();
 
     expect(updateRunStatusMock).toHaveBeenCalledWith(
-      "HYDI-1",
+      "HYDI-3",
       expect.objectContaining({
         status: "succeeded",
         pr_url: "https://github.com/org/repo/pull/123",
+        session_link: "https://warp.dev/sessions/abc",
       })
     );
-    expect(jiraTransitionIssueMock).toHaveBeenCalledWith("HYDI-1", "22");
+    expect(jiraTransitionIssueMock).toHaveBeenCalledWith("HYDI-3", "22");
+    expect(warnSpy).toHaveBeenCalledWith(
+      "[monitor] Failed to transition HYDI-3 to In Review:",
+      expect.any(Error)
+    );
   });
 
-  it("marks failed and cancelled Oz runs correctly", async () => {
+  it("still marks SUCCEEDED runs when no In Review transition exists", async () => {
     getRunsByStatusMock
       .mockResolvedValueOnce([
         makeDispatchRun({
-          ticket_key: "HYDI-2",
+          ticket_key: "HYDI-4",
           status: "running",
-          run_id: "run_2",
+          run_id: "run_4",
+          project_key: "HYDI",
+        }),
+      ])
+      .mockResolvedValueOnce([]);
+    ozRetrieveMock.mockResolvedValue(
+      makeOzRun({
+        state: "SUCCEEDED",
+        artifacts: [],
+      })
+    );
+    getProjectConfigMock.mockResolvedValue(makeProjectConfig());
+    jiraGetTransitionsMock.mockResolvedValue({
+      transitions: [{ id: "44", name: "Something Else" }],
+    });
+
+    const { checkRuns } = await importMonitor();
+    await checkRuns();
+
+    expect(updateRunStatusMock).toHaveBeenCalledWith(
+      "HYDI-4",
+      expect.objectContaining({ status: "succeeded" })
+    );
+    expect(jiraTransitionIssueMock).not.toHaveBeenCalled();
+    expect(warnSpy).not.toHaveBeenCalled();
+  });
+
+  it("marks FAILED and ERROR runs as failed and uses fallback error text", async () => {
+    getRunsByStatusMock
+      .mockResolvedValueOnce([
+        makeDispatchRun({
+          ticket_key: "HYDI-5",
+          status: "running",
+          run_id: "run_5",
         }),
         makeDispatchRun({
-          ticket_key: "HYDI-3",
+          ticket_key: "HYDI-6",
           status: "running",
-          run_id: "run_3",
+          run_id: "run_6",
         }),
       ])
       .mockResolvedValueOnce([]);
@@ -291,20 +410,49 @@ describe("checkRuns", () => {
           status_message: { message: "Execution failed" },
         })
       )
-      .mockResolvedValueOnce(makeOzRun({ state: "CANCELLED" }));
+      .mockResolvedValueOnce(
+        makeOzRun({
+          state: "ERROR",
+          status_message: undefined,
+        })
+      );
 
-    const { checkRuns } = await import("./monitor.js");
+    const { checkRuns } = await importMonitor();
     await checkRuns();
 
     expect(updateRunStatusMock).toHaveBeenCalledWith(
-      "HYDI-2",
+      "HYDI-5",
       expect.objectContaining({
         status: "failed",
         error: "Execution failed",
       })
     );
     expect(updateRunStatusMock).toHaveBeenCalledWith(
-      "HYDI-3",
+      "HYDI-6",
+      expect.objectContaining({
+        status: "failed",
+        error: "Run ended with state: ERROR",
+      })
+    );
+  });
+
+  it("marks CANCELLED runs as stale with cancellation message", async () => {
+    getRunsByStatusMock
+      .mockResolvedValueOnce([
+        makeDispatchRun({
+          ticket_key: "HYDI-7",
+          status: "running",
+          run_id: "run_7",
+        }),
+      ])
+      .mockResolvedValueOnce([]);
+    ozRetrieveMock.mockResolvedValue(makeOzRun({ state: "CANCELLED" }));
+
+    const { checkRuns } = await importMonitor();
+    await checkRuns();
+
+    expect(updateRunStatusMock).toHaveBeenCalledWith(
+      "HYDI-7",
       expect.objectContaining({
         status: "stale",
         error: "Run was cancelled externally.",
@@ -312,113 +460,301 @@ describe("checkRuns", () => {
     );
   });
 
-  it("marks long-running in-progress runs as stale and attempts cancel", async () => {
-    const oldSpawnedAt = new Date(Date.now() - 3 * 60 * 60 * 1000);
+  it("leaves INPROGRESS runs alone when within max duration", async () => {
+    const freshSpawnedAt = new Date(Date.now() - 30 * 60 * 1000);
     getRunsByStatusMock
       .mockResolvedValueOnce([
         makeDispatchRun({
-          ticket_key: "HYDI-4",
+          ticket_key: "HYDI-8",
           status: "running",
-          run_id: "run_4",
-          spawned_at: oldSpawnedAt,
+          run_id: "run_8",
+          spawned_at: freshSpawnedAt,
         }),
       ])
       .mockResolvedValueOnce([]);
     ozRetrieveMock.mockResolvedValue(makeOzRun({ state: "INPROGRESS" }));
 
-    const { checkRuns } = await import("./monitor.js");
+    const { checkRuns } = await importMonitor();
     await checkRuns();
 
-    expect(ozCancelMock).toHaveBeenCalledWith("run_4");
+    expect(ozCancelMock).not.toHaveBeenCalled();
+    expect(updateRunStatusMock).not.toHaveBeenCalled();
+  });
+
+  it("marks stale and tolerates cancel errors for overlong INPROGRESS runs", async () => {
+    const oldSpawnedAt = new Date(Date.now() - 3 * 60 * 60 * 1000);
+    getRunsByStatusMock
+      .mockResolvedValueOnce([
+        makeDispatchRun({
+          ticket_key: "HYDI-9",
+          status: "running",
+          run_id: "run_9",
+          spawned_at: oldSpawnedAt,
+        }),
+      ])
+      .mockResolvedValueOnce([]);
+    ozRetrieveMock.mockResolvedValue(makeOzRun({ state: "INPROGRESS" }));
+    ozCancelMock.mockRejectedValue(new Error("already finished"));
+
+    const { checkRuns } = await importMonitor();
+    await checkRuns();
+
+    expect(ozCancelMock).toHaveBeenCalledWith("run_9");
     expect(updateRunStatusMock).toHaveBeenCalledWith(
-      "HYDI-4",
+      "HYDI-9",
       expect.objectContaining({
         status: "stale",
+        error: "Run exceeded max duration of 2h.",
       })
     );
   });
 
-  it("transitions succeeded tickets to done when PR is merged", async () => {
+  it("logs BLOCKED runs and leaves them unchanged", async () => {
+    getRunsByStatusMock
+      .mockResolvedValueOnce([
+        makeDispatchRun({
+          ticket_key: "HYDI-10",
+          status: "running",
+          run_id: "run_10",
+        }),
+      ])
+      .mockResolvedValueOnce([]);
+    ozRetrieveMock.mockResolvedValue(makeOzRun({ state: "BLOCKED" }));
+
+    const { checkRuns } = await importMonitor();
+    await checkRuns();
+
+    expect(logSpy).toHaveBeenCalledWith(
+      "[monitor] HYDI-10 is in state BLOCKED, waiting."
+    );
+    expect(updateRunStatusMock).not.toHaveBeenCalled();
+  });
+
+  it("continues to next run when retrieve throws", async () => {
+    getRunsByStatusMock
+      .mockResolvedValueOnce([
+        makeDispatchRun({
+          ticket_key: "HYDI-11",
+          status: "running",
+          run_id: "run_11",
+        }),
+        makeDispatchRun({
+          ticket_key: "HYDI-12",
+          status: "running",
+          run_id: "run_12",
+        }),
+      ])
+      .mockResolvedValueOnce([]);
+    ozRetrieveMock
+      .mockRejectedValueOnce(new Error("network"))
+      .mockResolvedValueOnce(makeOzRun({ state: "CANCELLED" }));
+
+    const { checkRuns } = await importMonitor();
+    await checkRuns();
+
+    expect(errorSpy).toHaveBeenCalledWith(
+      "[monitor] Error checking run for HYDI-11:",
+      expect.any(Error)
+    );
+    expect(updateRunStatusMock).toHaveBeenCalledWith(
+      "HYDI-12",
+      expect.objectContaining({ status: "stale" })
+    );
+  });
+
+  it("returns immediately from merged-PR sweep when no succeeded runs exist", async () => {
+    getRunsByStatusMock.mockResolvedValueOnce([]).mockResolvedValueOnce([]);
+
+    const { checkRuns } = await importMonitor();
+    await checkRuns();
+
+    expect(githubPullGetMock).not.toHaveBeenCalled();
+  });
+
+  it("skips succeeded runs with no pr_url", async () => {
     getRunsByStatusMock
       .mockResolvedValueOnce([])
       .mockResolvedValueOnce([
         makeDispatchRun({
-          ticket_key: "HYDI-9",
+          ticket_key: "HYDI-13",
           status: "succeeded",
-          pr_url: "https://github.com/org/repo/pull/44",
+          pr_url: null,
+        }),
+      ]);
+
+    const { checkRuns } = await importMonitor();
+    await checkRuns();
+
+    expect(jiraGetIssueMock).not.toHaveBeenCalled();
+    expect(githubPullGetMock).not.toHaveBeenCalled();
+  });
+
+  it("skips merged-PR checks when Jira issue is already done", async () => {
+    getRunsByStatusMock
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([
+        makeDispatchRun({
+          ticket_key: "HYDI-14",
+          status: "succeeded",
+          pr_url: "https://github.com/org/repo/pull/14",
+        }),
+      ]);
+    jiraGetIssueMock.mockResolvedValue({
+      fields: { status: { statusCategory: { key: "done" } } },
+    });
+
+    const { checkRuns } = await importMonitor();
+    await checkRuns();
+
+    expect(githubPullGetMock).not.toHaveBeenCalled();
+  });
+
+  it("warns and skips when succeeded run has unparsable PR URL", async () => {
+    getRunsByStatusMock
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([
+        makeDispatchRun({
+          ticket_key: "HYDI-15",
+          status: "succeeded",
+          pr_url: "https://github.com/org/repo/issues/15",
+        }),
+      ]);
+    jiraGetIssueMock.mockResolvedValue({
+      fields: { status: { statusCategory: { key: "in-progress" } } },
+    });
+
+    const { checkRuns } = await importMonitor();
+    await checkRuns();
+
+    expect(warnSpy).toHaveBeenCalledWith(
+      "[monitor] Could not parse GitHub PR URL for HYDI-15: https://github.com/org/repo/issues/15"
+    );
+    expect(githubPullGetMock).not.toHaveBeenCalled();
+  });
+
+  it("updates pr_has_conflicts and does not transition Jira when PR is not merged", async () => {
+    getRunsByStatusMock
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([
+        makeDispatchRun({
+          ticket_key: "HYDI-16",
+          status: "succeeded",
+          pr_url: "https://github.com/org/repo/pull/16",
         }),
       ]);
     jiraGetIssueMock.mockResolvedValue({
       fields: { status: { statusCategory: { key: "in-progress" } } },
     });
     githubPullGetMock.mockResolvedValue({
-      data: { merged_at: "2026-05-01T00:00:00.000Z", mergeable_state: "dirty", mergeable: false },
+      data: { merged_at: null, mergeable_state: "dirty", mergeable: false },
     });
-    jiraGetTransitionsMock.mockResolvedValue({
-      transitions: [{ id: "100", name: "Done" }],
-    });
-    getRunsBlockedByMock.mockResolvedValue([
-      makeDispatchRun({
-        ticket_key: "HYDI-10",
-        status: "blocked",
-        blocked_by: ["HYDI-9"],
-      }),
-    ]);
-    removeBlockerMock.mockResolvedValue(
-      makeDispatchRun({
-        ticket_key: "HYDI-10",
-        status: "queued",
-        blocked_by: [],
-      })
-    );
 
-    const { checkRuns } = await import("./monitor.js");
+    const { checkRuns } = await importMonitor();
     await checkRuns();
 
-    expect(updateRunStatusMock).toHaveBeenCalledWith(
-      "HYDI-9",
-      expect.objectContaining({ pr_has_conflicts: true })
-    );
-    expect(jiraTransitionIssueMock).toHaveBeenCalledWith("HYDI-9", "100");
-    expect(getRunsBlockedByMock).toHaveBeenCalledWith("HYDI-9");
-    expect(removeBlockerMock).toHaveBeenCalledWith("HYDI-10", "HYDI-9");
+    expect(updateRunStatusMock).toHaveBeenCalledWith("HYDI-16", {
+      pr_has_conflicts: true,
+    });
+    expect(jiraTransitionIssueMock).not.toHaveBeenCalled();
   });
 
-  it("stores PR URL from status message when PR artifact is missing", async () => {
+  it("transitions issue to Done when succeeded PR is merged", async () => {
     getRunsByStatusMock
+      .mockResolvedValueOnce([])
       .mockResolvedValueOnce([
         makeDispatchRun({
-          ticket_key: "HYDI-33",
-          status: "running",
-          run_id: "run_33",
-          project_key: "HYDI",
+          ticket_key: "HYDI-17",
+          status: "succeeded",
+          pr_url: "https://github.com/org/repo/pull/17",
         }),
-      ])
-      .mockResolvedValueOnce([]);
-    ozRetrieveMock.mockResolvedValue(
-      makeOzRun({
-        state: "SUCCEEDED",
-        status_message: {
-          message:
-            "Implemented HYDI-33 and opened draft PR https://github.com/org/repo/pull/28.",
-        },
-        artifacts: [],
-      })
-    );
-    getProjectConfigMock.mockResolvedValue(makeProjectConfig());
-    jiraGetTransitionsMock.mockResolvedValue({
-      transitions: [{ id: "22", name: "In Review" }],
+      ]);
+    jiraGetIssueMock.mockResolvedValue({
+      fields: { status: { statusCategory: { key: "in-progress" } } },
     });
+    githubPullGetMock.mockResolvedValue({
+      data: {
+        merged_at: "2026-05-01T00:00:00.000Z",
+        mergeable_state: "clean",
+        mergeable: true,
+      },
+    });
+    jiraGetTransitionsMock.mockResolvedValue({
+      transitions: [{ id: "200", name: "Done" }],
+    });
+    getRunsBlockedByMock.mockResolvedValue([]);
 
-    const { checkRuns } = await import("./monitor.js");
+    const { checkRuns } = await importMonitor();
     await checkRuns();
 
-    expect(updateRunStatusMock).toHaveBeenCalledWith(
-      "HYDI-33",
-      expect.objectContaining({
-        status: "succeeded",
-        pr_url: "https://github.com/org/repo/pull/28",
-      })
+    expect(jiraTransitionIssueMock).toHaveBeenCalledWith("HYDI-17", "200");
+  });
+
+  it("warns without transitioning when no Done transition is available", async () => {
+    getRunsByStatusMock
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([
+        makeDispatchRun({
+          ticket_key: "HYDI-18",
+          status: "succeeded",
+          pr_url: "https://github.com/org/repo/pull/18",
+        }),
+      ]);
+    jiraGetIssueMock.mockResolvedValue({
+      fields: { status: { statusCategory: { key: "in-progress" } } },
+    });
+    githubPullGetMock.mockResolvedValue({
+      data: {
+        merged_at: "2026-05-01T00:00:00.000Z",
+        mergeable_state: "clean",
+        mergeable: true,
+      },
+    });
+    jiraGetTransitionsMock.mockResolvedValue({
+      transitions: [{ id: "201", name: "QA" }],
+    });
+
+    const { checkRuns } = await importMonitor();
+    await checkRuns();
+
+    expect(warnSpy).toHaveBeenCalledWith(
+      "[monitor] No Done transition found for HYDI-18"
     );
+    expect(jiraTransitionIssueMock).not.toHaveBeenCalled();
+  });
+
+  it("catches GitHub errors during merged-PR sweep and continues to next run", async () => {
+    getRunsByStatusMock
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([
+        makeDispatchRun({
+          ticket_key: "HYDI-19",
+          status: "succeeded",
+          pr_url: "https://github.com/org/repo/pull/19",
+        }),
+        makeDispatchRun({
+          ticket_key: "HYDI-20",
+          status: "succeeded",
+          pr_url: "https://github.com/org/repo/pull/20",
+        }),
+      ]);
+    jiraGetIssueMock.mockResolvedValue({
+      fields: { status: { statusCategory: { key: "in-progress" } } },
+    });
+    githubPullGetMock
+      .mockRejectedValueOnce(new Error("rate limited"))
+      .mockResolvedValueOnce({
+        data: { merged_at: null, mergeable_state: "clean", mergeable: true },
+      });
+
+    const { checkRuns } = await importMonitor();
+    await checkRuns();
+
+    expect(warnSpy).toHaveBeenCalledWith(
+      "[monitor] Failed to process merged PR for HYDI-19:",
+      expect.any(Error)
+    );
+    expect(updateRunStatusMock).toHaveBeenCalledWith("HYDI-20", {
+      pr_has_conflicts: false,
+    });
   });
 });

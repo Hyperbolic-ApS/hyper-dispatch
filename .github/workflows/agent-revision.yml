@@ -13,7 +13,7 @@
 #   - Optional var:     WARP_AGENT_PROFILE  — Oz agent profile to use (uses Oz default if unset)
 #
 # The spawned agent will commit its changes directly to the existing PR branch
-# and will NOT open a new PR.
+# and will NOT open a new PR. 
 
 name: Agent Revision on Review Feedback
 
