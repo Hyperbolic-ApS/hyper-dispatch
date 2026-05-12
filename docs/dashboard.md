@@ -17,6 +17,7 @@ Displays all tracked dispatch runs in a table with:
 - Branch (`agent/{ticket-key}`) with an inline clipboard icon button that copies the branch name to clipboard (shows a checkmark on success)
 - Oz task link (opens the run task/session in Oz when available)
 - PR mergeability badge (`Merge conflicts`, `No conflicts`, or `Unknown` once a PR exists)
+- Production deployment badge from Coolify (`Deployed`, `Not deployed`, or `Unknown`)
 - Session link (clickable, for live runs — opens Oz session)
 - PR link (for completed runs)
 - Blocked-by info (for blocked entries)
@@ -27,6 +28,7 @@ Summary stats bar at the top: counts of running / queued / blocked / succeeded /
 Auto-refreshes every 15 seconds, and also triggers an immediate refresh when the browser tab becomes active again.
 
 **Data source**: Primarily the `dispatch_runs` table (fast), enriched with live Jira issue status per ticket and Oz run data (runtime, session link) when available.
+When Coolify env vars are configured, dashboard rows are further enriched by resolving the PR merge commit and checking whether that commit appears in successful production deployments in Coolify.
 
 ## Config UI
 

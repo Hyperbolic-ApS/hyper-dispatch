@@ -11,6 +11,9 @@ function requireEnv(name: string): string {
 function optionalEnv(name: string, defaultValue: string): string {
   return process.env[name] ?? defaultValue;
 }
+function optionalEnvUndefined(name: string): string | undefined {
+  return process.env[name];
+}
 
 export const env = {
   // Jira
@@ -26,6 +29,11 @@ export const env = {
 
   // GitHub
   GITHUB_TOKEN: requireEnv("GITHUB_TOKEN"),
+
+  // Coolify (optional; used for prod deployment status checks)
+  COOLIFY_BASE_URL: optionalEnvUndefined("COOLIFY_BASE_URL"),
+  COOLIFY_API_TOKEN: optionalEnvUndefined("COOLIFY_API_TOKEN"),
+  COOLIFY_PRODUCTION_APP_UUID: optionalEnvUndefined("COOLIFY_PRODUCTION_APP_UUID"),
 
   // Agent limits
   MAX_CONCURRENT_AGENTS: parseInt(optionalEnv("MAX_CONCURRENT_AGENTS", "4"), 10),

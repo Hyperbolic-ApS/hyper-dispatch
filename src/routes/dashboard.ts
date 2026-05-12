@@ -3,6 +3,7 @@ import { getAllDispatchRuns, getRunCountsByStatus } from "../db/config-queries.j
 import { env } from "../config/env.js";
 import { brandIconSvg, faviconDataUri } from "./branding.js";
 import * as jira from "../jira/client.js";
+import { annotateRunsWithProdDeploymentStatus } from "../coolify/prod-deployment.js";
 
 export const dashboardRouter = new Hono();
 const dashboardDateTimeFormatter = new Intl.DateTimeFormat(undefined, {
@@ -64,6 +65,15 @@ function prConflictBadge(hasConflicts: boolean | null, hasPr: boolean): string {
   }
   return '<span style="padding:2px 8px;border-radius:4px;font-size:0.75rem;font-weight:600;background:#e5e7eb;color:#111">Unknown</span>';
 }
+function prodDeploymentBadge(deployedToProd: boolean | null): string {
+  if (deployedToProd === true) {
+    return '<span style="padding:2px 8px;border-radius:4px;font-size:0.75rem;font-weight:600;background:#22c55e;color:#fff">Deployed</span>';
+  }
+  if (deployedToProd === false) {
+    return '<span style="padding:2px 8px;border-radius:4px;font-size:0.75rem;font-weight:600;background:#f97316;color:#fff">Not deployed</span>';
+  }
+  return '<span style="padding:2px 8px;border-radius:4px;font-size:0.75rem;font-weight:600;background:#e5e7eb;color:#111">Unknown</span>';
+}
 
 const CSS = `
   body { font-family: system-ui, sans-serif; margin: 0; padding: 20px; background: #f9fafb; color: #111; }
@@ -97,9 +107,10 @@ dashboardRouter.get("/", async (c) => {
     getAllDispatchRuns(),
     getRunCountsByStatus(),
   ]);
+  const runsWithProdDeployment = await annotateRunsWithProdDeploymentStatus(runs);
   const ticketStatusByKey = new Map<string, { name: string; categoryKey: string }>();
   await Promise.all(
-    runs.map(async (run) => {
+    runsWithProdDeployment.map(async (run) => {
       try {
         const issue = await jira.getIssue(run.ticket_key, ["status"]);
         const status = issue.fields.status;
@@ -115,8 +126,8 @@ dashboardRouter.get("/", async (c) => {
     })
   );
   const visibleRuns = hideDone
-    ? runs.filter((run) => ticketStatusByKey.get(run.ticket_key)?.categoryKey !== "done")
-    : runs;
+    ? runsWithProdDeployment.filter((run) => ticketStatusByKey.get(run.ticket_key)?.categoryKey !== "done")
+    : runsWithProdDeployment;
 
   const counts: Record<string, number> = {
     running: 0,
@@ -176,6 +187,7 @@ dashboardRouter.get("/", async (c) => {
       </td>
       <td>${ozTaskLink}</td>
       <td>${prConflictBadge(run.pr_has_conflicts, Boolean(run.pr_url))}</td>
+      <td>${prodDeploymentBadge(run.deployed_to_prod)}</td>
       <td>${actionLink}${blockedByHtml}</td>
     </tr>`;
   });
@@ -215,11 +227,12 @@ dashboardRouter.get("/", async (c) => {
         <th>Branch</th>
         <th>Oz Task</th>
         <th>PR Mergeability</th>
+        <th>Prod Deployment (Coolify)</th>
         <th>Links</th>
       </tr>
     </thead>
     <tbody>
-      ${visibleRuns.length === 0 ? '<tr><td colspan="10" style="text-align:center;color:#6b7280">No runs found for the current filter</td></tr>' : rows.join("\n")}
+      ${visibleRuns.length === 0 ? '<tr><td colspan="11" style="text-align:center;color:#6b7280">No runs found for the current filter</td></tr>' : rows.join("\n")}
     </tbody>
   </table>
   <script>
