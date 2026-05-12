@@ -13,7 +13,7 @@ This document defines the testing contract for HyperDispatch. All new tests adde
 ## Test layers
 - Unit tests (default): mock at module boundaries and validate pure logic/branching behavior.
 - Route tests: use `@hono/testing` `testClient(app)` against in-process Hono apps.
-- DB integration tests: deferred to Phase 5 and gated behind `RUN_DB_TESTS=1`.
+- DB integration tests (opt-in): run against disposable Postgres and are gated behind `RUN_DB_TESTS=1`.
 ## Mocking conventions
 - Only mock at module boundaries, especially:
   - `src/db/queries.js`
@@ -50,3 +50,15 @@ This document defines the testing contract for HyperDispatch. All new tests adde
 - Use `describe("functionName", ...)`.
 - Use `it("does X when Y", ...)`.
 - Prefer Arrange/Act/Assert structure in each test.
+## DB integration tests
+- Integration suite lives in `src/db/queries.integration.test.ts` and executes `src/db/schema.sql` in `beforeAll`.
+- Each test case truncates `dispatch_runs` and `project_configs` in `beforeEach` for isolation.
+- Default suite stays fast/offline:
+  - `npm test` runs normally; integration tests self-skip unless `RUN_DB_TESTS=1` is set.
+- Run integration tests with disposable Docker Postgres:
+  - `npm run test:db`
+  - This command runs `scripts/test-db.sh`, which prefers `postgres:16` on port `5433`, sets `DATABASE_URL=postgres://postgres:test@localhost:5433/postgres`, and executes integration tests by name pattern.
+  - If Docker is unavailable, the script falls back to in-process PGlite (`TEST_DB_MODE=pglite`) so integration tests still run in constrained environments.
+- `updateRunStatus` null vs undefined behavior to validate in tests:
+  - Most fields use `!= null`, so passing explicit `null` is treated as "no update" (example: `pr_url: null` leaves `pr_url` unchanged).
+  - `blocked_by` and `pr_has_conflicts` use `!== undefined`, so explicit `null` is applied (example: `blocked_by: null` clears blockers).
