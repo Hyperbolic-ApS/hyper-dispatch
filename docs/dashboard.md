@@ -24,7 +24,7 @@ Displays all tracked dispatch runs in a table with:
 
 Summary stats bar at the top: counts of running / queued / blocked / succeeded / failed.
 
-Auto-refreshes every 15 seconds.
+Auto-refreshes every 15 seconds, and also triggers an immediate refresh when the browser tab becomes active again.
 
 **Data source**: Primarily the `dispatch_runs` table (fast), enriched with live Jira issue status per ticket and Oz run data (runtime, session link) when available.
 
