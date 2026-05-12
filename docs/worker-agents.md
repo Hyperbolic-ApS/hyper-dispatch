@@ -76,14 +76,16 @@ Workflow file: `.github/workflows/oz-pr-review-commenting.yml`
 ### Behavior
 
 1. Runs `warpdotdev/oz-agent-action@v1` with `skill: pr-review-commenting`.
-2. Passes PR URL, number, base/head refs, and SHAs in the prompt context.
-3. Uses per-PR concurrency (`oz-pr-review-<pr-number>`) and cancels in-progress runs when new commits are pushed.
-4. Posts review feedback as a single top-level PR comment (or updates the existing run comment) following the skill contract.
+2. Selects the review model tier from `.github/review-tiers.yml`; changes under `.github/workflows/` and `.github/scripts/` trigger the `ci or automation changes` escalated-review signal.
+3. Passes PR URL, number, base/head refs, and SHAs in the prompt context.
+4. Uses per-PR concurrency (`oz-pr-review-<pr-number>`) and cancels in-progress runs when new commits are pushed.
+5. Posts review feedback as a single top-level PR comment (or updates the existing run comment) following the skill contract.
 
 ### Setup
 
 - **Required secrets**: `WARP_API_KEY`, `REF_API_KEY`, `EXA_API_KEY`
 - **Optional var**: `WARP_AGENT_PROFILE` — Oz agent profile (uses the Oz platform default if unset).
+- **Workflow permissions**: `contents: read`, `issues: write`, `pull-requests: write`
 - **Conditional secrets** (only required when the PR title or branch name references a Jira ticket key, e.g. `PROJ-123`):
   - `JIRA_API_TOKEN` — Atlassian API token
   - `JIRA_EMAIL` — Atlassian account email

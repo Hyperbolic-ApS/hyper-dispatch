@@ -15,6 +15,7 @@ escalated_review:
     - public API changed
     - database query logic changed
     - auth-adjacent code changed
+    - ci or automation changes
 
 high_risk_review:
   model: gpt-5-2-codex-high

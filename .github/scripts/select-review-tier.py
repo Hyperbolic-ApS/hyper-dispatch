@@ -97,6 +97,10 @@ TRIGGERS = {
     "auth-adjacent code changed": {
         "file": r"auth|session|token|oauth|permission|login|credential|identity",
     },
+    "ci or automation changes": {
+        "file": r"^\.github/(workflows|scripts)/",
+        "scope": "all_files",
+    },
     # ── high risk ──
     "migrations": {
         "file": r"migrat",
@@ -151,7 +155,8 @@ def trigger_hit(name, di, meta):
 
     matched_files = 0
     if "file" in spec:
-        for f in di["files"]:
+        files = di["all_files"] if spec.get("scope") == "all_files" else di["files"]
+        for f in files:
             if re.search(spec["file"], f, re.I):
                 matched_files += 1
         if matched_files == 0:
