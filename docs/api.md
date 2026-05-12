@@ -62,6 +62,7 @@ View/edit form for a project (HTML page).
 
 ### `POST /config`
 Create a new project configuration.
+If required fields are missing (`project_key`, `jira_cloud_id`, `board_id`, `oz_env_id`, `github_repo`), the server responds with `400` and re-renders the form HTML with an inline error message.
 
 ### `PUT /config/:projectKey`
 Update an existing project configuration.
@@ -90,6 +91,8 @@ Notes:
 - `repo` is required.
 - `projectKey` is optional and is used to look up a saved per-project token fallback.
 - `githubPat` is optional and, when present, is used immediately for discovery.
+- Returns `400` for malformed JSON payloads or invalid `repo` format.
+- Propagates upstream GitHub status codes when available (for example, `404` for missing repositories).
 
 **Response:**
 ```json
