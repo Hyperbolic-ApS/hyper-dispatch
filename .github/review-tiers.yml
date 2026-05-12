@@ -4,11 +4,11 @@
 # If nothing matches, the default tier is used.
 
 default_review:
-  model: gpt-5-2-codex-low
+  model: auto-efficient
   purpose: "catch real bugs cheaply"
 
 escalated_review:
-  model: gpt-5-2-codex-medium
+  model: auto
   trigger:
     - risk_score >= 3
     - tests changed
@@ -18,7 +18,7 @@ escalated_review:
     - ci or automation changes
 
 high_risk_review:
-  model: gpt-5-2-codex-high
+  model: auto-genius
   trigger:
     - migrations
     - permissions
@@ -29,7 +29,7 @@ high_risk_review:
     - data deletion or destructive updates
 
 critical_review:
-  model: gpt-5-3-codex-xhigh
+  model: auto-genius
   trigger:
     - production incident fix
     - large refactor in critical path
