@@ -223,10 +223,13 @@ dashboardRouter.get("/", async (c) => {
     </tbody>
   </table>
   <script>
+    let previousVisibilityState = document.visibilityState;
     document.addEventListener("visibilitychange", () => {
-      if (document.visibilityState === "visible") {
-        window.location.reload();
-      }
+      const becameVisible =
+        previousVisibilityState !== "visible" && document.visibilityState === "visible";
+      previousVisibilityState = document.visibilityState;
+      if (!becameVisible) return;
+      window.location.reload();
     });
     document.addEventListener("click", async (event) => {
       const button = event.target instanceof HTMLElement ? event.target.closest("[data-copy-branch]") : null;
