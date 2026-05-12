@@ -69,17 +69,13 @@ jobs:
               }
             }
           prompt: |
-            Review pull request #${{ github.event.pull_request.number }} and publish feedback as a single top-level PR comment.
+            Review PR #${{ github.event.pull_request.number }}.
 
             PR URL: ${{ github.event.pull_request.html_url }}
-            Base ref: ${{ github.event.pull_request.base.ref }}
-            Head ref: ${{ github.event.pull_request.head.ref }}
-            Base SHA: ${{ github.event.pull_request.base.sha }}
-            Head SHA: ${{ github.event.pull_request.head.sha }}
+            Base: ${{ github.event.pull_request.base.ref }} (${{ github.event.pull_request.base.sha }})
+            Head: ${{ github.event.pull_request.head.ref }} (${{ github.event.pull_request.head.sha }})
 
-            Requirements: Always read the PR description and any linked issues. Additionally, if the PR title or branch name references a Jira ticket key (e.g. PROJ-123), use the Atlassian CLI (acli) to fetch full requirements from Jira. Example: acli jira workitem view --key <TICKET_KEY>
-
-            Ensure the comment follows the pr-review-commenting format with severity-grouped findings and explicit action items.
+            Read the PR description and any linked issues. If the title or branch contains a Jira key (e.g. PROJ-123), fetch requirements via: acli jira workitem view --key <KEY>
           warp_api_key: ${{ secrets.WARP_API_KEY }}
           profile: ${{ vars.WARP_AGENT_PROFILE || '' }}
         env:
