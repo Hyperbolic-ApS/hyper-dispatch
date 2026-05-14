@@ -1,7 +1,7 @@
 # Agent Revision on Review Feedback
 #
 # This workflow can be triggered by:
-#   1) Automated PR review submissions ("commented" or "changes_requested")
+#   1) Completion of the "Oz PR Review Commenting" workflow
 #   2) A manual "/revise" PR conversation comment
 # on PR branches that match the `agent/*` naming convention.
 #
@@ -23,20 +23,21 @@
 name: Agent Revision on Review Feedback
 
 on:
-  pull_request_review:
-    types: [submitted]
+  workflow_run:
+    workflows: ["Oz PR Review Commenting"]
+    types: [completed]
   issue_comment:
     types: [created]
 
 concurrency:
-  group: agent-revision-${{ github.event.pull_request.number || github.event.issue.number }}
+  group: agent-revision-${{ github.event.issue.number || github.event.workflow_run.pull_requests[0].number || github.run_id }}
   cancel-in-progress: true
 
 jobs:
   revision:
     if: >-
-      (github.event_name == 'pull_request_review' &&
-       contains(fromJson('["commented","changes_requested"]'), github.event.review.state)) ||
+      (github.event_name == 'workflow_run' &&
+       github.event.workflow_run.conclusion == 'success') ||
       (github.event_name == 'issue_comment' &&
        github.event.issue.pull_request &&
        contains(github.event.comment.body, '/revise'))
@@ -49,15 +50,57 @@ jobs:
       - name: Resolve trigger context
         id: context
         uses: actions/github-script@v7
-        env:
-          REVISION_REVIEW_BOT_LOGIN: ${{ vars.REVISION_REVIEW_BOT_LOGIN || 'github-actions[bot]' }}
         with:
           script: |
             const eventName = context.eventName;
-            const botLogin = (process.env.REVISION_REVIEW_BOT_LOGIN || "github-actions[bot]").toLowerCase();
-            const prNumber = eventName === "pull_request_review"
-              ? context.payload.pull_request.number
-              : context.payload.issue.number;
+            let mode = "";
+            let prNumber = null;
+            let triggerAuthor = "";
+            let manualCommentBody = "";
+            let reviewState = "";
+            let workflowRunId = "";
+            let workflowRunUrl = "";
+            let workflowRunHeadSha = "";
+
+            if (eventName === "workflow_run") {
+              const run = context.payload.workflow_run;
+              workflowRunId = String(run.id);
+              workflowRunUrl = run.html_url || "";
+              workflowRunHeadSha = run.head_sha || "";
+              triggerAuthor = run.actor?.login || "";
+              reviewState = "workflow_run_completed";
+              mode = "auto_workflow_run";
+              prNumber = run.pull_requests?.[0]?.number;
+
+              if (!prNumber && run.head_branch) {
+                const prsForHead = await github.paginate(github.rest.pulls.list, {
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  state: "open",
+                  head: `${context.repo.owner}:${run.head_branch}`,
+                  per_page: 100,
+                });
+                prNumber = prsForHead[0]?.number;
+              }
+
+              if (!prNumber) {
+                core.setOutput("should_run", "false");
+                core.setOutput("skip_reason", "No associated pull request found for completed review workflow run");
+                return;
+              }
+            } else {
+              prNumber = context.payload.issue.number;
+              const commentBody = context.payload.comment.body || "";
+              if (!/\/revise\b/i.test(commentBody)) {
+                core.setOutput("should_run", "false");
+                core.setOutput("skip_reason", "No /revise command found in PR comment");
+                return;
+              }
+              mode = "manual_comment";
+              reviewState = "manual";
+              triggerAuthor = context.payload.comment.user?.login || "";
+              manualCommentBody = commentBody;
+            }
 
             const { data: pr } = await github.rest.pulls.get({
               owner: context.repo.owner,
@@ -73,52 +116,18 @@ jobs:
             core.setOutput("branch", branch);
             core.setOutput("ticket_key", ticketKey);
             core.setOutput("should_run", ticketKey ? "true" : "false");
+            core.setOutput("mode", mode);
+            core.setOutput("review_state", reviewState);
+            core.setOutput("trigger_author", triggerAuthor);
+            core.setOutput("manual_comment_body", manualCommentBody);
+            core.setOutput("workflow_run_id", workflowRunId);
+            core.setOutput("workflow_run_url", workflowRunUrl);
+            core.setOutput("workflow_run_head_sha", workflowRunHeadSha);
 
             if (!ticketKey) {
               core.setOutput("skip_reason", `Branch ${branch} does not match agent/*`);
               return;
             }
-
-            if (eventName === "pull_request_review") {
-              const review = context.payload.review;
-              const reviewState = (review.state || "").toLowerCase();
-              const reviewAuthor = (review.user?.login || "").toLowerCase();
-
-              if (reviewAuthor !== botLogin) {
-                core.setOutput("should_run", "false");
-                core.setOutput(
-                  "skip_reason",
-                  `Review author ${review.user?.login || "unknown"} is not configured bot ${botLogin}`,
-                );
-                return;
-              }
-
-              if (!["commented", "changes_requested"].includes(reviewState)) {
-                core.setOutput("should_run", "false");
-                core.setOutput("skip_reason", `Review state ${reviewState || "unknown"} is not actionable`);
-                return;
-              }
-
-              core.setOutput("mode", "auto_review");
-              core.setOutput("review_id", String(review.id));
-              core.setOutput("review_state", reviewState);
-              core.setOutput("trigger_author", review.user?.login || "");
-              core.setOutput("manual_comment_body", "");
-              return;
-            }
-
-            const commentBody = context.payload.comment.body || "";
-            if (!/\/revise\b/i.test(commentBody)) {
-              core.setOutput("should_run", "false");
-              core.setOutput("skip_reason", "No /revise command found in PR comment");
-              return;
-            }
-
-            core.setOutput("mode", "manual_comment");
-            core.setOutput("review_id", "");
-            core.setOutput("review_state", "manual");
-            core.setOutput("trigger_author", context.payload.comment.user?.login || "");
-            core.setOutput("manual_comment_body", commentBody);
 
       - name: Show skip reason
         if: steps.context.outputs.should_run != 'true'
@@ -132,9 +141,10 @@ jobs:
         env:
           MODE: ${{ steps.context.outputs.mode }}
           PR_NUMBER: ${{ steps.context.outputs.pr_number }}
-          REVIEW_ID: ${{ steps.context.outputs.review_id }}
           TRIGGER_AUTHOR: ${{ steps.context.outputs.trigger_author }}
           MANUAL_COMMENT_BODY: ${{ steps.context.outputs.manual_comment_body }}
+          WORKFLOW_RUN_URL: ${{ steps.context.outputs.workflow_run_url }}
+          WORKFLOW_RUN_HEAD_SHA: ${{ steps.context.outputs.workflow_run_head_sha }}
           REVISION_MIN_SEVERITY: ${{ vars.REVISION_MIN_SEVERITY || 'important' }}
           REVISION_REVIEW_BOT_LOGIN: ${{ vars.REVISION_REVIEW_BOT_LOGIN || 'github-actions[bot]' }}
         with:
@@ -142,6 +152,8 @@ jobs:
             const mode = process.env.MODE;
             const prNumber = Number(process.env.PR_NUMBER);
             const botLogin = (process.env.REVISION_REVIEW_BOT_LOGIN || "github-actions[bot]").toLowerCase();
+            const workflowRunUrl = process.env.WORKFLOW_RUN_URL || "";
+            const workflowRunHeadSha = process.env.WORKFLOW_RUN_HEAD_SHA || "";
             const severityRank = { none: 0, minor: 1, important: 2, critical: 3 };
             const configuredMinSeverity = (process.env.REVISION_MIN_SEVERITY || "important").toLowerCase();
             const minSeverity = Object.prototype.hasOwnProperty.call(severityRank, configuredMinSeverity)
@@ -172,35 +184,63 @@ jobs:
               pull_number: prNumber,
               per_page: 100,
             });
+            const reviews = await github.paginate(github.rest.pulls.listReviews, {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: prNumber,
+              per_page: 100,
+            });
+            const botReviews = reviews.filter(r =>
+              (r.user?.login || "").toLowerCase() === botLogin &&
+              ["COMMENTED", "CHANGES_REQUESTED"].includes(r.state),
+            );
+            const latestBotReview = [...botReviews].reverse()[0];
+            const botReviewForHeadSha = workflowRunHeadSha
+              ? [...botReviews].reverse().find(r => (r.commit_id || "") === workflowRunHeadSha)
+              : null;
+            const selectedAutoReview = botReviewForHeadSha || latestBotReview;
 
             let feedback = "";
             let shouldSpawn = true;
             let maxSeverity = "none";
             let gateReason = "";
+            let detectedReviewState = mode === "manual_comment" ? "manual" : "unknown";
 
-            if (mode === "auto_review") {
-              const reviewId = Number(process.env.REVIEW_ID);
-              const reviewBody = context.payload.review?.body?.trim() || "";
-              const reviewComments = allReviewComments.filter(c => c.pull_request_review_id === reviewId);
-
-              if (reviewBody) {
-                feedback += `## Review Summary\n${reviewBody}\n\n`;
+            if (mode === "auto_workflow_run") {
+              if (workflowRunUrl) {
+                feedback += `## Automated Review Workflow Run\n${workflowRunUrl}\n\n`;
               }
-              if (reviewComments.length > 0) {
-                feedback += "## Inline Comments\n";
-                for (const c of reviewComments) {
-                  feedback += `### ${c.path}:${c.line || c.original_line || "?"}\n${c.body}\n\n`;
+
+              if (!selectedAutoReview) {
+                shouldSpawn = false;
+                gateReason = "No automated review from the configured review bot was found on this PR";
+                feedback += "No automated review from the configured review bot was found on this PR.\n";
+              } else {
+                detectedReviewState = (selectedAutoReview.state || "unknown").toLowerCase();
+                const reviewBody = selectedAutoReview.body?.trim() || "";
+                const reviewComments = allReviewComments.filter(
+                  c => c.pull_request_review_id === selectedAutoReview.id,
+                );
+
+                if (reviewBody) {
+                  feedback += `## Automated Review Summary\n${reviewBody}\n\n`;
                 }
-              }
-              if (!feedback.trim()) {
-                feedback = "No explicit review body or inline comments were provided.";
-              }
+                if (reviewComments.length > 0) {
+                  feedback += "## Automated Review Inline Comments\n";
+                  for (const c of reviewComments) {
+                    feedback += `### ${c.path}:${c.line || c.original_line || "?"}\n${c.body}\n\n`;
+                  }
+                }
+                if (!reviewBody && reviewComments.length === 0) {
+                  feedback += "Automated review completed but no review body or inline comments were found.\n";
+                }
 
-              maxSeverity = extractMaxSeverity([reviewBody, ...reviewComments.map(c => c.body || "")]);
-              shouldSpawn = severityRank[maxSeverity] >= severityRank[minSeverity];
-              gateReason = shouldSpawn
-                ? `max severity ${maxSeverity} meets threshold ${minSeverity}`
-                : `max severity ${maxSeverity} is below threshold ${minSeverity}`;
+                maxSeverity = extractMaxSeverity([reviewBody, ...reviewComments.map(c => c.body || "")]);
+                shouldSpawn = severityRank[maxSeverity] >= severityRank[minSeverity];
+                gateReason = shouldSpawn
+                  ? `max severity ${maxSeverity} meets threshold ${minSeverity}`
+                  : `max severity ${maxSeverity} is below threshold ${minSeverity}`;
+              }
             } else {
               const triggerAuthor = process.env.TRIGGER_AUTHOR || "unknown";
               const manualBody = process.env.MANUAL_COMMENT_BODY || "";
@@ -211,18 +251,8 @@ jobs:
                 feedback += `### Requested Focus\n${manualInstruction}\n\n`;
               }
 
-              const reviews = await github.paginate(github.rest.pulls.listReviews, {
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                pull_number: prNumber,
-                per_page: 100,
-              });
-              const latestBotReview = [...reviews].reverse().find(r =>
-                (r.user?.login || "").toLowerCase() === botLogin &&
-                ["COMMENTED", "CHANGES_REQUESTED"].includes(r.state),
-              );
-
               if (latestBotReview) {
+                detectedReviewState = (latestBotReview.state || "unknown").toLowerCase();
                 const latestBotReviewComments = allReviewComments.filter(
                   c => c.pull_request_review_id === latestBotReview.id,
                 );
@@ -243,8 +273,8 @@ jobs:
               shouldSpawn = true;
               gateReason = "manual /revise command bypasses severity gate";
             }
-
-            core.setOutput("feedback", feedback);
+            core.setOutput("feedback", feedback.trim() ? feedback : "No feedback available.");
+            core.setOutput("review_state", detectedReviewState);
             core.setOutput("min_severity", minSeverity);
             core.setOutput("max_severity", maxSeverity);
             core.setOutput("should_spawn", shouldSpawn ? "true" : "false");
@@ -270,7 +300,7 @@ jobs:
             PR: ${{ steps.context.outputs.pr_url }}
             Branch: ${{ steps.context.outputs.branch }}
             Trigger: ${{ steps.context.outputs.mode }}
-            Review state: ${{ steps.context.outputs.review_state }}
+            Review state: ${{ steps.feedback.outputs.review_state }}
             Severity gate: ${{ steps.feedback.outputs.max_severity }} (threshold: ${{ steps.feedback.outputs.min_severity }})
 
             Address ALL of the following feedback:

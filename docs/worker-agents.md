@@ -45,14 +45,14 @@ Workflow file: `.github/workflows/agent-revision.yml`
 
 ### Trigger conditions
 
-- **Automatic loop trigger**: a `pull_request_review` event is submitted by the configured review bot (`REVISION_REVIEW_BOT_LOGIN`, default `github-actions[bot]`) with state `commented` or `changes_requested`.
+- **Automatic loop trigger**: a `workflow_run` event for `Oz PR Review Commenting` completes successfully.
 - **Manual trigger**: an `issue_comment` event is created on the PR containing `/revise`.
 - The PR branch name starts with `agent/` (i.e., it was created by a HyperDispatch worker agent).
 
 ### Behavior
 
 1. Extracts the Jira ticket key from the branch name (`agent/{ticket-key}` → `{ticket-key}`).
-2. For automatic triggers, collects the submitted review summary and inline comments from that same review.
+2. For automatic triggers, resolves the PR from the completed review workflow run and collects the latest automated review summary and inline comments.
 3. Applies a severity gate for automatic triggers: only runs revision when detected severity is at or above `REVISION_MIN_SEVERITY` (default `important`).
 4. For manual `/revise` triggers, bypasses the severity gate and includes the manual instruction plus latest automated review feedback (if present).
 5. Spawns an Oz agent via `warpdotdev/oz-agent-action@v1` with PR URL, branch, trigger metadata, and aggregated feedback.
