@@ -39,21 +39,24 @@ The model used for a worker agent is determined by (in order of precedence):
 
 ## PR Review Feedback Loop
 
-When a reviewer requests changes on an agent-created PR, a GitHub Actions workflow automatically spawns a new Oz agent to address the feedback.
+When actionable feedback is available on an agent-created PR, a GitHub Actions workflow can spawn a new Oz agent to address that feedback.
 
 Workflow file: `.github/workflows/agent-revision.yml`
 
 ### Trigger conditions
 
-- A `pull_request_review` event is submitted with state `changes_requested`.
+- **Automatic loop trigger**: a `pull_request_review` event is submitted by the configured review bot (`REVISION_REVIEW_BOT_LOGIN`, default `github-actions[bot]`) with state `commented` or `changes_requested`.
+- **Manual trigger**: an `issue_comment` event is created on the PR containing `/revise`.
 - The PR branch name starts with `agent/` (i.e., it was created by a HyperDispatch worker agent).
 
 ### Behavior
 
 1. Extracts the Jira ticket key from the branch name (`agent/{ticket-key}` → `{ticket-key}`).
-2. Collects the review summary and all inline comments from the latest "changes requested" review.
-3. Spawns an Oz agent via `warpdotdev/oz-agent-action@v1` with a prompt containing the PR URL, branch, and all review feedback.
-4. The agent commits its changes directly to the existing PR branch and does **not** open a new PR.
+2. For automatic triggers, collects the submitted review summary and inline comments from that same review.
+3. Applies a severity gate for automatic triggers: only runs revision when detected severity is at or above `REVISION_MIN_SEVERITY` (default `important`).
+4. For manual `/revise` triggers, bypasses the severity gate and includes the manual instruction plus latest automated review feedback (if present).
+5. Spawns an Oz agent via `warpdotdev/oz-agent-action@v1` with PR URL, branch, trigger metadata, and aggregated feedback.
+6. The agent commits its changes directly to the existing PR branch and does **not** open a new PR.
 
 ### Setup
 
@@ -61,6 +64,8 @@ To use this workflow in a target repo, copy `.github/workflows/agent-revision.ym
 
 - **Required secret**: `WARP_API_KEY` — Warp API key for spawning agents.
 - **Optional var**: `WARP_AGENT_PROFILE` — Oz agent profile (uses the Oz platform default if unset).
+- **Optional var**: `REVISION_MIN_SEVERITY` — `none|minor|important|critical` (default `important`) for automatic review-triggered revisions.
+- **Optional var**: `REVISION_REVIEW_BOT_LOGIN` — GitHub login treated as the automated reviewer (default `github-actions[bot]`).
 
 ## Automated PR Review Commenting
 

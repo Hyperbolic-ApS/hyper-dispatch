@@ -4,11 +4,11 @@
 # If nothing matches, the default tier is used.
 
 default_review:
-  model: auto-efficient
+  model: auto-open
   purpose: "catch real bugs cheaply"
 
 escalated_review:
-  model: auto
+  model: auto-efficient
   trigger:
     - risk_score >= 3
     - tests changed
@@ -18,7 +18,7 @@ escalated_review:
     - ci or automation changes
 
 high_risk_review:
-  model: auto-genius
+  model: auto
   trigger:
     - migrations
     - permissions
