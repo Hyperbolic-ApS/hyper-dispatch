@@ -1,5 +1,6 @@
 import { Hono } from "hono";
 import { getAllDispatchRuns, getRunCountsByStatus } from "../db/config-queries.js";
+import { annotateRunsWithProdDeploymentStatus } from "../coolify/prod-deployment.js";
 
 export const apiRouter = new Hono();
 
@@ -8,6 +9,7 @@ apiRouter.get("/status", async (c) => {
     getAllDispatchRuns(),
     getRunCountsByStatus(),
   ]);
+  const runsWithProdDeployment = await annotateRunsWithProdDeploymentStatus(runs);
 
   const counts: Record<string, number> = {
     running: 0,
@@ -25,5 +27,5 @@ apiRouter.get("/status", async (c) => {
     }
   }
 
-  return c.json({ runs, counts });
+  return c.json({ runs: runsWithProdDeployment, counts });
 });

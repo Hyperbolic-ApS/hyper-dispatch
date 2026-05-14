@@ -26,7 +26,7 @@ Receives Jira Automation webhook payloads on issue transitions.
 
 ### `GET /api/status`
 
-Returns all tracked dispatch runs as JSON.
+Returns all tracked dispatch runs as JSON, plus status counts.
 
 **Query parameters:**
 - `project` (optional) — filter by project key.
@@ -34,20 +34,35 @@ Returns all tracked dispatch runs as JSON.
 
 **Response:**
 ```json
-[
-  {
-    "ticketKey": "PROJ-123",
-    "summary": "Add auth middleware",
-    "status": "running",
-    "model": "claude-sonnet-4-20250514",
-    "runId": "abc-123",
-    "prHasConflicts": null,
-    "sessionLink": "https://...",
-    "spawnedAt": "2025-01-01T12:00:00Z",
-    "runtime": "12m"
+{
+  "runs": [
+    {
+      "ticket_key": "PROJ-123",
+      "summary": "Add auth middleware",
+      "status": "running",
+      "model": "claude-sonnet-4-20250514",
+      "run_id": "abc-123",
+      "pr_has_conflicts": null,
+      "deployed_to_prod": false,
+      "session_link": "https://...",
+      "spawned_at": "2025-01-01T12:00:00Z"
+    }
+  ],
+  "counts": {
+    "running": 1,
+    "queued": 0,
+    "blocked": 0,
+    "succeeded": 0,
+    "failed": 0,
+    "stale": 0
   }
-]
+}
 ```
+
+`deployed_to_prod` values:
+- `true`: PR merge commit is present in successful production deployments in Coolify.
+- `false`: not deployed to production yet (or no PR available).
+- `null`: deployment status could not be determined (for example, missing Coolify config or lookup error).
 
 ## Configuration API
 
