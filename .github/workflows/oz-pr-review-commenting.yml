@@ -21,7 +21,7 @@ jobs:
       github.event.pull_request.user.login != 'github-actions[bot]'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
@@ -37,8 +37,11 @@ jobs:
 
       - name: Detect Jira ticket reference
         id: jira-check
+        env:
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
         run: |
-          combined="${{ github.event.pull_request.head.ref }} ${{ github.event.pull_request.title }}"
+          combined="$HEAD_REF $PR_TITLE"
           if echo "$combined" | grep -qE '[A-Z][A-Z0-9]+-[0-9]+'; then
             echo "has_ticket=true" >> "$GITHUB_OUTPUT"
           else
@@ -48,9 +51,16 @@ jobs:
       - name: Install and authenticate Atlassian CLI
         if: steps.jira-check.outputs.has_ticket == 'true'
         run: |
-          curl -sLO "https://acli.atlassian.com/linux/latest/acli_linux_amd64/acli"
-          chmod +x ./acli
-          sudo mv ./acli /usr/local/bin/acli
+          sudo apt-get install -y wget gnupg2
+          sudo mkdir -p -m 755 /etc/apt/keyrings
+          wget -nv -O- https://acli.atlassian.com/gpg/public-key.asc \
+            | sudo gpg --dearmor -o /etc/apt/keyrings/acli-archive-keyring.gpg
+          sudo chmod go+r /etc/apt/keyrings/acli-archive-keyring.gpg
+          echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/acli-archive-keyring.gpg] \
+            https://acli.atlassian.com/linux/deb stable main" \
+            | sudo tee /etc/apt/sources.list.d/acli.list > /dev/null
+          sudo apt-get update
+          sudo apt-get install -y acli
           echo "${{ secrets.JIRA_API_TOKEN }}" | acli jira auth login --site "${{ vars.JIRA_SITE }}" --email "${{ secrets.JIRA_EMAIL }}" --token
 
       - name: Run PR review commenting skill

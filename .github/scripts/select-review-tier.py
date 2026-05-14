@@ -229,7 +229,7 @@ def main():
 
     tier_name, tier, signals = select_tier(config, di, meta)
 
-    model = tier.get("model", "gpt-5-2-codex-low")
+    model = tier.get("model") or "auto-efficient"
 
     # Emit step outputs
     gh_out = os.environ.get("GITHUB_OUTPUT", "")
