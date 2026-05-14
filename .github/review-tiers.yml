@@ -1,0 +1,38 @@
+# PR review model selection tiers.
+# The selector script (.github/scripts/select-review-tier.py) evaluates the
+# diff against each tier's triggers, highest tier first. First match wins.
+# If nothing matches, the default tier is used.
+
+default_review:
+  model: auto-open
+  purpose: "catch real bugs cheaply"
+
+escalated_review:
+  model: auto-efficient
+  trigger:
+    - risk_score >= 3
+    - tests changed
+    - public API changed
+    - database query logic changed
+    - auth-adjacent code changed
+    - ci or automation changes
+
+high_risk_review:
+  model: auto
+  trigger:
+    - migrations
+    - permissions
+    - payment or billing logic
+    - concurrency
+    - event processing
+    - security boundary
+    - data deletion or destructive updates
+
+critical_review:
+  model: auto-genius
+  trigger:
+    - production incident fix
+    - large refactor in critical path
+    - authentication/authorization rewrite
+    - schema migration with irreversible data changes
+    - model uncertainty after lower-tier review
