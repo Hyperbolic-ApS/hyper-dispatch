@@ -4,6 +4,8 @@ import * as jira from "../jira/client.js";
 import { updateRunStatus } from "../db/queries.js";
 import type { ProjectConfig } from "../db/queries.js";
 import type { JiraIssue } from "../jira/types.js";
+import type { McpServerConfig } from "oz-agent-sdk/resources/agent/agent";
+import { resolveJiraColumnMappings } from "../jira/columns.js";
 
 // Lazy singleton — avoids constructing the client at module load time
 let _ozClient: OzAPI | null = null;
@@ -20,7 +22,7 @@ function getOzClient(): OzAPI {
 /**
  * Recursively extract plain text from an Atlassian Document Format (ADF) node.
  */
-function adfToText(node: unknown, depth = 0): string {
+export function adfToText(node: unknown, depth = 0): string {
   if (typeof node === "string") return node;
   if (typeof node !== "object" || node === null) return "";
 
@@ -43,7 +45,7 @@ function adfToText(node: unknown, depth = 0): string {
 /**
  * Build a plain-text prompt for the agent from a Jira issue.
  */
-function buildPrompt(ticketKey: string, issue: JiraIssue): string {
+export function buildPrompt(ticketKey: string, issue: JiraIssue): string {
   const summary = issue.fields.summary;
   const description = issue.fields.description
     ? adfToText(issue.fields.description)
@@ -62,7 +64,7 @@ function buildPrompt(ticketKey: string, issue: JiraIssue): string {
  *   2. Project default model
  *   3. undefined → let Oz use the workspace default
  */
-function resolveModel(
+export function resolveModel(
   issue: JiraIssue,
   config: ProjectConfig
 ): string | undefined {
@@ -70,6 +72,16 @@ function resolveModel(
     const fieldValue = issue.fields[config.model_field_id];
     if (typeof fieldValue === "string" && fieldValue.trim()) {
       return fieldValue.trim();
+    }
+    if (
+      typeof fieldValue === "object" &&
+      fieldValue !== null &&
+      "value" in fieldValue
+    ) {
+      const nestedValue = (fieldValue as { value?: unknown }).value;
+      if (typeof nestedValue === "string" && nestedValue.trim()) {
+        return nestedValue.trim();
+      }
     }
   }
   return config.default_model ?? undefined;
@@ -92,6 +104,7 @@ export async function spawnAgent(
 
   const model = resolveModel(issue, config);
   const prompt = buildPrompt(ticketKey, issue);
+  const mcpServers = config.mcp_servers as Record<string, McpServerConfig> | null;
 
   // First skill in the array is the run skill (oz-agent-sdk accepts one skill)
   const skillSpec = config.skills.length > 0 ? config.skills[0] : undefined;
@@ -103,6 +116,7 @@ export async function spawnAgent(
       environment_id: config.oz_env_id,
       ...(model ? { model_id: model } : {}),
       ...(skillSpec ? { skill_spec: skillSpec } : {}),
+      ...(mcpServers ? { mcp_servers: mcpServers } : {}),
     },
   });
 
@@ -115,9 +129,16 @@ export async function spawnAgent(
 
   // Transition Jira issue to "In Progress" (best-effort)
   try {
+    const columnMappings = resolveJiraColumnMappings({
+      backlog: config.backlog_column_name,
+      toDo: config.to_do_column_name,
+      inProgress: config.in_progress_column_name,
+      inReview: config.in_review_column_name,
+      done: config.done_column_name,
+    });
     const transitions = await jira.getTransitions(ticketKey);
     const inProgress = transitions.transitions.find(
-      (t) => t.name === "In Progress"
+      (t) => t.name.trim().toLowerCase() === columnMappings.inProgress.toLowerCase()
     );
     if (inProgress) {
       await jira.transitionIssue(ticketKey, inProgress.id);

@@ -2,10 +2,81 @@ import { env } from "../config/env.js";
 import * as jira from "../jira/client.js";
 import {
   getActiveRunCount,
+  getRunsByProject,
   getRunsByStatus,
-  getProjectConfig,
+  listActiveProjectConfigs,
+  type ProjectConfig,
+  deleteRun,
 } from "../db/queries.js";
 import { spawnAgent } from "./spawner.js";
+import { syncTicketInToDo } from "./ticket-sync.js";
+
+async function reconcileProjectRuns(config: ProjectConfig): Promise<void> {
+  const [toDoIssues, existingRuns] = await Promise.all([
+    jira.searchIssuesInStatus(config.project_key, config.to_do_column_name, [
+      "summary",
+      "priority",
+      "status",
+      "issuelinks",
+    ]),
+    getRunsByProject(config.project_key),
+  ]);
+
+  const existingByTicket = new Set(existingRuns.map((run) => run.ticket_key));
+  const missingToDoTickets = toDoIssues.filter(
+    (issue) => !existingByTicket.has(issue.key)
+  );
+
+  for (const issue of missingToDoTickets) {
+    try {
+      const result = await syncTicketInToDo(issue.key, config.project_key);
+      console.log(
+        `[scheduler] Polling discovered ${issue.key} in ${config.to_do_column_name} (${result.action}).`
+      );
+    } catch (err) {
+      console.error(
+        `[scheduler] Failed to ingest polled To Do ticket ${issue.key}:`,
+        err
+      );
+    }
+  }
+
+  for (const run of existingRuns) {
+    try {
+      await jira.getIssue(run.ticket_key, ["status"]);
+    } catch (err) {
+      const status =
+        err instanceof jira.JiraApiError
+          ? err.status
+          : (err as { status?: number } | null)?.status;
+      if (status === 404) {
+        await deleteRun(run.ticket_key);
+        console.log(
+          `[scheduler] Removed ${run.ticket_key} from dispatch_runs because it no longer exists in Jira.`
+        );
+        continue;
+      }
+      console.warn(
+        `[scheduler] Could not verify Jira existence for ${run.ticket_key}:`,
+        err
+      );
+    }
+  }
+}
+
+async function reconcilePollingState(): Promise<void> {
+  const projects = await listActiveProjectConfigs();
+  for (const project of projects) {
+    try {
+      await reconcileProjectRuns(project);
+    } catch (err) {
+      console.error(
+        `[scheduler] Polling reconciliation failed for project ${project.project_key}:`,
+        err
+      );
+    }
+  }
+}
 
 const SCHEDULER_INTERVAL_MS = 30_000;
 
@@ -14,6 +85,7 @@ const SCHEDULER_INTERVAL_MS = 30_000;
  * Returns the number of agents spawned in this cycle.
  */
 export async function processQueue(): Promise<number> {
+  await reconcilePollingState();
   const activeCount = await getActiveRunCount();
   if (activeCount >= env.MAX_CONCURRENT_AGENTS) {
     console.log(
@@ -24,6 +96,10 @@ export async function processQueue(): Promise<number> {
 
   const slots = env.MAX_CONCURRENT_AGENTS - activeCount;
   const queued = await getRunsByStatus("queued");
+  const activeProjects = await listActiveProjectConfigs();
+  const projectsByKey = new Map(
+    activeProjects.map((project) => [project.project_key, project])
+  );
 
   let spawned = 0;
 
@@ -33,10 +109,10 @@ export async function processQueue(): Promise<number> {
     // Dedup: skip if a running entry exists for this ticket
     // (can happen if the DB is slightly stale between polling cycles)
     try {
-      const config = await getProjectConfig(run.project_key);
+      const config = projectsByKey.get(run.project_key);
       if (!config) {
         console.warn(
-          `[scheduler] No config for project ${run.project_key}, skipping ${run.ticket_key}`
+          `[scheduler] Skipping ${run.ticket_key}: project ${run.project_key} is not configured.`
         );
         continue;
       }

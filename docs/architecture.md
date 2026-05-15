@@ -8,9 +8,9 @@ HyperDispatch is a deterministic orchestration service. It receives Jira webhook
 Jira Automation (webhook) → HyperDispatch → Oz Cloud Agents → PRs
 ```
 
-1. A Jira issue transitions to "To Do" → webhook fires.
+1. A Jira issue transitions to "To Do" (or is discovered in periodic polling if webhook is missed).
 2. HyperDispatch checks dependencies — if all blockers are resolved, the ticket is eligible.
-3. The scheduler checks concurrency limits and queues or dispatches.
+3. The scheduler reconciles To Do/backfill + deleted tickets, then checks concurrency limits and queues or dispatches.
 4. The agent spawner creates an Oz cloud agent run with the configured skill, model, and environment.
 5. The run monitor polls Oz for completion, then updates the state store and transitions the Jira ticket.
 

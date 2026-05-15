@@ -77,6 +77,11 @@ export interface JiraIssue {
   fields: JiraIssueFields;
 }
 
+export interface JiraSearchResponse {
+  issues: JiraIssue[];
+  nextPageToken?: string;
+}
+
 export interface JiraTransition {
   id: string;
   name: string;

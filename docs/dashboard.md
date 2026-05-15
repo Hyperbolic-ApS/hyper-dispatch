@@ -1,5 +1,6 @@
 # Dashboard, Auth & Config UI
 Dashboard, auth pages, and config pages are server-rendered HTML routes in the same Hono app.
+Both pages now share the HyperDispatch brand icon (header logo) and include the same favicon for browser tabs.
 ## Authentication
 - `GET /dashboard`, all `/config/*` pages, and `/api/*` require login.
 - Sessions are cookie-based.
@@ -12,23 +13,48 @@ Dashboard, auth pages, and config pages are server-rendered HTML routes in the s
 Displays all tracked dispatch runs in a table with:
 - Ticket key (linked to Jira)
 - Summary
-- Status badge (color-coded by state)
-- Agent runtime
-- Session link (running)
-- PR link (succeeded)
-- Blocked-by info (blocked)
+- Ticket status (live Jira workflow status, e.g. To Do / In Progress / Done)
+- Status badge (color-coded: green=succeeded, blue=running, yellow=queued, orange=blocked, red=failed)
+- Spawned-at timestamp in the viewer's local timezone, rendered in 24-hour format without seconds
+- Agent runtime (for running/completed entries)
+- Branch (`agent/{ticket-key}`) with an inline clipboard icon button that copies the branch name to clipboard (shows a checkmark on success)
+- Oz task link (opens the run task/session in Oz when available)
+- PR mergeability badge (`Merge conflicts`, `No conflicts`, or `Unknown` once a PR exists)
+- Session link (clickable, for live runs — opens Oz session)
+- PR link (for completed runs)
+- Blocked-by info (for blocked entries)
+- Header filter toggle to hide/show rows whose Jira ticket status category is `Done`
+
 Header actions:
 - Account page
 - Configure Projects
 - Sign out
-Summary stats show running / queued / blocked / succeeded / failed / stale.
-Auto-refreshes every 15 seconds.
+
+Summary stats bar at the top: counts of running / queued / blocked / succeeded / failed.
+
+Auto-refreshes every 15 seconds, and also triggers an immediate refresh when the browser tab becomes active again.
+
+**Data source**: Primarily the `dispatch_runs` table (fast), enriched with live Jira issue status per ticket and Oz run data (runtime, session link) when available.
+
 ## Config UI
-**Routes**: see [api.md](./api.md) for all config endpoints.
-Features:
-- Add/edit/deactivate project configs
-- Skill discovery from current in-form repo/token values
-- Jira board validation
+
+**Routes**: See [api.md](./api.md) for the full route list under Configuration API.
+
+The config UI allows managing project configurations:
+- Add/edit/deactivate projects
+- Projects overview (`/config`) shows the **+ New Project** button below the project list table
+- Projects overview (`/config`) omits the `Projects` nav link/button since users are already on that page
+- Projects overview row actions (Edit/Validate) are rendered as button-style controls with filled backgrounds and borders for clearer affordance
+- Select skills from the GitHub repo (dynamic dropdown)
+  - Discovery uses the current in-form `GitHub Repo` value immediately (no save required)
+  - If entered, the current in-form `GitHub PAT` is used for discovery before save
+- Set default model and model override field
+- Configure optional **MCP Servers JSON** in the project form
+  - Must be a valid JSON object
+  - Save is blocked for invalid JSON
+  - Validation errors include the JSON line number
+- New project create validates required fields server-side and re-renders the form with an inline missing-fields error when required values are blank
+- Validate Jira board setup
 - Admin-only user management on `GET /config/users`:
   - Create one-time invite links
   - Change user role between `member` and `admin`

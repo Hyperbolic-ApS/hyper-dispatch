@@ -10,7 +10,13 @@ export interface ProjectConfig {
   github_repo: string;
   default_model: string | null;
   model_field_id: string | null;
+  backlog_column_name: string;
+  to_do_column_name: string;
+  in_progress_column_name: string;
+  in_review_column_name: string;
+  done_column_name: string;
   skills: string[];
+  mcp_servers: Record<string, unknown> | null;
   active: boolean;
   created_at: Date;
   updated_at: Date;
@@ -28,6 +34,7 @@ export interface DispatchRun {
   spawned_at: Date | null;
   completed_at: Date | null;
   pr_url: string | null;
+  pr_has_conflicts: boolean | null;
   session_link: string | null;
   error: string | null;
   created_at: Date;
@@ -60,6 +67,18 @@ export async function getProjectConfig(
     LIMIT 1
   `;
   return rows[0] ?? null;
+}
+
+/**
+ * Return all active project configs.
+ */
+export async function listActiveProjectConfigs(): Promise<ProjectConfig[]> {
+  return sql<ProjectConfig[]>`
+    SELECT *
+    FROM project_configs
+    WHERE active = true
+    ORDER BY project_key ASC
+  `;
 }
 
 /**
@@ -129,7 +148,7 @@ export async function getRunsBlockedBy(ticketKey: string): Promise<DispatchRun[]
  */
 export async function updateRunStatus(
   ticketKey: string,
-  updates: Partial<Pick<DispatchRun, "status" | "blocked_by" | "run_id" | "model" | "spawned_at" | "completed_at" | "pr_url" | "session_link" | "error">>
+  updates: Partial<Pick<DispatchRun, "status" | "blocked_by" | "run_id" | "model" | "spawned_at" | "completed_at" | "pr_url" | "pr_has_conflicts" | "session_link" | "error">>
 ): Promise<DispatchRun | null> {
   const rows = await sql<DispatchRun[]>`
     UPDATE dispatch_runs
@@ -140,6 +159,7 @@ export async function updateRunStatus(
       spawned_at   = ${updates.spawned_at    != null ? updates.spawned_at    : sql`spawned_at`},
       completed_at = ${updates.completed_at  != null ? updates.completed_at  : sql`completed_at`},
       pr_url       = ${updates.pr_url        != null ? updates.pr_url        : sql`pr_url`},
+      pr_has_conflicts = ${updates.pr_has_conflicts !== undefined ? updates.pr_has_conflicts : sql`pr_has_conflicts`},
       session_link = ${updates.session_link  != null ? updates.session_link  : sql`session_link`},
       error        = ${updates.error         != null ? updates.error         : sql`error`},
       blocked_by   = ${updates.blocked_by !== undefined ? updates.blocked_by : sql`blocked_by`},
@@ -164,7 +184,8 @@ export async function removeBlocker(
     SET
       blocked_by = array_remove(blocked_by, ${blockerKey}),
       status     = CASE
-                     WHEN array_length(array_remove(blocked_by, ${blockerKey}), 1) IS NULL
+                     WHEN status = 'blocked'
+                      AND array_length(array_remove(blocked_by, ${blockerKey}), 1) IS NULL
                      THEN 'queued'
                      ELSE status
                    END,
@@ -195,5 +216,27 @@ export async function getAllRuns(): Promise<DispatchRun[]> {
     SELECT *
     FROM dispatch_runs
     ORDER BY created_at DESC
+  `;
+}
+
+/**
+ * Return all runs for a given project.
+ */
+export async function getRunsByProject(projectKey: string): Promise<DispatchRun[]> {
+  return sql<DispatchRun[]>`
+    SELECT *
+    FROM dispatch_runs
+    WHERE project_key = ${projectKey}
+    ORDER BY created_at DESC
+  `;
+}
+
+/**
+ * Delete a run from the dispatch table by ticket key.
+ */
+export async function deleteRun(ticketKey: string): Promise<void> {
+  await sql`
+    DELETE FROM dispatch_runs
+    WHERE ticket_key = ${ticketKey}
   `;
 }

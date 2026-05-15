@@ -1,4 +1,4 @@
-import { Hono } from "hono";
+import { Hono, type Context } from "hono";
 import {
   listProjectConfigs,
   getProjectConfig,
@@ -18,13 +18,29 @@ import {
   updateUserRole,
   type UserRole,
 } from "../auth/queries.js";
+import { DEFAULT_JIRA_COLUMN_MAPPINGS } from "../jira/columns.js";
+import { brandIconSvg, faviconDataUri } from "./branding.js";
 
 export const configRouter = new Hono();
+
+function formColumnName(
+  form: Record<string, unknown>,
+  key: string,
+  fallback: string
+): string {
+  const value = form[key];
+  if (typeof value !== "string") return fallback;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : fallback;
+}
 
 // ─── Shared CSS ────────────────────────────────────────────────────────────────
 
 const CSS = `
   body { font-family: system-ui, sans-serif; margin: 0; padding: 20px; background: #f9fafb; color: #111; }
+  .page-header { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; }
+  .brand-logo { width: 30px; height: 30px; flex: 0 0 auto; display: inline-flex; }
+  .brand-title { margin: 0; font-size: 1.1rem; font-weight: 700; }
   h1, h2 { margin: 0 0 16px; }
   h1 { font-size: 1.4rem; }
   h2 { font-size: 1.1rem; }
@@ -47,21 +63,30 @@ const CSS = `
   textarea { min-height: 80px; resize: vertical; }
   input[type=checkbox] { width: auto; }
   .hint { font-size: 0.75rem; color: #6b7280; margin-top: 3px; }
-  .btn { display: inline-block; padding: 8px 18px; border-radius: 6px; font-size: 0.875rem; font-weight: 500; cursor: pointer; border: none; }
-  .btn-primary { background: #3b82f6; color: #fff; }
+  .btn { display: inline-block; padding: 8px 18px; border-radius: 6px; font-size: 0.875rem; font-weight: 500; cursor: pointer; border: 1px solid transparent; text-decoration: none; line-height: 1.2; }
+  .btn-primary { background: #3b82f6; border-color: #2563eb; color: #fff; }
   .btn-primary:hover { background: #2563eb; }
-  .btn-danger { background: #ef4444; color: #fff; }
+  .btn-danger { background: #ef4444; border-color: #dc2626; color: #fff; }
   .btn-danger:hover { background: #dc2626; }
-  .btn-secondary { background: #e5e7eb; color: #111; }
+  .btn-secondary { background: #e5e7eb; border-color: #d1d5db; color: #111; }
   .btn-secondary:hover { background: #d1d5db; }
+  .btn:hover { text-decoration: none; }
+  .btn-small { padding: 6px 10px; font-size: 0.8rem; }
   .actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 20px; }
   .skill-list { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
   .skill-tag { background:#dbeafe;color:#1e40af;padding:3px 10px;border-radius:4px;font-size:0.75rem; }
   #skills-picker { display: none; margin-top: 8px; border: 1px solid #d1d5db; border-radius: 6px; padding: 8px; background: #f9fafb; max-height: 200px; overflow-y: auto; }
   #skills-picker label { font-weight: normal; display: flex; align-items: center; gap: 6px; padding: 4px 0; cursor: pointer; }
+  .error-text { color: #b91c1c; font-size: 0.75rem; margin-top: 4px; }
 `;
 
-function layout(title: string, body: string, user?: AuthUser): string {
+function layout(
+  title: string,
+  body: string,
+  user?: AuthUser,
+  options: { showProjectsLink?: boolean } = {}
+): string {
+  const { showProjectsLink = true } = options;
   const userControls = user
     ? `<span style="margin-left:auto;color:#374151;font-size:0.85rem">${user.email} (${user.role})</span>
        <a href="/auth/account">Account</a>
@@ -69,26 +94,81 @@ function layout(title: string, body: string, user?: AuthUser): string {
          <button type="submit" class="btn btn-secondary" style="padding:4px 10px">Sign out</button>
        </form>`
     : "";
-
   const usersNav = user?.role === "admin" ? '<a href="/config/users">Users</a>' : "";
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
   <title>${title} — HyperDispatch</title>
+  <link rel="icon" href="${faviconDataUri()}">
   <style>${CSS}</style>
 </head>
 <body>
+  <div class="page-header">
+    <span class="brand-logo">${brandIconSvg()}</span>
+    <p class="brand-title">HyperDispatch</p>
+  </div>
   <nav>
     <a href="/dashboard">Dashboard</a>
-    <a href="/config">Projects</a>
-    <a href="/config/new">+ New Project</a>
+    ${showProjectsLink ? '<a href="/config">Projects</a>' : ""}
     ${usersNav}
     ${userControls}
   </nav>
   ${body}
 </body>
 </html>`;
+}
+
+function escapeHtml(value: string): string {
+  return value
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;");
+}
+
+function parseLineNumberFromJsonError(input: string, errorMessage: string): number | null {
+  const lineMatch = errorMessage.match(/line\s+(\d+)/i);
+  if (lineMatch) {
+    return Number(lineMatch[1]);
+  }
+
+  const positionMatch = errorMessage.match(/position\s+(\d+)/i);
+  if (positionMatch) {
+    const position = Number(positionMatch[1]);
+    if (Number.isFinite(position) && position >= 0) {
+      return input.slice(0, position).split(/\r?\n/).length;
+    }
+  }
+
+  return null;
+}
+
+function parseMcpServersFromInput(raw: string): Record<string, unknown> | null {
+  const trimmed = raw.trim();
+  if (!trimmed) return null;
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(trimmed);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    const line = parseLineNumberFromJsonError(trimmed, message);
+    const prefix = line ? `Invalid MCP servers JSON (line ${line})` : "Invalid MCP servers JSON";
+    throw new Error(`${prefix}: ${message}`);
+  }
+
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+    throw new Error("Invalid MCP servers JSON: expected a JSON object at line 1");
+  }
+
+  return parsed as Record<string, unknown>;
+}
+
+function formatMcpServersForTextarea(
+  mcpServers: Record<string, unknown> | null | undefined
+): string {
+  if (!mcpServers) return "";
+  return JSON.stringify(mcpServers, null, 2);
 }
 
 function projectForm(
@@ -98,6 +178,7 @@ function projectForm(
 ): string {
   const v = config ?? {};
   const skillsValue = (v.skills ?? []).join(", ");
+  const mcpServersValue = formatMcpServersForTextarea(v.mcp_servers);
 
   const skillsPickerScript = `
 <script>
@@ -148,6 +229,49 @@ function syncSkills() {
   const selected = Array.from(boxes).filter(b => b.checked).map(b => b.value);
   document.getElementById('skills').value = selected.join(', ');
 }
+function parseLineFromError(raw, errorMessage) {
+  const lineMatch = errorMessage.match(/line\\s+(\\d+)/i);
+  if (lineMatch) return Number(lineMatch[1]);
+  const posMatch = errorMessage.match(/position\\s+(\\d+)/i);
+  if (!posMatch) return null;
+  const position = Number(posMatch[1]);
+  if (!Number.isFinite(position) || position < 0) return null;
+  return raw.slice(0, position).split(/\\r?\\n/).length;
+}
+function validateMcpServersField() {
+  const input = document.getElementById('mcp_servers');
+  const error = document.getElementById('mcp_servers_error');
+  const raw = input.value.trim();
+  error.textContent = '';
+  if (!raw) return true;
+  try {
+    const parsed = JSON.parse(raw);
+    if (parsed === null || Array.isArray(parsed) || typeof parsed !== 'object') {
+      error.textContent = 'MCP servers must be a JSON object (line 1).';
+      return false;
+    }
+    return true;
+  } catch (e) {
+    const message = e instanceof Error ? e.message : String(e);
+    const line = parseLineFromError(raw, message);
+    error.textContent = line
+      ? 'Invalid MCP servers JSON at line ' + line + ': ' + message
+      : 'Invalid MCP servers JSON: ' + message;
+    return false;
+  }
+}
+document.addEventListener('DOMContentLoaded', () => {
+  const form = document.querySelector('form');
+  const input = document.getElementById('mcp_servers');
+  if (input) input.addEventListener('input', validateMcpServersField);
+  if (form) {
+    form.addEventListener('submit', (event) => {
+      if (!validateMcpServersField()) {
+        event.preventDefault();
+      }
+    });
+  }
+});
 </script>`;
 
   return `
@@ -190,11 +314,42 @@ function syncSkills() {
       <div class="hint">In Jira, go to Settings &rarr; Issues &rarr; Custom Fields. Click the field &rarr; the ID is in the URL, e.g. <code>customfield_10050</code></div>
     </div>
     <div class="field">
+      <label for="backlog_column_name">Backlog Column Name</label>
+      <input type="text" id="backlog_column_name" name="backlog_column_name" value="${v.backlog_column_name ?? DEFAULT_JIRA_COLUMN_MAPPINGS.backlog}">
+      <div class="hint">Column/status name used as Backlog for this project.</div>
+    </div>
+    <div class="field">
+      <label for="to_do_column_name">To Do Column Name</label>
+      <input type="text" id="to_do_column_name" name="to_do_column_name" value="${v.to_do_column_name ?? DEFAULT_JIRA_COLUMN_MAPPINGS.toDo}">
+      <div class="hint">Incoming webhook transitions to this status will queue work.</div>
+    </div>
+    <div class="field">
+      <label for="in_progress_column_name">In Progress Column Name</label>
+      <input type="text" id="in_progress_column_name" name="in_progress_column_name" value="${v.in_progress_column_name ?? DEFAULT_JIRA_COLUMN_MAPPINGS.inProgress}">
+      <div class="hint">Used when HyperDispatch transitions a ticket after spawning an agent.</div>
+    </div>
+    <div class="field">
+      <label for="in_review_column_name">In Review Column Name</label>
+      <input type="text" id="in_review_column_name" name="in_review_column_name" value="${v.in_review_column_name ?? DEFAULT_JIRA_COLUMN_MAPPINGS.inReview}">
+      <div class="hint">Used when HyperDispatch transitions a succeeded ticket.</div>
+    </div>
+    <div class="field">
+      <label for="done_column_name">Done Column Name</label>
+      <input type="text" id="done_column_name" name="done_column_name" value="${v.done_column_name ?? DEFAULT_JIRA_COLUMN_MAPPINGS.done}">
+      <div class="hint">Incoming webhook transitions to this status trigger unblock checks.</div>
+    </div>
+    <div class="field">
       <label for="skills">Skills (comma-separated specs)</label>
       <input type="text" id="skills" name="skills" value="${skillsValue}">
       <div class="hint">e.g. owner/repo:skill-name, owner/repo:other-skill</div>
       <button type="button" id="discover-btn" class="btn btn-secondary" style="margin-top:6px" onclick="loadSkills()">Discover Skills</button>
       <div id="skills-picker"></div>
+    </div>
+    <div class="field">
+      <label for="mcp_servers">MCP Servers JSON</label>
+      <textarea id="mcp_servers" name="mcp_servers" spellcheck="false">${escapeHtml(mcpServersValue)}</textarea>
+      <div class="hint">Optional JSON object passed to the spawned agent under <code>mcp_servers</code>.</div>
+      <div id="mcp_servers_error" class="error-text"></div>
     </div>
     <div class="field">
       <label for="github_pat">GitHub PAT <span style="font-weight:400;color:#6b7280">(per-project override)</span></label>
@@ -223,168 +378,7 @@ function syncSkills() {
 ${skillsPickerScript}`;
 }
 
-// ─── GET / — List all projects ─────────────────────────────────────────────────
-
-configRouter.get("/", async (c) => {
-  const user = getAuthUser(c);
-  const configs = await listProjectConfigs();
-
-  const rows = configs.map(
-    (cfg) => `<tr>
-    <td><a href="/config/${cfg.project_key}">${cfg.project_key}</a></td>
-    <td>${cfg.github_repo}</td>
-    <td><span class="badge ${cfg.active ? "badge-active" : "badge-inactive"}">${cfg.active ? "active" : "inactive"}</span></td>
-    <td>${cfg.oz_env_id}</td>
-    <td style="white-space:nowrap">
-      <a href="/config/${cfg.project_key}">Edit</a> ·
-      <a href="/config/${cfg.project_key}/validate" target="_blank">Validate</a>
-    </td>
-  </tr>`
-  );
-
-  const webhookInstructions = `
-<div style="background:#fff;border-radius:8px;box-shadow:0 1px 3px rgba(0,0,0,0.1);padding:24px;margin-top:20px">
-  <h2 style="margin:0 0 12px;font-size:1.1rem">Webhook Setup</h2>
-  <p style="margin:0 0 12px;font-size:0.875rem;color:#374151">Create one Jira Automation rule to connect Jira to HyperDispatch:</p>
-  <ol style="margin:0 0 16px;padding-left:20px;font-size:0.875rem;color:#374151;line-height:1.7">
-    <li>In Jira, go to <strong>Project Settings &rarr; Automation</strong> (or use global automation to cover all projects)</li>
-    <li>Create a new rule with trigger: <strong>Issue transitioned</strong></li>
-    <li>Add action: <strong>Send web request</strong></li>
-    <li>Set URL to: <code style="background:#f3f4f6;padding:2px 6px;border-radius:4px">https://&lt;your-hyperdispatch-host&gt;/webhook/jira</code></li>
-    <li>Method: <strong>POST</strong>, Content type: <strong>application/json</strong></li>
-    <li>Set the body to:</li>
-  </ol>
-  <pre style="background:#1e293b;color:#e2e8f0;padding:16px;border-radius:6px;font-size:0.8rem;overflow-x:auto;margin:0 0 12px">{
-  &quot;issueKey&quot;: &quot;{{issue.key}}&quot;,
-  &quot;projectKey&quot;: &quot;{{issue.fields.project.key}}&quot;,
-  &quot;transitionTarget&quot;: &quot;{{transition.to_status.name}}&quot;
-}</pre>
-  <p style="margin:0;font-size:0.8rem;color:#6b7280">ℹ️ HyperDispatch silently ignores webhooks for projects that are not configured above.</p>
-</div>`;
-
-  const body = `
-<h1>Projects</h1>
-<table>
-  <thead>
-    <tr>
-      <th>Project Key</th>
-      <th>GitHub Repo</th>
-      <th>Status</th>
-      <th>Oz Env</th>
-      <th>Actions</th>
-    </tr>
-  </thead>
-  <tbody>
-    ${configs.length === 0 ? '<tr><td colspan="5" style="text-align:center;color:#6b7280">No projects configured yet. <a href="/config/new">Add one</a>.</td></tr>' : rows.join("\n")}
-  </tbody>
-</table>
-${webhookInstructions}`;
-
-  return c.html(layout("Projects", body, user));
-});
-
-// ─── GET /new — New project form ───────────────────────────────────────────────
-
-configRouter.get("/new", (c) => {
-  const user = getAuthUser(c);
-  const body = `<h1>New Project</h1>${projectForm("/config")}`;
-  return c.html(layout("New Project", body, user));
-});
-
-// ─── POST / — Create project ───────────────────────────────────────────────────
-
-configRouter.post("/", async (c) => {
-  const form = await c.req.parseBody();
-
-  const skillsRaw = String(form.skills ?? "");
-  const skills = skillsRaw
-    .split(",")
-    .map((s) => s.trim())
-    .filter(Boolean);
-
-  await createProjectConfig({
-    project_key: String(form.project_key),
-    jira_cloud_id: String(form.jira_cloud_id),
-    board_id: parseInt(String(form.board_id), 10),
-    oz_env_id: String(form.oz_env_id),
-    github_repo: String(form.github_repo),
-    default_model: form.default_model ? String(form.default_model) : null,
-    model_field_id: form.model_field_id ? String(form.model_field_id) : null,
-    skills,
-    github_pat: form.github_pat ? String(form.github_pat) : null,
-    jira_api_token: form.jira_api_token ? String(form.jira_api_token) : null,
-    jira_email: form.jira_email ? String(form.jira_email) : null,
-    active: form.active === "true",
-  });
-
-  return c.redirect("/config");
-});
-
-// ─── GET /:projectKey — Edit form ──────────────────────────────────────────────
-
-configRouter.get("/:projectKey", async (c) => {
-  const user = getAuthUser(c);
-  const { projectKey } = c.req.param();
-  const config = await getProjectConfig(projectKey);
-  if (!config) {
-    return c.html(layout("Not Found", `<p>Project <strong>${projectKey}</strong> not found. <a href="/config">Back</a></p>`, user), 404);
-  }
-
-  const body = `
-<h1>Edit: ${config.project_key}</h1>
-${projectForm(`/config/${config.project_key}`, config, config.project_key)}
-<div style="margin-top:16px">
-  <form method="POST" action="/config/${config.project_key}/delete" onsubmit="return confirm('Deactivate this project?')">
-    <button type="submit" class="btn btn-danger">Deactivate</button>
-  </form>
-</div>`;
-
-  return c.html(layout(`Edit ${projectKey}`, body, user));
-});
-
-// ─── POST /:projectKey — Update project ────────────────────────────────────────
-
-configRouter.post("/:projectKey", async (c) => {
-  const { projectKey } = c.req.param();
-  const form = await c.req.parseBody();
-
-  const skillsRaw = String(form.skills ?? "");
-  const skills = skillsRaw
-    .split(",")
-    .map((s) => s.trim())
-    .filter(Boolean);
-
-  // Only update tokens if a new value was submitted — empty field means "keep existing"
-  const tokenUpdates: { github_pat?: string | null; jira_api_token?: string | null; jira_email?: string | null } = {};
-  if (form.github_pat) tokenUpdates.github_pat = String(form.github_pat);
-  if (form.jira_api_token) tokenUpdates.jira_api_token = String(form.jira_api_token);
-  if (form.jira_email) tokenUpdates.jira_email = String(form.jira_email);
-
-  await updateProjectConfig(projectKey, {
-    jira_cloud_id: String(form.jira_cloud_id),
-    board_id: parseInt(String(form.board_id), 10),
-    oz_env_id: String(form.oz_env_id),
-    github_repo: String(form.github_repo),
-    default_model: form.default_model ? String(form.default_model) : null,
-    model_field_id: form.model_field_id ? String(form.model_field_id) : null,
-    skills,
-    ...tokenUpdates,
-    active: form.active === "true",
-  });
-
-  return c.redirect(`/config/${projectKey}`);
-});
-
-// ─── POST /:projectKey/delete — Deactivate project ────────────────────────────
-
-configRouter.post("/:projectKey/delete", async (c) => {
-  const { projectKey } = c.req.param();
-  await deactivateProjectConfig(projectKey);
-  return c.redirect("/config");
-});
-
-// ─── GET /:projectKey/skills — Discover skills from GitHub repo ────────────────
-configRouter.post("/skills", async (c) => {
+async function handleSkillDiscoveryPost(c: Context): Promise<Response> {
   let payload:
     | { repo?: unknown; projectKey?: unknown; githubPat?: unknown }
     | undefined;
@@ -424,9 +418,272 @@ configRouter.post("/skills", async (c) => {
     return c.json(skills);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    return c.json({ error: message }, 500);
+    const status =
+      typeof err === "object" &&
+      err !== null &&
+      "status" in err &&
+      typeof (err as { status?: unknown }).status === "number"
+        ? (err as { status: number }).status
+        : 500;
+    return c.json({ error: message }, status as never);
   }
+}
+
+// ─── GET / — List all projects ─────────────────────────────────────────────────
+
+configRouter.get("/", async (c) => {
+  const user = getAuthUser(c);
+  const configs = await listProjectConfigs();
+
+  const rows = configs.map(
+    (cfg) => `<tr>
+    <td><a href="/config/${cfg.project_key}">${cfg.project_key}</a></td>
+    <td>${cfg.github_repo}</td>
+    <td><span class="badge ${cfg.active ? "badge-active" : "badge-inactive"}">${cfg.active ? "active" : "inactive"}</span></td>
+    <td>${cfg.oz_env_id}</td>
+    <td style="white-space:nowrap">
+      <a href="/config/${cfg.project_key}" class="btn btn-secondary btn-small">Edit</a>
+      <a href="/config/${cfg.project_key}/validate" target="_blank" class="btn btn-secondary btn-small">Validate</a>
+    </td>
+  </tr>`
+  );
+
+  const webhookInstructions = `
+<div style="background:#fff;border-radius:8px;box-shadow:0 1px 3px rgba(0,0,0,0.1);padding:24px;margin-top:20px">
+  <h2 style="margin:0 0 12px;font-size:1.1rem">Webhook Setup</h2>
+  <p style="margin:0 0 12px;font-size:0.875rem;color:#374151">Create one Jira Automation rule to connect Jira to HyperDispatch:</p>
+  <ol style="margin:0 0 16px;padding-left:20px;font-size:0.875rem;color:#374151;line-height:1.7">
+    <li>In Jira, go to <strong>Project Settings &rarr; Automation</strong> (or use global automation to cover all projects)</li>
+    <li>Create a new rule with trigger: <strong>Issue transitioned</strong></li>
+    <li>Add action: <strong>Send web request</strong></li>
+    <li>Set URL to: <code style="background:#f3f4f6;padding:2px 6px;border-radius:4px">https://&lt;your-hyperdispatch-host&gt;/webhook/jira</code></li>
+    <li>Method: <strong>POST</strong>, Content type: <strong>application/json</strong></li>
+    <li>Set the body to:</li>
+  </ol>
+  <pre style="background:#1e293b;color:#e2e8f0;padding:16px;border-radius:6px;font-size:0.8rem;overflow-x:auto;margin:0 0 12px">{
+  &quot;issueKey&quot;: &quot;{{issue.key}}&quot;,
+  &quot;projectKey&quot;: &quot;{{issue.project.key}}&quot;,
+  &quot;transitionTarget&quot;: &quot;{{issue.status.name}}&quot;
+}</pre>
+  <p style="margin:0;font-size:0.8rem;color:#6b7280">ℹ️ HyperDispatch silently ignores webhooks for projects that are not configured above.</p>
+</div>`;
+
+  const body = `
+<h1>Projects</h1>
+<table>
+  <thead>
+    <tr>
+      <th>Project Key</th>
+      <th>GitHub Repo</th>
+      <th>Status</th>
+      <th>Oz Env</th>
+      <th>Actions</th>
+    </tr>
+  </thead>
+  <tbody>
+    ${configs.length === 0 ? '<tr><td colspan="5" style="text-align:center;color:#6b7280">No projects configured yet. <a href="/config/new">Add one</a>.</td></tr>' : rows.join("\n")}
+  </tbody>
+</table>
+<div class="actions">
+  <a href="/config/new" class="btn btn-primary">+ New Project</a>
+</div>
+${webhookInstructions}`;
+
+  return c.html(layout("Projects", body, user, { showProjectsLink: false }));
 });
+
+// ─── GET /new — New project form ───────────────────────────────────────────────
+
+configRouter.get("/new", (c) => {
+  const user = getAuthUser(c);
+  const body = `<h1>New Project</h1>${projectForm("/config")}`;
+  return c.html(layout("New Project", body, user));
+});
+
+// ─── POST / — Create project ───────────────────────────────────────────────────
+
+configRouter.post("/", async (c) => {
+  const form = await c.req.parseBody();
+  const mcpServersRaw = String(form.mcp_servers ?? "");
+  const requiredFields = [
+    "project_key",
+    "jira_cloud_id",
+    "board_id",
+    "oz_env_id",
+    "github_repo",
+  ] as const;
+  const missingFields = requiredFields.filter((field) => {
+    const value = form[field];
+    return typeof value !== "string" || value.trim().length === 0;
+  });
+
+  if (missingFields.length > 0) {
+    const body = `
+<h1>New Project</h1>
+<p class="error-text">Missing required fields: ${missingFields.join(", ")}</p>
+${projectForm("/config")}`;
+    return c.html(layout("New Project", body), 400);
+  }
+
+  const skillsRaw = String(form.skills ?? "");
+  const skills = skillsRaw
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+  let mcpServers: Record<string, unknown> | null;
+  try {
+    mcpServers = parseMcpServersFromInput(mcpServersRaw);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return c.text(message, 400);
+  }
+
+  await createProjectConfig({
+    project_key: String(form.project_key),
+    jira_cloud_id: String(form.jira_cloud_id),
+    board_id: parseInt(String(form.board_id), 10),
+    oz_env_id: String(form.oz_env_id),
+    github_repo: String(form.github_repo),
+    default_model: form.default_model ? String(form.default_model) : null,
+    backlog_column_name: formColumnName(
+      form as Record<string, unknown>,
+      "backlog_column_name",
+      DEFAULT_JIRA_COLUMN_MAPPINGS.backlog
+    ),
+    to_do_column_name: formColumnName(
+      form as Record<string, unknown>,
+      "to_do_column_name",
+      DEFAULT_JIRA_COLUMN_MAPPINGS.toDo
+    ),
+    in_progress_column_name: formColumnName(
+      form as Record<string, unknown>,
+      "in_progress_column_name",
+      DEFAULT_JIRA_COLUMN_MAPPINGS.inProgress
+    ),
+    in_review_column_name: formColumnName(
+      form as Record<string, unknown>,
+      "in_review_column_name",
+      DEFAULT_JIRA_COLUMN_MAPPINGS.inReview
+    ),
+    done_column_name: formColumnName(
+      form as Record<string, unknown>,
+      "done_column_name",
+      DEFAULT_JIRA_COLUMN_MAPPINGS.done
+    ),
+    model_field_id: form.model_field_id ? String(form.model_field_id) : null,
+    skills,
+    mcp_servers: mcpServers,
+    github_pat: form.github_pat ? String(form.github_pat) : null,
+    jira_api_token: form.jira_api_token ? String(form.jira_api_token) : null,
+    jira_email: form.jira_email ? String(form.jira_email) : null,
+    active: form.active === "true",
+  });
+
+  return c.redirect("/config");
+});
+
+// ─── GET /:projectKey — Edit form ──────────────────────────────────────────────
+
+configRouter.get("/:projectKey", async (c) => {
+  const user = getAuthUser(c);
+  const { projectKey } = c.req.param();
+  const config = await getProjectConfig(projectKey);
+  if (!config) {
+    return c.html(layout("Not Found", `<p>Project <strong>${projectKey}</strong> not found. <a href="/config">Back</a></p>`, user), 404);
+  }
+
+  const body = `
+<h1>Edit: ${config.project_key}</h1>
+${projectForm(`/config/${config.project_key}`, config, config.project_key)}
+<div style="margin-top:16px">
+  <form method="POST" action="/config/${config.project_key}/delete" onsubmit="return confirm('Deactivate this project?')">
+    <button type="submit" class="btn btn-danger">Deactivate</button>
+  </form>
+</div>`;
+
+  return c.html(layout(`Edit ${projectKey}`, body, user));
+});
+
+// ─── POST /:projectKey — Update project ────────────────────────────────────────
+
+configRouter.post("/:projectKey", async (c) => {
+  const { projectKey } = c.req.param();
+  if (projectKey === "skills") {
+    return handleSkillDiscoveryPost(c);
+  }
+  const form = await c.req.parseBody();
+  const mcpServersRaw = String(form.mcp_servers ?? "");
+
+  const skillsRaw = String(form.skills ?? "");
+  const skills = skillsRaw
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+  let mcpServers: Record<string, unknown> | null;
+  try {
+    mcpServers = parseMcpServersFromInput(mcpServersRaw);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return c.text(message, 400);
+  }
+
+  // Only update tokens if a new value was submitted — empty field means "keep existing"
+  const tokenUpdates: { github_pat?: string | null; jira_api_token?: string | null; jira_email?: string | null } = {};
+  if (form.github_pat) tokenUpdates.github_pat = String(form.github_pat);
+  if (form.jira_api_token) tokenUpdates.jira_api_token = String(form.jira_api_token);
+  if (form.jira_email) tokenUpdates.jira_email = String(form.jira_email);
+
+  await updateProjectConfig(projectKey, {
+    jira_cloud_id: String(form.jira_cloud_id),
+    board_id: parseInt(String(form.board_id), 10),
+    oz_env_id: String(form.oz_env_id),
+    github_repo: String(form.github_repo),
+    default_model: form.default_model ? String(form.default_model) : null,
+    model_field_id: form.model_field_id ? String(form.model_field_id) : null,
+    backlog_column_name: formColumnName(
+      form as Record<string, unknown>,
+      "backlog_column_name",
+      DEFAULT_JIRA_COLUMN_MAPPINGS.backlog
+    ),
+    to_do_column_name: formColumnName(
+      form as Record<string, unknown>,
+      "to_do_column_name",
+      DEFAULT_JIRA_COLUMN_MAPPINGS.toDo
+    ),
+    in_progress_column_name: formColumnName(
+      form as Record<string, unknown>,
+      "in_progress_column_name",
+      DEFAULT_JIRA_COLUMN_MAPPINGS.inProgress
+    ),
+    in_review_column_name: formColumnName(
+      form as Record<string, unknown>,
+      "in_review_column_name",
+      DEFAULT_JIRA_COLUMN_MAPPINGS.inReview
+    ),
+    done_column_name: formColumnName(
+      form as Record<string, unknown>,
+      "done_column_name",
+      DEFAULT_JIRA_COLUMN_MAPPINGS.done
+    ),
+    skills,
+    mcp_servers: mcpServers,
+    ...tokenUpdates,
+    active: form.active === "true",
+  });
+
+  return c.redirect(`/config/${projectKey}`);
+});
+
+// ─── POST /:projectKey/delete — Deactivate project ────────────────────────────
+
+configRouter.post("/:projectKey/delete", async (c) => {
+  const { projectKey } = c.req.param();
+  await deactivateProjectConfig(projectKey);
+  return c.redirect("/config");
+});
+
+// ─── GET /:projectKey/skills — Discover skills from GitHub repo ────────────────
+configRouter.post("/skills", handleSkillDiscoveryPost);
 
 configRouter.get("/:projectKey/skills", async (c) => {
   const repoParam = c.req.query("repo");
@@ -470,6 +727,13 @@ configRouter.get("/:projectKey/validate", async (c) => {
   const result = await validateJiraProject(
     config.board_id,
     config.model_field_id,
+    {
+      backlog: config.backlog_column_name,
+      toDo: config.to_do_column_name,
+      inProgress: config.in_progress_column_name,
+      inReview: config.in_review_column_name,
+      done: config.done_column_name,
+    },
     config.jira_email && config.jira_api_token
       ? { email: config.jira_email, apiToken: config.jira_api_token }
       : undefined

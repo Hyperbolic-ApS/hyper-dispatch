@@ -8,7 +8,13 @@ export interface ProjectConfig {
   github_repo: string;
   default_model: string | null;
   model_field_id: string | null;
+  backlog_column_name: string;
+  to_do_column_name: string;
+  in_progress_column_name: string;
+  in_review_column_name: string;
+  done_column_name: string;
   skills: string[];
+  mcp_servers: Record<string, unknown> | null;
   github_pat: string | null;
   jira_api_token: string | null;
   jira_email: string | null;
@@ -25,7 +31,13 @@ export interface ProjectConfigInput {
   github_repo: string;
   default_model?: string | null;
   model_field_id?: string | null;
+  backlog_column_name?: string;
+  to_do_column_name?: string;
+  in_progress_column_name?: string;
+  in_review_column_name?: string;
+  done_column_name?: string;
   skills?: string[];
+  mcp_servers?: Record<string, unknown> | null;
   github_pat?: string | null;
   jira_api_token?: string | null;
   jira_email?: string | null;
@@ -44,6 +56,7 @@ export interface DispatchRun {
   spawned_at: Date | null;
   completed_at: Date | null;
   pr_url: string | null;
+  pr_has_conflicts: boolean | null;
   session_link: string | null;
   error: string | null;
   created_at: Date;
@@ -82,7 +95,13 @@ export async function createProjectConfig(
       github_repo,
       default_model,
       model_field_id,
+      backlog_column_name,
+      to_do_column_name,
+      in_progress_column_name,
+      in_review_column_name,
+      done_column_name,
       skills,
+      mcp_servers,
       github_pat,
       jira_api_token,
       jira_email,
@@ -95,7 +114,13 @@ export async function createProjectConfig(
       ${config.github_repo},
       ${config.default_model ?? null},
       ${config.model_field_id ?? null},
+      ${config.backlog_column_name ?? "Backlog"},
+      ${config.to_do_column_name ?? "To Do"},
+      ${config.in_progress_column_name ?? "In Progress"},
+      ${config.in_review_column_name ?? "In Review"},
+      ${config.done_column_name ?? "Done"},
       ${sql.array(config.skills ?? [])},
+      ${config.mcp_servers ? JSON.stringify(config.mcp_servers) : null}::jsonb,
       ${config.github_pat ?? null},
       ${config.jira_api_token ?? null},
       ${config.jira_email ?? null},
@@ -123,7 +148,13 @@ export async function updateProjectConfig(
       github_repo    = ${merged.github_repo},
       default_model  = ${merged.default_model ?? null},
       model_field_id = ${merged.model_field_id ?? null},
+      backlog_column_name = ${merged.backlog_column_name ?? "Backlog"},
+      to_do_column_name = ${merged.to_do_column_name ?? "To Do"},
+      in_progress_column_name = ${merged.in_progress_column_name ?? "In Progress"},
+      in_review_column_name = ${merged.in_review_column_name ?? "In Review"},
+      done_column_name = ${merged.done_column_name ?? "Done"},
       skills         = ${sql.array(merged.skills ?? [])},
+      mcp_servers    = ${merged.mcp_servers ? JSON.stringify(merged.mcp_servers) : null}::jsonb,
       github_pat     = ${merged.github_pat ?? null},
       jira_api_token = ${merged.jira_api_token ?? null},
       jira_email     = ${merged.jira_email ?? null},
