@@ -1,18 +1,22 @@
 import { Hono } from "hono";
+import { getCookie } from "hono/cookie";
 import {
   clearSessionCookie,
   getAuthUser,
+  SESSION_COOKIE_NAME,
   setSessionCookie,
 } from "../auth/middleware.js";
 import {
   createSession,
   createUserFromInvite,
+  deleteSessionByToken,
   getUserByEmail,
   isInviteUsable,
   normalizeEmail,
   updateUserPassword,
 } from "../auth/queries.js";
 import { hashPassword, verifyPassword } from "../auth/password.js";
+import { escapeHtml } from "../utils/html.js";
 
 export const authRouter = new Hono();
 
@@ -55,7 +59,7 @@ authRouter.get("/login", (c) => {
   <h1>Sign in</h1>
   ${error ? '<div class="error">Invalid email or password.</div>' : ""}
   <form method="POST" action="/auth/login">
-    <input type="hidden" name="next" value="${next}">
+    <input type="hidden" name="next" value="${escapeHtml(next)}">
     <div class="field">
       <label for="email">Email</label>
       <input type="email" id="email" name="email" required>
@@ -83,16 +87,22 @@ authRouter.post("/login", async (c) => {
 
   const { token, expiresAt } = await createSession(user.id);
   setSessionCookie(c, token, expiresAt);
-  return c.redirect(next.startsWith("/") ? next : "/dashboard");
+  const safePath = next.startsWith("/") && !next.startsWith("//") ? next : "/dashboard";
+  return c.redirect(safePath);
 });
 
 authRouter.post("/logout", async (c) => {
+  const token = getCookie(c, SESSION_COOKIE_NAME);
+  if (token) {
+    await deleteSessionByToken(token);
+  }
   clearSessionCookie(c);
   return c.redirect("/auth/login");
 });
 
 authRouter.get("/invite/:token", async (c) => {
   const token = c.req.param("token");
+  const encodedToken = encodeURIComponent(token);
   const usable = await isInviteUsable(token);
   const error = c.req.query("error");
   const body = `
@@ -100,7 +110,7 @@ authRouter.get("/invite/:token", async (c) => {
   <h1>Create account</h1>
   ${!usable ? '<div class="error">This invite link is invalid or already used.</div>' : ""}
   ${error ? '<div class="error">Could not create account. Check input and try again.</div>' : ""}
-  <form method="POST" action="/auth/invite/${token}">
+  <form method="POST" action="/auth/invite/${escapeHtml(encodedToken)}">
     <div class="field">
       <label for="email">Email</label>
       <input type="email" id="email" name="email" required ${usable ? "" : "disabled"}>
@@ -117,16 +127,17 @@ authRouter.get("/invite/:token", async (c) => {
 
 authRouter.post("/invite/:token", async (c) => {
   const token = c.req.param("token");
+  const encodedToken = encodeURIComponent(token);
   const form = await c.req.parseBody();
   const email = normalizeEmail(String(form.email ?? ""));
   const password = String(form.password ?? "");
-  if (!email || !password) {
-    return c.redirect(`/auth/invite/${token}?error=1`);
+  if (!email || !password || password.length < 8) {
+    return c.redirect(`/auth/invite/${encodedToken}?error=1`);
   }
 
   const existing = await getUserByEmail(email);
   if (existing) {
-    return c.redirect(`/auth/invite/${token}?error=1`);
+    return c.redirect(`/auth/invite/${encodedToken}?error=1`);
   }
 
   const created = await createUserFromInvite({
@@ -135,7 +146,7 @@ authRouter.post("/invite/:token", async (c) => {
     passwordHash: hashPassword(password),
   });
   if (!created) {
-    return c.redirect(`/auth/invite/${token}?error=1`);
+    return c.redirect(`/auth/invite/${encodedToken}?error=1`);
   }
 
   const { token: sessionToken, expiresAt } = await createSession(created.id);
@@ -150,7 +161,7 @@ authRouter.get("/account", (c) => {
   const body = `
 <div class="card">
   <h1>Account</h1>
-  <p class="muted">Signed in as <strong>${user?.email ?? "unknown"}</strong></p>
+  <p class="muted">Signed in as <strong>${escapeHtml(user?.email ?? "unknown")}</strong></p>
   ${ok ? '<div class="ok">Password updated.</div>' : ""}
   ${error ? '<div class="error">Password change failed.</div>' : ""}
   <form method="POST" action="/auth/change-password">
@@ -178,7 +189,7 @@ authRouter.post("/change-password", async (c) => {
   const form = await c.req.parseBody();
   const currentPassword = String(form.current_password ?? "");
   const newPassword = String(form.new_password ?? "");
-  if (!currentPassword || !newPassword) {
+  if (!currentPassword || !newPassword || newPassword.length < 8) {
     return c.redirect("/auth/account?error=1");
   }
 

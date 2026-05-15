@@ -22,25 +22,8 @@ function unauthorized(c: Context): Response {
   return c.redirect(`/auth/login?next=${next}`);
 }
 
-export async function authMiddleware(c: Context, next: Next): Promise<void> {
-  const sessionToken = getCookie(c, SESSION_COOKIE_NAME);
-  if (!sessionToken) {
-    return next();
-  }
-
-  const user = await getUserBySessionToken(sessionToken);
-  if (!user) {
-    deleteCookie(c, SESSION_COOKIE_NAME, { path: "/" });
-    return next();
-  }
-
-  c.set("authUser", {
-    id: user.id,
-    email: user.email,
-    role: user.role,
-  } satisfies AuthUser);
-
-  await next();
+function useSecureCookies(): boolean {
+  return process.env.NODE_ENV === "production";
 }
 
 export function getAuthUser(c: Context): AuthUser | undefined {
@@ -58,7 +41,12 @@ export async function requireAuth(
 
   const user = await getUserBySessionToken(sessionToken);
   if (!user) {
-    deleteCookie(c, SESSION_COOKIE_NAME, { path: "/" });
+    deleteCookie(c, SESSION_COOKIE_NAME, {
+      path: "/",
+      httpOnly: true,
+      secure: useSecureCookies(),
+      sameSite: "Lax",
+    });
     return unauthorized(c);
   }
 
@@ -96,6 +84,7 @@ export function setSessionCookie(
   setCookie(c, SESSION_COOKIE_NAME, token, {
     path: "/",
     httpOnly: true,
+    secure: useSecureCookies(),
     sameSite: "Lax",
     expires: expiresAt,
   });
@@ -105,6 +94,7 @@ export function clearSessionCookie(c: Context): void {
   deleteCookie(c, SESSION_COOKIE_NAME, {
     path: "/",
     httpOnly: true,
+    secure: useSecureCookies(),
     sameSite: "Lax",
   });
 }

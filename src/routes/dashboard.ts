@@ -4,6 +4,7 @@ import { env } from "../config/env.js";
 import { getAuthUser } from "../auth/middleware.js";
 import { brandIconSvg, faviconDataUri } from "./branding.js";
 import * as jira from "../jira/client.js";
+import { escapeHtml } from "../utils/html.js";
 
 export const dashboardRouter = new Hono();
 const dashboardDateTimeFormatter = new Intl.DateTimeFormat(undefined, {
@@ -199,7 +200,7 @@ dashboardRouter.get("/", async (c) => {
       <h1>HyperDispatch Dashboard</h1>
     </div>
     <div class="header-actions">
-      <span class="user-pill">${user?.email ?? "unknown"} (${user?.role ?? "member"})</span>
+      <span class="user-pill">${escapeHtml(user?.email ?? "unknown")} (${user?.role ?? "member"})</span>
       <a href="${hideDone ? "/dashboard" : "/dashboard?hideDone=1"}" class="btn btn-secondary">${hideDone ? "Show Done" : "Hide Done"}</a>
       <a href="/auth/account" class="btn btn-secondary">Account</a>
       <a href="/config" class="btn btn-secondary">⚙ Configure Projects</a>

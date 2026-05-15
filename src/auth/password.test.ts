@@ -1,13 +1,13 @@
-import test from "node:test";
-import assert from "node:assert/strict";
+import { describe, expect, it } from "vitest";
 import { hashPassword, verifyPassword } from "./password.js";
+describe("password helpers", () => {
+  it("accepts the correct password", () => {
+    const hash = hashPassword("CorrectHorseBatteryStaple!");
+    expect(verifyPassword("CorrectHorseBatteryStaple!", hash)).toBe(true);
+  });
 
-test("hashPassword and verifyPassword accept the correct password", () => {
-  const hash = hashPassword("Nodes2020!");
-  assert.equal(verifyPassword("Nodes2020!", hash), true);
-});
-
-test("verifyPassword rejects incorrect password", () => {
-  const hash = hashPassword("Nodes2020!");
-  assert.equal(verifyPassword("WrongPassword!", hash), false);
+  it("rejects an incorrect password", () => {
+    const hash = hashPassword("CorrectHorseBatteryStaple!");
+    expect(verifyPassword("WrongPassword!", hash)).toBe(false);
+  });
 });

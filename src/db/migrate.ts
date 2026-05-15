@@ -63,10 +63,13 @@ export async function runMigrations(): Promise<void> {
     CREATE INDEX IF NOT EXISTS idx_invite_links_token_hash ON invite_links(token_hash);
   `);
 
-  await ensureAdminUserSeeded({
-    email: "kasper.welner@hyperbolic.dk",
-    passwordHash: hashPassword("Nodes2020!"),
-  });
+  const seedAdminPassword = process.env.SEED_ADMIN_PASSWORD;
+  if (seedAdminPassword) {
+    await ensureAdminUserSeeded({
+      email: "kasper.welner@hyperbolic.dk",
+      passwordHash: hashPassword(seedAdminPassword),
+    });
+  }
 
   console.log("Database migrations applied successfully");
 }

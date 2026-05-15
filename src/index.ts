@@ -7,7 +7,7 @@ import { dashboardRouter } from "./routes/dashboard.js";
 import { apiRouter } from "./routes/api.js";
 import { configRouter } from "./routes/config.js";
 import { authRouter } from "./routes/auth.js";
-import { requireAuth } from "./auth/middleware.js";
+import { requireAdmin, requireAuth } from "./auth/middleware.js";
 import { startSchedulerLoop } from "./orchestration/scheduler.js";
 import { startMonitorLoop } from "./orchestration/monitor.js";
 
@@ -33,6 +33,8 @@ app.route("/api", apiRouter);
 
 app.use("/config", requireAuth);
 app.use("/config/*", requireAuth);
+app.use("/config/users", requireAdmin);
+app.use("/config/users/*", requireAdmin);
 app.route("/dashboard", dashboardRouter);
 app.route("/config", configRouter);
 
