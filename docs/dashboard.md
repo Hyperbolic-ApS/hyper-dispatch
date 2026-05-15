@@ -1,12 +1,15 @@
-# Dashboard & Config UI
-
-Both the dashboard and configuration UI are server-rendered HTML pages served by the same Hono instance.
+# Dashboard, Auth & Config UI
+Dashboard, auth pages, and config pages are server-rendered HTML routes in the same Hono app.
 Both pages now share the HyperDispatch brand icon (header logo) and include the same favicon for browser tabs.
-
+## Authentication
+- `GET /dashboard`, all `/config/*` pages, and `/api/*` require login.
+- Sessions are cookie-based.
+- User account actions are available from:
+  - `GET /auth/login`
+  - `GET /auth/invite/:token` (invite-only signup)
+  - `GET /auth/account` (password changes)
 ## Dashboard
-
 **Route**: `GET /dashboard`
-
 Displays all tracked dispatch runs in a table with:
 - Ticket key (linked to Jira)
 - Summary
@@ -21,6 +24,11 @@ Displays all tracked dispatch runs in a table with:
 - PR link (for completed runs)
 - Blocked-by info (for blocked entries)
 - Header filter toggle to hide/show rows whose Jira ticket status category is `Done`
+
+Header actions:
+- Account page
+- Configure Projects
+- Sign out
 
 Summary stats bar at the top: counts of running / queued / blocked / succeeded / failed.
 
@@ -47,7 +55,9 @@ The config UI allows managing project configurations:
   - Validation errors include the JSON line number
 - New project create validates required fields server-side and re-renders the form with an inline missing-fields error when required values are blank
 - Validate Jira board setup
-
+- Admin-only user management on `GET /config/users`:
+  - Create one-time invite links
+  - Change user role between `member` and `admin`
+  - Remove users
 ## JSON API
-
-`GET /api/status` provides the same data as the dashboard in JSON format for programmatic access. Supports `project` and `status` query parameter filters.
+`GET /api/status` provides dashboard run data as JSON for authenticated clients.

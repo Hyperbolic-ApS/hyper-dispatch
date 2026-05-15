@@ -1,8 +1,10 @@
 import { Hono } from "hono";
 import { getAllDispatchRuns, getRunCountsByStatus } from "../db/config-queries.js";
 import { env } from "../config/env.js";
+import { getAuthUser } from "../auth/middleware.js";
 import { brandIconSvg, faviconDataUri } from "./branding.js";
 import * as jira from "../jira/client.js";
+import { escapeHtml } from "../utils/html.js";
 
 export const dashboardRouter = new Hono();
 const dashboardDateTimeFormatter = new Intl.DateTimeFormat(undefined, {
@@ -71,6 +73,7 @@ const CSS = `
   .header-left { display: flex; align-items: center; gap: 12px; }
   .header-actions { display: flex; align-items: center; gap: 8px; }
   .brand-logo { width: 34px; height: 34px; flex: 0 0 auto; display: inline-flex; }
+  .user-pill { font-size:0.8rem; color:#374151; background:#e5e7eb; border-radius:999px; padding:5px 10px; }
   .header h1 { margin: 0; }
   h1 { margin: 0 0 16px; font-size: 1.4rem; }
   .btn { display: inline-block; padding: 8px 18px; border-radius: 6px; font-size: 0.875rem; font-weight: 500; cursor: pointer; border: none; text-decoration: none; }
@@ -92,6 +95,7 @@ const CSS = `
 `;
 
 dashboardRouter.get("/", async (c) => {
+  const user = getAuthUser(c);
   const hideDone = c.req.query("hideDone") === "1";
   const [runs, countRows] = await Promise.all([
     getAllDispatchRuns(),
@@ -196,8 +200,13 @@ dashboardRouter.get("/", async (c) => {
       <h1>HyperDispatch Dashboard</h1>
     </div>
     <div class="header-actions">
+      <span class="user-pill">${escapeHtml(user?.email ?? "unknown")} (${user?.role ?? "member"})</span>
       <a href="${hideDone ? "/dashboard" : "/dashboard?hideDone=1"}" class="btn btn-secondary">${hideDone ? "Show Done" : "Hide Done"}</a>
+      <a href="/auth/account" class="btn btn-secondary">Account</a>
       <a href="/config" class="btn btn-secondary">⚙ Configure Projects</a>
+      <form method="POST" action="/auth/logout" style="display:inline">
+        <button type="submit" class="btn btn-secondary">Sign out</button>
+      </form>
     </div>
   </div>
   <div class="stats">

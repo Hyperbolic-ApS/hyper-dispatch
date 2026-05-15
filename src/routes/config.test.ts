@@ -1,3 +1,4 @@
+import { Hono } from "hono";
 import { testClient } from "hono/testing";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_JIRA_COLUMN_MAPPINGS } from "../jira/columns.js";
@@ -10,6 +11,11 @@ const updateProjectConfigMock = vi.fn();
 const deactivateProjectConfigMock = vi.fn();
 const discoverSkillsMock = vi.fn();
 const validateJiraProjectMock = vi.fn();
+const createInviteMock = vi.fn();
+const deleteSessionsForUserMock = vi.fn();
+const deleteUserMock = vi.fn();
+const listUsersMock = vi.fn();
+const updateUserRoleMock = vi.fn();
 
 vi.mock("../db/config-queries.js", () => ({
   listProjectConfigs: listProjectConfigsMock,
@@ -27,6 +33,13 @@ vi.mock("../validator/jira.js", () => ({
   validateJiraProject: validateJiraProjectMock,
 }));
 vi.mock("../jira/client.js", () => ({}));
+vi.mock("../auth/queries.js", () => ({
+  createInvite: createInviteMock,
+  deleteSessionsForUser: deleteSessionsForUserMock,
+  deleteUser: deleteUserMock,
+  listUsers: listUsersMock,
+  updateUserRole: updateUserRoleMock,
+}));
 
 vi.mock("@octokit/rest", () => ({
   Octokit: vi.fn(),
@@ -40,6 +53,21 @@ describe("configRouter", () => {
   async function getClient() {
     const { configRouter } = await import("./config.js");
     return testClient(configRouter) as any;
+  }
+
+  async function getAdminApp() {
+    const { configRouter } = await import("./config.js");
+    const app = new Hono();
+    app.use("*", async (c, next) => {
+      (c as any).set("authUser", {
+        id: "admin-1",
+        email: "admin@example.com",
+        role: "admin",
+      });
+      await next();
+    });
+    app.route("/config", configRouter);
+    return app;
   }
 
   function baseCreateForm() {
@@ -298,6 +326,46 @@ describe("configRouter", () => {
     expect(res.status).toBe(200);
     expect(html).toContain("Validate: HYDI");
     expect(html).toContain("Missing statuses: Done");
+  });
+
+  it("POST /users/invite redirects back to /config/users and stores the invite token in a flash cookie", async () => {
+    createInviteMock.mockResolvedValue({ token: "invite-token" });
+    const app = await getAdminApp();
+
+    const res = await app.request("http://localhost/config/users/invite", {
+      method: "POST",
+    });
+
+    expect(res.status).toBe(302);
+    expect(res.headers.get("location")).toBe("/config/users");
+    expect(res.headers.get("location")).not.toContain("invite=");
+    expect(res.headers.get("set-cookie")).toContain("hd_invite_flash=invite-token");
+  });
+
+  it("GET /users escapes rendered emails and shows flashed invite token without using the URL", async () => {
+    listUsersMock.mockResolvedValue([
+      {
+        id: "member-1",
+        email: '<img src=x onerror=alert(1)>',
+        role: "member",
+        created_at: new Date("2026-01-01T00:00:00.000Z"),
+      },
+    ]);
+    const app = await getAdminApp();
+
+    const res = await app.request("http://localhost/config/users", {
+      headers: {
+        cookie: "hd_invite_flash=invite-token",
+      },
+    });
+
+    expect(res.status).toBe(200);
+    const html = await res.text();
+    expect(html).toContain("/auth/invite/invite-token");
+    expect(html).not.toContain("?invite=");
+    expect(html).toContain("&lt;img src=x onerror=alert(1)&gt;");
+    expect(html).not.toContain('<img src=x onerror=alert(1)>');
+    expect(res.headers.get("set-cookie")).toContain("hd_invite_flash=");
   });
 
 });

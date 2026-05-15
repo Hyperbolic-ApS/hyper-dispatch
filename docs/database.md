@@ -28,6 +28,44 @@ Stores per-project configuration. Managed via the config UI.
 | `created_at` | `TIMESTAMPTZ` | Row creation time |
 | `updated_at` | `TIMESTAMPTZ` | Last update time |
 
+### `users`
+
+Stores frontend-authenticated users.
+
+| Column | Type | Description |
+|---|---|---|
+| `id` | `TEXT` PK | User ID |
+| `email` | `TEXT` unique | Login identifier |
+| `password_hash` | `TEXT` | Scrypt-hashed password with salt |
+| `role` | `TEXT` | `admin` or `member` |
+| `created_at` | `TIMESTAMPTZ` | Row creation time |
+| `updated_at` | `TIMESTAMPTZ` | Last update time |
+
+### `sessions`
+
+Stores active login sessions for cookie authentication.
+
+| Column | Type | Description |
+|---|---|---|
+| `id` | `TEXT` PK | Session ID |
+| `user_id` | `TEXT` FK | References `users.id` |
+| `token_hash` | `TEXT` unique | SHA-256 hash of cookie token |
+| `expires_at` | `TIMESTAMPTZ` | Session expiry |
+| `created_at` | `TIMESTAMPTZ` | Row creation time |
+
+### `invite_links`
+
+Stores one-time invite tokens for user signup.
+
+| Column | Type | Description |
+|---|---|---|
+| `id` | `TEXT` PK | Invite ID |
+| `token_hash` | `TEXT` unique | SHA-256 hash of invite token |
+| `created_by_user_id` | `TEXT` FK | Admin who created invite |
+| `used_by_user_id` | `TEXT` FK nullable | User created from invite |
+| `used_at` | `TIMESTAMPTZ` nullable | Consumption timestamp |
+| `created_at` | `TIMESTAMPTZ` | Row creation time |
+
 ### `dispatch_runs`
 
 Tracks ticket → agent run state. Managed by the orchestration loop.
@@ -55,6 +93,8 @@ Tracks ticket → agent run state. Managed by the orchestration loop.
 
 - `idx_status` on `dispatch_runs(status)` — for run monitor queries and concurrency counting.
 - `idx_project` on `dispatch_runs(project_key)` — for per-project dashboard filtering.
+- `idx_sessions_token_hash` and `idx_sessions_user_id` for session lookup and cleanup.
+- `idx_invite_links_token_hash` for invite token validation.
 
 ## Status transition notes
 
