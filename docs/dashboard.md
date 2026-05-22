@@ -9,6 +9,7 @@ Both pages now share the HyperDispatch brand icon (header logo) and include the 
 
 Displays all tracked dispatch runs in a table with:
 - Ticket key (linked to Jira)
+- Project key
 - Summary
 - Ticket status (live Jira workflow status, e.g. To Do / In Progress / Done)
 - Status badge (color-coded: green=succeeded, blue=running, yellow=queued, orange=blocked, red=failed)
@@ -21,6 +22,7 @@ Displays all tracked dispatch runs in a table with:
 - PR link (for completed runs)
 - Blocked-by info (for blocked entries)
 - Header filter toggle to hide/show rows whose Jira ticket status category is `Done`
+- Header project dropdown to filter rows by project key (shows `All Projects` by default)
 
 Summary stats bar at the top: counts of running / queued / blocked / succeeded / failed.
 

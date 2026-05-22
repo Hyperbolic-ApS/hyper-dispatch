@@ -70,6 +70,9 @@ const CSS = `
   .header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; gap: 16px; }
   .header-left { display: flex; align-items: center; gap: 12px; }
   .header-actions { display: flex; align-items: center; gap: 8px; }
+  .header-filter-form { display: inline-flex; align-items: center; gap: 8px; margin: 0; }
+  .filter-label { font-size: 0.875rem; color: #374151; font-weight: 500; }
+  .filter-select { border: 1px solid #d1d5db; border-radius: 6px; padding: 6px 8px; font-size: 0.875rem; background: #fff; color: #111827; min-width: 160px; }
   .brand-logo { width: 34px; height: 34px; flex: 0 0 auto; display: inline-flex; }
   .header h1 { margin: 0; }
   h1 { margin: 0 0 16px; font-size: 1.4rem; }
@@ -93,10 +96,14 @@ const CSS = `
 
 dashboardRouter.get("/", async (c) => {
   const hideDone = c.req.query("hideDone") === "1";
+  const selectedProject = c.req.query("project") ?? "";
   const [runs, countRows] = await Promise.all([
     getAllDispatchRuns(),
     getRunCountsByStatus(),
   ]);
+  const projects = Array.from(new Set(runs.map((run) => run.project_key))).sort((a, b) =>
+    a.localeCompare(b)
+  );
   const ticketStatusByKey = new Map<string, { name: string; categoryKey: string }>();
   await Promise.all(
     runs.map(async (run) => {
@@ -114,9 +121,14 @@ dashboardRouter.get("/", async (c) => {
       }
     })
   );
-  const visibleRuns = hideDone
-    ? runs.filter((run) => ticketStatusByKey.get(run.ticket_key)?.categoryKey !== "done")
+  const projectFilteredRuns = selectedProject
+    ? runs.filter((run) => run.project_key === selectedProject)
     : runs;
+  const visibleRuns = hideDone
+    ? projectFilteredRuns.filter(
+        (run) => ticketStatusByKey.get(run.ticket_key)?.categoryKey !== "done"
+      )
+    : projectFilteredRuns;
 
   const counts: Record<string, number> = {
     running: 0,
@@ -131,6 +143,17 @@ dashboardRouter.get("/", async (c) => {
     counts[row.status] = parseInt(row.count, 10);
   }
   const totalBlocked = (counts.blocked ?? 0) + (counts.blocked_cycle ?? 0);
+  const hideDoneToggleParams = new URLSearchParams();
+  if (!hideDone) hideDoneToggleParams.set("hideDone", "1");
+  if (selectedProject) hideDoneToggleParams.set("project", selectedProject);
+  const hideDoneToggleHref = `/dashboard${hideDoneToggleParams.size > 0 ? `?${hideDoneToggleParams.toString()}` : ""}`;
+  const projectOptionsHtml = [
+    `<option value=""${selectedProject === "" ? " selected" : ""}>All Projects</option>`,
+    ...projects.map(
+      (project) =>
+        `<option value="${project}"${selectedProject === project ? " selected" : ""}>${project}</option>`
+    ),
+  ].join("");
 
   const statsHtml = [
     `<div class="stat" style="background:#3b82f6;color:#fff">${counts.running ?? 0} Running</div>`,
@@ -160,6 +183,7 @@ dashboardRouter.get("/", async (c) => {
 
     return `<tr>
       <td><a href="${ticketUrl}" target="_blank">${run.ticket_key}</a></td>
+      <td>${run.project_key}</td>
       <td>${run.summary ? run.summary.slice(0, 80) : "-"}</td>
       <td>${ticketStatusBadge(
         ticketStatusByKey.get(run.ticket_key)?.name ?? null,
@@ -196,7 +220,14 @@ dashboardRouter.get("/", async (c) => {
       <h1>HyperDispatch Dashboard</h1>
     </div>
     <div class="header-actions">
-      <a href="${hideDone ? "/dashboard" : "/dashboard?hideDone=1"}" class="btn btn-secondary">${hideDone ? "Show Done" : "Hide Done"}</a>
+      <form class="header-filter-form" method="GET" action="/dashboard">
+        <label class="filter-label" for="project-filter">Project</label>
+        <select class="filter-select" id="project-filter" name="project" onchange="this.form.submit()">
+          ${projectOptionsHtml}
+        </select>
+        ${hideDone ? '<input type="hidden" name="hideDone" value="1">' : ""}
+      </form>
+      <a href="${hideDoneToggleHref}" class="btn btn-secondary">${hideDone ? "Show Done" : "Hide Done"}</a>
       <a href="/config" class="btn btn-secondary">⚙ Configure Projects</a>
     </div>
   </div>
@@ -207,6 +238,7 @@ dashboardRouter.get("/", async (c) => {
     <thead>
       <tr>
         <th>Ticket</th>
+        <th>Project</th>
         <th>Summary</th>
         <th>Ticket Status</th>
         <th>Status</th>
@@ -219,7 +251,7 @@ dashboardRouter.get("/", async (c) => {
       </tr>
     </thead>
     <tbody>
-      ${visibleRuns.length === 0 ? '<tr><td colspan="10" style="text-align:center;color:#6b7280">No runs found for the current filter</td></tr>' : rows.join("\n")}
+      ${visibleRuns.length === 0 ? '<tr><td colspan="11" style="text-align:center;color:#6b7280">No runs found for the current filter</td></tr>' : rows.join("\n")}
     </tbody>
   </table>
   <script>
