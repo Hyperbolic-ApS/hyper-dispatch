@@ -16,7 +16,7 @@ Displays all tracked dispatch runs in a table with:
 - Agent runtime (for running/completed entries)
 - Branch (`agent/{ticket-key}`) with an inline clipboard icon button that copies the branch name to clipboard (shows a checkmark on success)
 - Oz task link (opens the run task/session in Oz when available)
-- PR mergeability badge (`Merge conflicts`, `No conflicts`, or `Unknown` once a PR exists)
+- PR status badge (`Review running`, `Revision running`, or `Review + revision running` when those actions are active; otherwise `Merge conflicts`, `No conflicts`, or `Unknown` once a PR exists)
 - Session link (clickable, for live runs — opens Oz session)
 - PR link (for completed runs)
 - Blocked-by info (for blocked entries)
