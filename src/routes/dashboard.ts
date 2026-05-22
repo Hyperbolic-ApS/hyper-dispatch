@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import { Octokit } from "@octokit/rest";
 import { getAllDispatchRuns, getRunCountsByStatus } from "../db/config-queries.js";
 import { env } from "../config/env.js";
 import { brandIconSvg, faviconDataUri } from "./branding.js";
@@ -64,6 +65,56 @@ function prConflictBadge(hasConflicts: boolean | null, hasPr: boolean): string {
   }
   return '<span style="padding:2px 8px;border-radius:4px;font-size:0.75rem;font-weight:600;background:#e5e7eb;color:#111">Unknown</span>';
 }
+function parseGithubPullRequestUrl(
+  prUrl: string
+): { owner: string; repo: string; pullNumber: number } | null {
+  try {
+    const parsedUrl = new URL(prUrl);
+    const parts = parsedUrl.pathname.split("/").filter(Boolean);
+    if (parts.length < 4) return null;
+    const [owner, repo, type, pullNumberRaw] = parts;
+    if (!owner || !repo || type !== "pull" || !pullNumberRaw) return null;
+    const pullNumber = Number.parseInt(pullNumberRaw, 10);
+    if (!Number.isFinite(pullNumber)) return null;
+    return { owner, repo, pullNumber };
+  } catch {
+    return null;
+  }
+}
+
+type PrActionState = {
+  reviewRunning: boolean;
+  revisionRunning: boolean;
+};
+
+const REVIEW_WORKFLOW_NAME = "Oz PR Review Commenting";
+const REVISION_WORKFLOW_NAME = "Agent Revision on Review Feedback";
+const IN_FLIGHT_WORKFLOW_STATUSES = new Set([
+  "queued",
+  "in_progress",
+  "pending",
+  "waiting",
+  "requested",
+  "action_required",
+]);
+
+function prStatusBadge(
+  hasConflicts: boolean | null,
+  hasPr: boolean,
+  actionState: PrActionState | null
+): string {
+  if (!hasPr) return "-";
+  if (actionState?.reviewRunning && actionState?.revisionRunning) {
+    return '<span style="padding:2px 8px;border-radius:4px;font-size:0.75rem;font-weight:600;background:#7c3aed;color:#fff">Review + revision running</span>';
+  }
+  if (actionState?.reviewRunning) {
+    return '<span style="padding:2px 8px;border-radius:4px;font-size:0.75rem;font-weight:600;background:#2563eb;color:#fff">Review running</span>';
+  }
+  if (actionState?.revisionRunning) {
+    return '<span style="padding:2px 8px;border-radius:4px;font-size:0.75rem;font-weight:600;background:#ea580c;color:#fff">Revision running</span>';
+  }
+  return prConflictBadge(hasConflicts, hasPr);
+}
 
 const CSS = `
   body { font-family: system-ui, sans-serif; margin: 0; padding: 20px; background: #f9fafb; color: #111; }
@@ -117,6 +168,44 @@ dashboardRouter.get("/", async (c) => {
   const visibleRuns = hideDone
     ? runs.filter((run) => ticketStatusByKey.get(run.ticket_key)?.categoryKey !== "done")
     : runs;
+  const githubClient = new Octokit({ auth: env.GITHUB_TOKEN });
+  const actionStateByPr = new Map<string, PrActionState>();
+  await Promise.all(
+    visibleRuns.map(async (run) => {
+      if (!run.pr_url) return;
+      const parsedPr = parseGithubPullRequestUrl(run.pr_url);
+      if (!parsedPr) return;
+      const prKey = `${parsedPr.owner}/${parsedPr.repo}#${parsedPr.pullNumber}`;
+      if (actionStateByPr.has(prKey)) return;
+      try {
+        const workflowRuns = await githubClient.actions.listWorkflowRunsForRepo({
+          owner: parsedPr.owner,
+          repo: parsedPr.repo,
+          event: "pull_request",
+          per_page: 100,
+        });
+        const reviewRunning = workflowRuns.data.workflow_runs.some(
+          (workflowRun) =>
+            workflowRun.name === REVIEW_WORKFLOW_NAME &&
+            IN_FLIGHT_WORKFLOW_STATUSES.has(workflowRun.status ?? "") &&
+            (workflowRun.pull_requests ?? []).some(
+              (pullRequest) => pullRequest.number === parsedPr.pullNumber
+            )
+        );
+        const revisionRunning = workflowRuns.data.workflow_runs.some(
+          (workflowRun) =>
+            workflowRun.name === REVISION_WORKFLOW_NAME &&
+            IN_FLIGHT_WORKFLOW_STATUSES.has(workflowRun.status ?? "") &&
+            (workflowRun.pull_requests ?? []).some(
+              (pullRequest) => pullRequest.number === parsedPr.pullNumber
+            )
+        );
+        actionStateByPr.set(prKey, { reviewRunning, revisionRunning });
+      } catch {
+        // Best effort only — dashboard should still render if GitHub is unavailable.
+      }
+    })
+  );
 
   const counts: Record<string, number> = {
     running: 0,
@@ -157,6 +246,8 @@ dashboardRouter.get("/", async (c) => {
         : run.status === "succeeded" && run.pr_url
           ? `<a href="${run.pr_url}" target="_blank">PR</a>`
           : "-";
+    const parsedPr = run.pr_url ? parseGithubPullRequestUrl(run.pr_url) : null;
+    const prKey = parsedPr ? `${parsedPr.owner}/${parsedPr.repo}#${parsedPr.pullNumber}` : null;
 
     return `<tr>
       <td><a href="${ticketUrl}" target="_blank">${run.ticket_key}</a></td>
@@ -175,7 +266,11 @@ dashboardRouter.get("/", async (c) => {
         </span>
       </td>
       <td>${ozTaskLink}</td>
-      <td>${prConflictBadge(run.pr_has_conflicts, Boolean(run.pr_url))}</td>
+      <td>${prStatusBadge(
+        run.pr_has_conflicts,
+        Boolean(run.pr_url),
+        prKey ? actionStateByPr.get(prKey) ?? null : null
+      )}</td>
       <td>${actionLink}${blockedByHtml}</td>
     </tr>`;
   });
@@ -214,7 +309,7 @@ dashboardRouter.get("/", async (c) => {
         <th>Runtime</th>
         <th>Branch</th>
         <th>Oz Task</th>
-        <th>PR Mergeability</th>
+        <th>PR Status</th>
         <th>Links</th>
       </tr>
     </thead>
