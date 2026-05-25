@@ -31,6 +31,28 @@ function formatDate(d: Date | null): string {
   return dashboardDateTimeFormatter.format(d);
 }
 
+const dashboardStatusFilterOptions = [
+  { key: "running", label: "Running", style: "background:#3b82f6;color:#fff", statuses: ["running"] },
+  { key: "queued", label: "Queued", style: "background:#eab308;color:#000", statuses: ["queued"] },
+  {
+    key: "blocked",
+    label: "Blocked",
+    style: "background:#f97316;color:#fff",
+    statuses: ["blocked", "blocked_cycle"],
+  },
+  { key: "succeeded", label: "Succeeded", style: "background:#22c55e;color:#fff", statuses: ["succeeded"] },
+  { key: "failed", label: "Failed", style: "background:#ef4444;color:#fff", statuses: ["failed"] },
+  { key: "stale", label: "Stale", style: "background:#6b7280;color:#fff", statuses: ["stale"] },
+] as const;
+type DashboardStatusFilterKey = (typeof dashboardStatusFilterOptions)[number]["key"];
+
+const dashboardStatusFilterKeys = new Set<DashboardStatusFilterKey>(
+  dashboardStatusFilterOptions.map((option) => option.key)
+);
+const dashboardStatusesByFilterKey = new Map<DashboardStatusFilterKey, Set<string>>(
+  dashboardStatusFilterOptions.map((option) => [option.key, new Set<string>(option.statuses)])
+);
+
 function statusBadge(status: string): string {
   const colors: Record<string, string> = {
     running: "background:#3b82f6;color:#fff",
@@ -81,6 +103,9 @@ const CSS = `
   .btn-secondary:hover { background: #d1d5db; }
   .stats { display: flex; gap: 12px; margin-bottom: 20px; flex-wrap: wrap; }
   .stat { padding: 10px 16px; border-radius: 6px; font-weight: 600; font-size: 0.9rem; }
+  .stat-link { border: none; text-decoration: none; display: inline-flex; align-items: center; }
+  .stat-link:hover { text-decoration: none; filter: brightness(0.95); }
+  .stat-selected { box-shadow: inset 0 0 0 2px #fff; outline: 2px solid #111827; outline-offset: 2px; }
   table { width: 100%; border-collapse: collapse; background: #fff; border-radius: 8px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
   th { background: #f3f4f6; text-align: left; padding: 10px 12px; font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.05em; border-bottom: 1px solid #e5e7eb; }
   td { padding: 10px 12px; border-bottom: 1px solid #f3f4f6; font-size: 0.875rem; vertical-align: top; }
@@ -97,6 +122,10 @@ const CSS = `
 dashboardRouter.get("/", async (c) => {
   const hideDone = c.req.query("hideDone") === "1";
   const selectedProject = c.req.query("project") ?? "";
+  const selectedStatusQuery = c.req.query("status") ?? "";
+  const selectedStatus = dashboardStatusFilterKeys.has(selectedStatusQuery as DashboardStatusFilterKey)
+    ? (selectedStatusQuery as DashboardStatusFilterKey)
+    : "";
   const runs = await getAllDispatchRuns();
   const projects = Array.from(new Set(runs.map((run) => run.project_key))).sort((a, b) =>
     a.localeCompare(b)
@@ -126,6 +155,12 @@ dashboardRouter.get("/", async (c) => {
         (run) => ticketStatusByKey.get(run.ticket_key)?.categoryKey !== "done"
       )
     : projectFilteredRuns;
+  const statusFilteredRuns = selectedStatus
+    ? visibleRuns.filter((run) => {
+        const allowedStatuses = dashboardStatusesByFilterKey.get(selectedStatus);
+        return allowedStatuses ? allowedStatuses.has(run.status) : true;
+      })
+    : visibleRuns;
 
   const counts: Record<string, number> = {
     running: 0,
@@ -143,6 +178,7 @@ dashboardRouter.get("/", async (c) => {
   const hideDoneToggleParams = new URLSearchParams();
   if (!hideDone) hideDoneToggleParams.set("hideDone", "1");
   if (selectedProject) hideDoneToggleParams.set("project", selectedProject);
+  if (selectedStatus) hideDoneToggleParams.set("status", selectedStatus);
   const hideDoneToggleHref = `/dashboard${hideDoneToggleParams.size > 0 ? `?${hideDoneToggleParams.toString()}` : ""}`;
   const projectOptionsHtml = [
     `<option value=""${selectedProject === "" ? " selected" : ""}>All Projects</option>`,
@@ -152,15 +188,22 @@ dashboardRouter.get("/", async (c) => {
     ),
   ].join("");
 
-  const statsHtml = [
-    `<div class="stat" style="background:#3b82f6;color:#fff">${counts.running ?? 0} Running</div>`,
-    `<div class="stat" style="background:#eab308;color:#000">${counts.queued ?? 0} Queued</div>`,
-    `<div class="stat" style="background:#f97316;color:#fff">${totalBlocked} Blocked</div>`,
-    `<div class="stat" style="background:#22c55e;color:#fff">${counts.succeeded ?? 0} Succeeded</div>`,
-    `<div class="stat" style="background:#ef4444;color:#fff">${counts.failed ?? 0} Failed</div>`,
-    `<div class="stat" style="background:#6b7280;color:#fff">${counts.stale ?? 0} Stale</div>`,
-  ].join("\n");
-  const rows = visibleRuns.map((run) => {
+  const statsHtml = dashboardStatusFilterOptions
+    .map((option) => {
+      const count =
+        option.key === "blocked"
+          ? totalBlocked
+          : (counts[option.key] ?? 0);
+      const tagParams = new URLSearchParams();
+      if (selectedProject) tagParams.set("project", selectedProject);
+      if (hideDone) tagParams.set("hideDone", "1");
+      if (selectedStatus !== option.key) tagParams.set("status", option.key);
+      const href = `/dashboard${tagParams.size > 0 ? `?${tagParams.toString()}` : ""}`;
+      const selectedClass = selectedStatus === option.key ? " stat-selected" : "";
+      return `<a href="${href}" class="stat stat-link${selectedClass}" style="${option.style}" role="button" aria-pressed="${selectedStatus === option.key}">${count} ${option.label}</a>`;
+    })
+    .join("\n");
+  const rows = statusFilteredRuns.map((run) => {
     const ticketUrl = `${env.JIRA_BASE_URL}/browse/${run.ticket_key}`;
     const branchName = `agent/${run.ticket_key}`;
     const runtime = formatDuration(run.spawned_at, run.completed_at);
@@ -223,6 +266,7 @@ dashboardRouter.get("/", async (c) => {
           ${projectOptionsHtml}
         </select>
         ${hideDone ? '<input type="hidden" name="hideDone" value="1">' : ""}
+        ${selectedStatus ? `<input type="hidden" name="status" value="${selectedStatus}">` : ""}
       </form>
       <a href="${hideDoneToggleHref}" class="btn btn-secondary">${hideDone ? "Show Done" : "Hide Done"}</a>
       <a href="/config" class="btn btn-secondary">⚙ Configure Projects</a>
@@ -248,7 +292,15 @@ dashboardRouter.get("/", async (c) => {
       </tr>
     </thead>
     <tbody>
-      ${visibleRuns.length === 0 ? '<tr><td colspan="11" style="text-align:center;color:#6b7280">No runs found for the current filter</td></tr>' : rows.join("\n")}
+      ${
+        statusFilteredRuns.length === 0
+          ? `<tr><td colspan="11" style="text-align:center;color:#6b7280">${
+              selectedStatus
+                ? `no ${selectedStatus} tasks available`
+                : "No runs found for the current filter"
+            }</td></tr>`
+          : rows.join("\n")
+      }
     </tbody>
   </table>
   <script>

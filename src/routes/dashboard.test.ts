@@ -81,4 +81,77 @@ describe("dashboardRouter", () => {
     expect(html2).toContain("1 Running");
     expect(html2).toContain("0 Succeeded");
   });
+
+  it("filters rows by selected status and marks the selected stat card", async () => {
+    getAllDispatchRunsMock.mockResolvedValue([
+      makeDispatchRun({ ticket_key: "HYDI-1", project_key: "HYDI", status: "running" }),
+      makeDispatchRun({ ticket_key: "HYDI-2", project_key: "HYDI", status: "failed" }),
+    ]);
+    getIssueMock.mockResolvedValue({
+      fields: { status: { name: "In Progress", statusCategory: { key: "in-flight" } } },
+    });
+
+    const { dashboardRouter } = await import("./dashboard.js");
+    const res = await dashboardRouter.request("http://localhost/?project=HYDI&status=running");
+    const html = await res.text();
+
+    expect(res.status).toBe(200);
+    expect(html).toContain(">HYDI-1</a>");
+    expect(html).not.toContain(">HYDI-2</a>");
+    expect(html).toContain(
+      '<a href="/dashboard?project=HYDI" class="stat stat-link stat-selected" style="background:#3b82f6;color:#fff" role="button" aria-pressed="true">1 Running</a>'
+    );
+  });
+
+  it("deselecting a selected status tag clears the filter and shows all project rows", async () => {
+    getAllDispatchRunsMock.mockResolvedValue([
+      makeDispatchRun({ ticket_key: "HYDI-1", project_key: "HYDI", status: "running" }),
+      makeDispatchRun({ ticket_key: "HYDI-2", project_key: "HYDI", status: "failed" }),
+    ]);
+    getIssueMock.mockResolvedValue({
+      fields: { status: { name: "In Progress", statusCategory: { key: "in-flight" } } },
+    });
+
+    const { dashboardRouter } = await import("./dashboard.js");
+
+    // Step 1: Request with status=running — only HYDI-1 should be visible
+    const res1 = await dashboardRouter.request("http://localhost/?project=HYDI&status=running");
+    const html1 = await res1.text();
+    expect(html1).toContain(">HYDI-1</a>");
+    expect(html1).not.toContain(">HYDI-2</a>");
+
+    // The selected stat card's href should drop the status param (deselect target)
+    const selectedMatch = html1.match(/<a href="([^"]+)"[^>]*class="stat stat-link stat-selected"/);
+    expect(selectedMatch).not.toBeNull();
+    const deselectHref = selectedMatch![1];
+    expect(deselectHref).not.toContain("status=");
+
+    // Step 2: Follow the deselect link — both project-filtered rows should reappear
+    // The href targets /dashboard (app mount point), but the router handles / directly in tests
+    const deselectUrl = deselectHref.replace(/^\/dashboard/, "");
+    const res2 = await dashboardRouter.request(`http://localhost/${deselectUrl}`);
+    const html2 = await res2.text();
+    expect(res2.status).toBe(200);
+    expect(html2).toContain(">HYDI-1</a>");
+    expect(html2).toContain(">HYDI-2</a>");
+  });
+
+  it("shows a status-specific empty message when selected status has no rows after project filtering", async () => {
+    getAllDispatchRunsMock.mockResolvedValue([
+      makeDispatchRun({ ticket_key: "HYDI-1", project_key: "HYDI", status: "running" }),
+      makeDispatchRun({ ticket_key: "TEST-1", project_key: "TEST", status: "queued" }),
+    ]);
+    getIssueMock.mockResolvedValue({
+      fields: { status: { name: "In Progress", statusCategory: { key: "in-flight" } } },
+    });
+
+    const { dashboardRouter } = await import("./dashboard.js");
+    const res = await dashboardRouter.request("http://localhost/?project=HYDI&status=queued");
+    const html = await res.text();
+
+    expect(res.status).toBe(200);
+    expect(html).toContain("no queued tasks available");
+    expect(html).not.toContain(">HYDI-1</a>");
+    expect(html).not.toContain(">TEST-1</a>");
+  });
 });
