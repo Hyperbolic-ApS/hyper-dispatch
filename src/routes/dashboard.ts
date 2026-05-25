@@ -39,7 +39,7 @@ function statusBadge(status: string): string {
     blocked_cycle: "background:#dc2626;color:#fff",
     succeeded: "background:#22c55e;color:#fff",
     failed: "background:#ef4444;color:#fff",
-    stale: "background:#6b7280;color:#fff",
+    stale: "background:#000;color:#fff",
   };
   const style = colors[status] ?? "background:#e5e7eb;color:#000";
   return `<span style="padding:2px 8px;border-radius:4px;font-size:0.75rem;font-weight:600;${style}">${status}</span>`;
@@ -158,7 +158,7 @@ dashboardRouter.get("/", async (c) => {
     `<div class="stat" style="background:#f97316;color:#fff">${totalBlocked} Blocked</div>`,
     `<div class="stat" style="background:#22c55e;color:#fff">${counts.succeeded ?? 0} Succeeded</div>`,
     `<div class="stat" style="background:#ef4444;color:#fff">${counts.failed ?? 0} Failed</div>`,
-    `<div class="stat" style="background:#6b7280;color:#fff">${counts.stale ?? 0} Stale</div>`,
+    `<div class="stat" style="background:#000;color:#fff">${counts.stale ?? 0} Stale</div>`,
   ].join("\n");
   const rows = visibleRuns.map((run) => {
     const ticketUrl = `${env.JIRA_BASE_URL}/browse/${run.ticket_key}`;

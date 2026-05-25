@@ -12,7 +12,7 @@ Displays all tracked dispatch runs in a table with:
 - Project key
 - Summary
 - Ticket status (live Jira workflow status, e.g. To Do / In Progress / Done)
-- Status badge (color-coded: green=succeeded, blue=running, yellow=queued, orange=blocked, red=failed)
+- Status badge (color-coded: green=succeeded, blue=running, yellow=queued, orange=blocked, red=failed, black=stale)
 - Spawned-at timestamp in the viewer's local timezone, rendered in 24-hour format without seconds
 - Agent runtime (for running/completed entries)
 - Branch (`agent/{ticket-key}`) with an inline clipboard icon button that copies the branch name to clipboard (shows a checkmark on success)
@@ -24,7 +24,7 @@ Displays all tracked dispatch runs in a table with:
 - Header filter toggle to hide/show rows whose Jira ticket status category is `Done`
 - Header project dropdown to filter rows by project key (shows `All Projects` by default)
 
-Summary stats bar at the top: counts of running / queued / blocked / succeeded / failed.
+Summary stats bar at the top: counts of running / queued / blocked / succeeded / failed / stale.
 
 Auto-refreshes every 15 seconds, and also triggers an immediate refresh when the browser tab becomes active again.
 
