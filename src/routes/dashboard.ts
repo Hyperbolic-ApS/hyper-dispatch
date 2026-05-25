@@ -200,7 +200,7 @@ dashboardRouter.get("/", async (c) => {
       if (selectedStatus !== option.key) tagParams.set("status", option.key);
       const href = `/dashboard${tagParams.size > 0 ? `?${tagParams.toString()}` : ""}`;
       const selectedClass = selectedStatus === option.key ? " stat-selected" : "";
-      return `<a href="${href}" class="stat stat-link${selectedClass}" style="${option.style}" aria-pressed="${selectedStatus === option.key}">${count} ${option.label}</a>`;
+      return `<a href="${href}" class="stat stat-link${selectedClass}" style="${option.style}" role="button" aria-pressed="${selectedStatus === option.key}">${count} ${option.label}</a>`;
     })
     .join("\n");
   const rows = statusFilteredRuns.map((run) => {
