@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import { getAllDispatchRuns, getRunCountsByStatus } from "../db/config-queries.js";
+import { getAllDispatchRuns } from "../db/config-queries.js";
 import { env } from "../config/env.js";
 import { brandIconSvg, faviconDataUri } from "./branding.js";
 import * as jira from "../jira/client.js";
@@ -97,10 +97,7 @@ const CSS = `
 dashboardRouter.get("/", async (c) => {
   const hideDone = c.req.query("hideDone") === "1";
   const selectedProject = c.req.query("project") ?? "";
-  const [runs, countRows] = await Promise.all([
-    getAllDispatchRuns(),
-    getRunCountsByStatus(),
-  ]);
+  const runs = await getAllDispatchRuns();
   const projects = Array.from(new Set(runs.map((run) => run.project_key))).sort((a, b) =>
     a.localeCompare(b)
   );
@@ -139,8 +136,8 @@ dashboardRouter.get("/", async (c) => {
     stale: 0,
     blocked_cycle: 0,
   };
-  for (const row of countRows) {
-    counts[row.status] = parseInt(row.count, 10);
+  for (const run of visibleRuns) {
+    counts[run.status] = (counts[run.status] ?? 0) + 1;
   }
   const totalBlocked = (counts.blocked ?? 0) + (counts.blocked_cycle ?? 0);
   const hideDoneToggleParams = new URLSearchParams();
