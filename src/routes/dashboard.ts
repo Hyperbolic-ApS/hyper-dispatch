@@ -269,7 +269,7 @@ dashboardRouter.get("/", async (c) => {
         ${selectedStatus ? `<input type="hidden" name="status" value="${selectedStatus}">` : ""}
       </form>
       <a href="${hideDoneToggleHref}" class="btn btn-secondary">${hideDone ? "Show Done" : "Hide Done"}</a>
-      <a href="/config" class="btn btn-secondary">⚙ Configure Projects</a>
+      <a href="/config" class="btn btn-secondary">⚙ Configure</a>
     </div>
   </div>
   <div class="stats">
