@@ -48,20 +48,42 @@ jobs:
             echo "has_ticket=false" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Install and authenticate Atlassian CLI
+      - name: Create Jira helper script
         if: steps.jira-check.outputs.has_ticket == 'true'
         run: |
-          sudo apt-get install -y wget gnupg2
-          sudo mkdir -p -m 755 /etc/apt/keyrings
-          wget -nv -O- https://acli.atlassian.com/gpg/public-key.asc \
-            | sudo gpg --dearmor -o /etc/apt/keyrings/acli-archive-keyring.gpg
-          sudo chmod go+r /etc/apt/keyrings/acli-archive-keyring.gpg
-          echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/acli-archive-keyring.gpg] \
-            https://acli.atlassian.com/linux/deb stable main" \
-            | sudo tee /etc/apt/sources.list.d/acli.list > /dev/null
-          sudo apt-get update
-          sudo apt-get install -y acli
-          echo "${{ secrets.JIRA_API_TOKEN }}" | acli jira auth login --site "${{ vars.JIRA_SITE }}" --email "${{ secrets.JIRA_EMAIL }}" --token
+          cat > /usr/local/bin/jira-view <<'SCRIPT'
+          #!/usr/bin/env bash
+          set -euo pipefail
+          KEY="$1"
+          RESPONSE=$(curl -sf \
+            -H "Authorization: Bearer $JIRA_API_TOKEN" \
+            -H "Accept: application/json" \
+            "https://api.atlassian.com/ex/jira/${JIRA_CLOUD_ID}/rest/api/3/issue/${KEY}?fields=summary,description,status,issuetype,priority,labels,assignee")
+          echo "$RESPONSE" | python3 -c "
+          import sys, json
+          d = json.load(sys.stdin)
+          f = d['fields']
+          print(f'Key: {d["key"]}')
+          print(f'Summary: {f["summary"]}')
+          print(f'Status: {f["status"]["name"]}')
+          print(f'Type: {f["issuetype"]["name"]}')
+          if f.get('priority'): print(f'Priority: {f["priority"]["name"]}')
+          if f.get('assignee'): print(f'Assignee: {f["assignee"]["displayName"]}')
+          if f.get('labels'): print(f'Labels: {", ".join(f["labels"])}')
+          desc = f.get('description')
+          if desc:
+              # Flatten ADF to plain text
+              def extract(node):
+                  if isinstance(node, str): return node
+                  if isinstance(node, dict):
+                      if node.get('type') == 'text': return node.get('text', '')
+                      return ''.join(extract(c) for c in node.get('content', []))
+                  if isinstance(node, list): return ''.join(extract(c) for c in node)
+                  return ''
+              print(f'Description:\n{extract(desc)}')
+          "
+          SCRIPT
+          chmod +x /usr/local/bin/jira-view
 
       - name: Run PR review commenting skill
         uses: warpdotdev/oz-agent-action@v1
@@ -85,8 +107,10 @@ jobs:
             Base: ${{ github.event.pull_request.base.ref }} (${{ github.event.pull_request.base.sha }})
             Head: ${{ github.event.pull_request.head.ref }} (${{ github.event.pull_request.head.sha }})
 
-            Read the PR description and any linked issues. If the title or branch contains a Jira key (e.g. PROJ-123), fetch requirements via: acli jira workitem view --key <KEY>
+            Read the PR description and any linked issues. If the title or branch contains a Jira key (e.g. PROJ-123), fetch requirements via: jira-view <KEY>
           warp_api_key: ${{ secrets.WARP_API_KEY }}
           profile: ${{ vars.WARP_AGENT_PROFILE || '' }}
         env:
           GH_TOKEN: ${{ github.token }}
+          JIRA_API_TOKEN: ${{ secrets.JIRA_API_TOKEN }}
+          JIRA_CLOUD_ID: ${{ vars.JIRA_CLOUD_ID }}
