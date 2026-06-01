@@ -204,7 +204,7 @@ dashboardRouter.get("/", async (c) => {
     })
     .join("\n");
   const rows = statusFilteredRuns.map((run) => {
-    const ticketUrl = `${env.JIRA_BASE_URL}/browse/${run.ticket_key}`;
+    const ticketUrl = `${env.JIRA_SITE_URL}/browse/${run.ticket_key}`;
     const branchName = `agent/${run.ticket_key}`;
     const runtime = formatDuration(run.spawned_at, run.completed_at);
     const ozTaskLink = run.session_link

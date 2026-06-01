@@ -19,8 +19,8 @@ const DB_URL = "postgres://postgres:test@localhost:5433/postgres";
 
 function setRequiredEnvForDbTests() {
   process.env.DATABASE_URL ??= DB_URL;
-  process.env.JIRA_BASE_URL ??= "https://example.atlassian.net";
-  process.env.JIRA_EMAIL ??= "test@example.com";
+  process.env.JIRA_SITE_URL ??= "https://example.atlassian.net";
+  process.env.JIRA_CLOUD_ID ??= "test-cloud-id";
   process.env.JIRA_API_TOKEN ??= "test-token";
   process.env.WARP_API_KEY ??= "test-key";
   process.env.GITHUB_TOKEN ??= "test-token";

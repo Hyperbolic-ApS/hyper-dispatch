@@ -6,7 +6,7 @@ import {
 } from "../jira/columns.js";
 
 export interface JiraCredentials {
-  email: string;
+  cloudId: string;
   apiToken: string;
 }
 
@@ -21,15 +21,11 @@ export interface ValidationResult {
   checks: ValidationCheck[];
 }
 
-function jiraAuthHeader(creds: JiraCredentials): string {
-  const credentials = `${creds.email}:${creds.apiToken}`;
-  return "Basic " + Buffer.from(credentials).toString("base64");
-}
-
 async function jiraFetch(path: string, creds: JiraCredentials): Promise<Response> {
-  return fetch(`${env.JIRA_BASE_URL}${path}`, {
+  const baseUrl = `https://api.atlassian.com/ex/jira/${creds.cloudId}`;
+  return fetch(`${baseUrl}${path}`, {
     headers: {
-      Authorization: jiraAuthHeader(creds),
+      Authorization: `Bearer ${creds.apiToken}`,
       Accept: "application/json",
     },
   });
@@ -43,7 +39,7 @@ export async function validateJiraProject(
   credentials?: JiraCredentials
 ): Promise<ValidationResult> {
   const creds: JiraCredentials = credentials ?? {
-    email: env.JIRA_EMAIL,
+    cloudId: env.JIRA_CLOUD_ID,
     apiToken: env.JIRA_API_TOKEN,
   };
   const checks: ValidationCheck[] = [];

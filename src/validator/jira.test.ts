@@ -9,7 +9,7 @@ function jsonResponse(body: unknown, status = 200): Response {
 }
 
 describe("validateJiraProject", () => {
-  const credentials = { email: "ops@example.com", apiToken: "token-value" };
+  const credentials = { cloudId: "test-cloud-id", apiToken: "token-value" };
   let fetchSpy: any;
 
   beforeEach(() => {

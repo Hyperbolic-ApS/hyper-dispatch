@@ -339,12 +339,7 @@ document.addEventListener('DOMContentLoaded', () => {
     <div class="field">
       <label for="jira_api_token">Jira API Token <span style="font-weight:400;color:#6b7280">(per-project override)</span></label>
       <input type="password" id="jira_api_token" name="jira_api_token" autocomplete="new-password" ${config?.jira_api_token ? 'placeholder="\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022"' : ""}>
-      <div class="hint">Generate at id.atlassian.com/manage-profile/security/api-tokens. Leave blank to use the global token.</div>
-    </div>
-    <div class="field">
-      <label for="jira_email">Jira User Email <span style="font-weight:400;color:#6b7280">(per-project override)</span></label>
-      <input type="text" id="jira_email" name="jira_email" value="${v.jira_email ?? ""}" autocomplete="off">
-      <div class="hint">The Atlassian account email used for Jira API auth. Leave blank to use the global email.</div>
+      <div class="hint">Service account bearer token (manage at <a href="https://admin.atlassian.com" target="_blank">admin.atlassian.com</a> &rarr; API keys). Leave blank to use the global token.</div>
     </div>
     <div class="field">
       <label><input type="checkbox" name="active" value="true" ${v.active !== false ? "checked" : ""}> Active</label>
@@ -553,7 +548,6 @@ ${projectForm("/config")}`;
     mcp_servers: mcpServers,
     github_pat: form.github_pat ? String(form.github_pat) : null,
     jira_api_token: form.jira_api_token ? String(form.jira_api_token) : null,
-    jira_email: form.jira_email ? String(form.jira_email) : null,
     active: form.active === "true",
   });
 
@@ -605,10 +599,9 @@ configRouter.post("/:projectKey", async (c) => {
   }
 
   // Only update tokens if a new value was submitted — empty field means "keep existing"
-  const tokenUpdates: { github_pat?: string | null; jira_api_token?: string | null; jira_email?: string | null } = {};
+  const tokenUpdates: { github_pat?: string | null; jira_api_token?: string | null } = {};
   if (form.github_pat) tokenUpdates.github_pat = String(form.github_pat);
   if (form.jira_api_token) tokenUpdates.jira_api_token = String(form.jira_api_token);
-  if (form.jira_email) tokenUpdates.jira_email = String(form.jira_email);
 
   await updateProjectConfig(projectKey, {
     jira_cloud_id: String(form.jira_cloud_id),
@@ -710,8 +703,8 @@ configRouter.get("/:projectKey/validate", async (c) => {
       inReview: config.in_review_column_name,
       done: config.done_column_name,
     },
-    config.jira_email && config.jira_api_token
-      ? { email: config.jira_email, apiToken: config.jira_api_token }
+    config.jira_api_token
+      ? { cloudId: config.jira_cloud_id, apiToken: config.jira_api_token }
       : undefined
   );
 

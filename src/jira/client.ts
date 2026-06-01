@@ -19,15 +19,18 @@ export class JiraApiError extends Error {
 }
 
 function buildAuthHeader(): string {
-  const credentials = `${env.JIRA_EMAIL}:${env.JIRA_API_TOKEN}`;
-  return `Basic ${Buffer.from(credentials).toString("base64")}`;
+  return `Bearer ${env.JIRA_API_TOKEN}`;
+}
+
+function buildBaseUrl(): string {
+  return `https://api.atlassian.com/ex/jira/${env.JIRA_CLOUD_ID}`;
 }
 
 async function jiraFetch<T>(
   path: string,
   options: RequestInit = {}
 ): Promise<T> {
-  const url = `${env.JIRA_BASE_URL}${path}`;
+  const url = `${buildBaseUrl()}${path}`;
   const response = await fetch(url, {
     ...options,
     headers: {
