@@ -37,6 +37,7 @@ async function jiraFetch<T>(
       Authorization: buildAuthHeader(),
       "Content-Type": "application/json",
       Accept: "application/json",
+      "Accept-Language": "en",
       ...(options.headers ?? {}),
     },
   });
