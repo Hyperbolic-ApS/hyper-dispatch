@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import { getAllDispatchRuns } from "../db/config-queries.js";
+import { getAllDispatchRuns, listProjectConfigs } from "../db/config-queries.js";
 import { env } from "../config/env.js";
 import { brandIconSvg, faviconDataUri } from "./branding.js";
 import * as jira from "../jira/client.js";
@@ -126,10 +126,13 @@ dashboardRouter.get("/", async (c) => {
   const selectedStatus = dashboardStatusFilterKeys.has(selectedStatusQuery as DashboardStatusFilterKey)
     ? (selectedStatusQuery as DashboardStatusFilterKey)
     : "";
-  const runs = await getAllDispatchRuns();
-  const projects = Array.from(new Set(runs.map((run) => run.project_key))).sort((a, b) =>
-    a.localeCompare(b)
-  );
+  const [runs, configs] = await Promise.all([getAllDispatchRuns(), listProjectConfigs()]);
+  const projects = Array.from(
+    new Set([
+      ...configs.filter((c) => c.active).map((c) => c.project_key),
+      ...runs.map((run) => run.project_key),
+    ])
+  ).sort((a, b) => a.localeCompare(b));
   const ticketStatusByKey = new Map<string, { name: string; categoryKey: string }>();
   await Promise.all(
     runs.map(async (run) => {

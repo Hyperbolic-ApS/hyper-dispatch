@@ -1,11 +1,13 @@
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { makeDispatchRun } from "../test/fixtures.js";
 
 const getAllDispatchRunsMock = vi.fn();
+const listProjectConfigsMock = vi.fn();
 const getIssueMock = vi.fn();
 
 vi.mock("../db/config-queries.js", () => ({
   getAllDispatchRuns: getAllDispatchRunsMock,
+  listProjectConfigs: listProjectConfigsMock,
 }));
 
 vi.mock("../jira/client.js", () => ({
@@ -13,6 +15,9 @@ vi.mock("../jira/client.js", () => ({
 }));
 
 describe("dashboardRouter", () => {
+  beforeEach(() => {
+    listProjectConfigsMock.mockResolvedValue([]);
+  });
   it("includes an immediate refresh trigger when the tab becomes active", async () => {
     getAllDispatchRunsMock.mockResolvedValue([makeDispatchRun()]);
     getIssueMock.mockResolvedValue({
