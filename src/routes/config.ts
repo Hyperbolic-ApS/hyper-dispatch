@@ -694,7 +694,7 @@ configRouter.get("/:projectKey/validate", async (c) => {
   }
 
   const result = await validateJiraProject(
-    config.board_id,
+    projectKey,
     config.model_field_id,
     {
       backlog: config.backlog_column_name,

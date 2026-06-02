@@ -33,7 +33,7 @@ async function jiraFetch(path: string, creds: JiraCredentials): Promise<Response
 
 
 export async function validateJiraProject(
-  boardId: number,
+  projectKey: string,
   modelFieldId: string | null,
   columnMappings?: Partial<JiraColumnMappings>,
   credentials?: JiraCredentials
@@ -44,50 +44,55 @@ export async function validateJiraProject(
   };
   const checks: ValidationCheck[] = [];
   const resolvedMappings = resolveJiraColumnMappings(columnMappings);
-  const requiredColumns = [
+  const requiredStatuses = [
     resolvedMappings.backlog,
     resolvedMappings.toDo,
     resolvedMappings.inProgress,
     resolvedMappings.inReview,
     resolvedMappings.done,
   ];
-  const requiredStatuses = [...requiredColumns];
 
-  // Check 1: Board columns
+  // Check 1: Workflow statuses (project-specific via Platform API)
   try {
-    const res = await jiraFetch(`/rest/agile/1.0/board/${boardId}/configuration`, creds);
+    const res = await jiraFetch(
+      `/rest/api/3/project/${encodeURIComponent(projectKey)}/statuses`,
+      creds
+    );
     if (!res.ok) {
       checks.push({
-        name: "Board columns",
+        name: "Workflow statuses",
         passed: false,
-        message: `Failed to fetch board configuration: ${res.status} ${res.statusText}`,
+        message: `Failed to fetch project statuses: ${res.status} ${res.statusText}`,
       });
     } else {
-      const data = (await res.json()) as {
-        columnConfig?: { columns?: Array<{ name: string }> };
-      };
-      const columns: string[] =
-        data.columnConfig?.columns?.map((c) => c.name) ?? [];
-      const missing = requiredColumns.filter(
-        (req) => !columns.some((col) => jiraNamesEqual(col, req))
+      const issueTypes = (await res.json()) as Array<{
+        statuses: Array<{ name: string }>;
+      }>;
+      const statusNames = [
+        ...new Set(
+          issueTypes.flatMap((it) => it.statuses.map((s) => s.name))
+        ),
+      ];
+      const missing = requiredStatuses.filter(
+        (req) => !statusNames.some((s) => jiraNamesEqual(s, req))
       );
       if (missing.length === 0) {
         checks.push({
-          name: "Board columns",
+          name: "Workflow statuses",
           passed: true,
-          message: `All required columns present: ${requiredColumns.join(", ")}`,
+          message: `All required statuses present: ${requiredStatuses.join(", ")}`,
         });
       } else {
         checks.push({
-          name: "Board columns",
+          name: "Workflow statuses",
           passed: false,
-          message: `Missing columns: ${missing.join(", ")}. Found: ${columns.join(", ")}`,
+          message: `Missing statuses: ${missing.join(", ")}`,
         });
       }
     }
   } catch (err) {
     checks.push({
-      name: "Board columns",
+      name: "Workflow statuses",
       passed: false,
       message: `Error: ${err instanceof Error ? err.message : String(err)}`,
     });
@@ -132,43 +137,6 @@ export async function validateJiraProject(
       name: "Custom field",
       passed: true,
       message: "No model_field_id configured — skipped",
-    });
-  }
-
-  // Check 3: Workflow statuses
-  try {
-    const res = await jiraFetch("/rest/api/3/status", creds);
-    if (!res.ok) {
-      checks.push({
-        name: "Workflow statuses",
-        passed: false,
-        message: `Failed to fetch statuses: ${res.status} ${res.statusText}`,
-      });
-    } else {
-      const statuses = (await res.json()) as Array<{ name: string }>;
-      const statusNames = statuses.map((s) => s.name);
-      const missing = requiredStatuses.filter(
-        (req) => !statusNames.some((s) => jiraNamesEqual(s, req))
-      );
-      if (missing.length === 0) {
-        checks.push({
-          name: "Workflow statuses",
-          passed: true,
-          message: `All required statuses present: ${requiredStatuses.join(", ")}`,
-        });
-      } else {
-        checks.push({
-          name: "Workflow statuses",
-          passed: false,
-          message: `Missing statuses: ${missing.join(", ")}`,
-        });
-      }
-    }
-  } catch (err) {
-    checks.push({
-      name: "Workflow statuses",
-      passed: false,
-      message: `Error: ${err instanceof Error ? err.message : String(err)}`,
     });
   }
 

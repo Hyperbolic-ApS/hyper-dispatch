@@ -1,7 +1,6 @@
 import { env } from "../config/env.js";
 import type {
   JiraIssue,
-  JiraBoardConfig,
   JiraField,
   JiraStatus,
   JiraSearchResponse,
@@ -109,15 +108,6 @@ export async function transitionIssue(
     method: "POST",
     body: JSON.stringify({ transition: { id: transitionId } }),
   });
-}
-
-/**
- * Fetch the board configuration for an Agile board.
- */
-export async function getBoardConfig(boardId: number): Promise<JiraBoardConfig> {
-  return jiraFetch<JiraBoardConfig>(
-    `/rest/agile/1.0/board/${boardId}/configuration`
-  );
 }
 
 /**

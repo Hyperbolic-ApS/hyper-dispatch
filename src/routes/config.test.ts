@@ -240,9 +240,8 @@ describe("configRouter", () => {
     validateJiraProjectMock.mockResolvedValue({
       valid: false,
       checks: [
-        { name: "Board columns", passed: true, message: "ok" },
-        { name: "Custom field", passed: false, message: "missing field" },
         { name: "Workflow statuses", passed: true, message: "ok" },
+        { name: "Custom field", passed: false, message: "missing field" },
       ],
     });
 
@@ -256,11 +255,11 @@ describe("configRouter", () => {
       checks: Array<{ passed: boolean }>;
     };
     expect(res.status).toBe(200);
-    expect(payload.checks).toHaveLength(3);
+    expect(payload.checks).toHaveLength(2);
     expect(payload.checks.some((check: { passed: boolean }) => check.passed === false)).toBe(true);
     expect(payload.checks.some((check: { passed: boolean }) => check.passed === true)).toBe(true);
     expect(validateJiraProjectMock).toHaveBeenCalledWith(
-      77,
+      "HYDI",
       "customfield_10010",
       {
         backlog: "Backlog",
