@@ -27,6 +27,7 @@ async function jiraFetch(path: string, creds: JiraCredentials): Promise<Response
     headers: {
       Authorization: `Bearer ${creds.apiToken}`,
       Accept: "application/json",
+      "Accept-Language": "en",
     },
   });
 }
