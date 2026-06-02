@@ -27,6 +27,7 @@ describe("dashboardRouter", () => {
     expect(html).toContain("document.addEventListener(\"visibilitychange\"");
     expect(html).toContain("previousVisibilityState !== \"visible\"");
     expect(html).toContain("window.location.reload();");
+    expect(html).toContain("⚙ Configure</a>");
   });
 
   it("renders a project dropdown and filters rows by selected project", async () => {
