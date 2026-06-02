@@ -51,7 +51,9 @@ See [configuration.md](./configuration.md) for the Jira Automation rule setup. T
 In addition to webhook-triggered ingestion, the scheduler loop performs a Jira reconciliation poll each cycle:
 - It queries each active project's configured `to_do_column_name` and auto-ingests tickets that are in To Do but missing from `dispatch_runs` (same cycle/dependency checks as webhook ingestion).
 - It verifies tracked `dispatch_runs` tickets still exist in Jira and removes rows for issues that now return Jira `404` (deleted issues), so stale dashboard entries are cleaned up automatically.
-- Replayed webhook/polling upserts that attempt to set a run back to `queued` do not overwrite rows already in `running` or `succeeded`, preventing duplicate dispatch after a run has been claimed or finished.
+- Scheduler cycles are serialized (the next cycle is scheduled only after the previous cycle completes), preventing overlapping queue reads.
+- Spawn dispatch uses an atomic queued-claim update in Postgres before agent creation, so overlapping triggers cannot dispatch the same ticket twice.
+- `upsertDispatchRun` conflict handling rejects stale `queued` replays when a row is already `running` or `succeeded`, which prevents webhook backslides from re-queueing active/completed tickets.
 
 ## PR Merge to Done
 

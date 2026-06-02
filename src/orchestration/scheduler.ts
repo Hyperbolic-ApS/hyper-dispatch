@@ -2,13 +2,13 @@ import { env } from "../config/env.js";
 import * as jira from "../jira/client.js";
 import {
   claimRunForSpawn,
+  deleteRun,
   getActiveRunCount,
   getRunsByProject,
   getRunsByStatus,
   listActiveProjectConfigs,
+  releaseSpawnClaim,
   type ProjectConfig,
-  deleteRun,
-  updateRunStatus,
 } from "../db/queries.js";
 import { spawnAgent } from "./spawner.js";
 import { syncTicketInToDo } from "./ticket-sync.js";
@@ -107,20 +107,17 @@ export async function processQueue(): Promise<number> {
 
   for (const run of queued) {
     if (spawned >= slots) break;
-
     try {
+      const claimed = await claimRunForSpawn(run.ticket_key);
+      if (!claimed) {
+        continue;
+      }
       const config = projectsByKey.get(run.project_key);
       if (!config) {
         console.warn(
           `[scheduler] Skipping ${run.ticket_key}: project ${run.project_key} is not configured.`
         );
-        continue;
-      }
-      const claimed = await claimRunForSpawn(run.ticket_key);
-      if (!claimed) {
-        console.log(
-          `[scheduler] Skipping ${run.ticket_key}: run already claimed by another cycle.`
-        );
+        await releaseSpawnClaim(run.ticket_key);
         continue;
       }
 
@@ -128,11 +125,11 @@ export async function processQueue(): Promise<number> {
       await spawnAgent(run.ticket_key, config, issue);
       spawned++;
     } catch (err) {
+      await releaseSpawnClaim(run.ticket_key);
       console.error(
         `[scheduler] Failed to spawn agent for ${run.ticket_key}:`,
         err
       );
-      await updateRunStatus(run.ticket_key, { status: "queued" });
       // Continue processing remaining queued runs
     }
   }
@@ -156,20 +153,21 @@ export function startSchedulerLoop(): () => void {
   let stopped = false;
   let handle: ReturnType<typeof setTimeout> | null = null;
 
-  const scheduleNext = () => {
+  const runCycle = async (): Promise<void> => {
     if (stopped) return;
-    handle = setTimeout(async () => {
-      try {
-        await processQueue();
-      } catch (err) {
-        console.error("[scheduler] Unhandled error in processQueue:", err);
-      } finally {
-        scheduleNext();
+
+    try {
+      await processQueue();
+    } catch (err) {
+      console.error("[scheduler] Unhandled error in processQueue:", err);
+    } finally {
+      if (!stopped) {
+        handle = setTimeout(runCycle, SCHEDULER_INTERVAL_MS);
       }
-    }, SCHEDULER_INTERVAL_MS);
+    }
   };
 
-  scheduleNext();
+  handle = setTimeout(runCycle, SCHEDULER_INTERVAL_MS);
 
   return () => {
     stopped = true;

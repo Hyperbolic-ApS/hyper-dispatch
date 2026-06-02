@@ -10,8 +10,7 @@ Jira Automation (webhook) → HyperDispatch → Oz Cloud Agents → PRs
 
 1. A Jira issue transitions to "To Do" (or is discovered in periodic polling if webhook is missed).
 2. HyperDispatch checks dependencies — if all blockers are resolved, the ticket is eligible.
-3. The scheduler reconciles To Do/backfill + deleted tickets, then checks concurrency limits and queues or dispatches.
-   Scheduler cycles are self-scheduled (next cycle starts only after the current cycle completes), and each queued run must be atomically claimed before spawn to prevent duplicate dispatches across overlapping workers.
+3. The scheduler reconciles To Do/backfill + deleted tickets, then checks concurrency limits and atomically claims queued runs before dispatching.
 4. The agent spawner creates an Oz cloud agent run with the configured skill, model, and environment.
 5. The run monitor polls Oz for completion, then updates the state store and transitions the Jira ticket.
 
@@ -35,3 +34,4 @@ Jira Automation (webhook) → HyperDispatch → Oz Cloud Agents → PRs
 - **Stateful**: PostgreSQL state store enables fast dashboard reads, dedup, and survives restarts.
 - **Multi-project**: One HyperDispatch instance serves multiple Jira projects via a single global webhook rule.
 - **Skill-driven workers**: The agent's workflow is defined by skills selected per-project, not hardcoded in HyperDispatch.
+- **Race-safe scheduling**: The scheduler loop self-schedules with awaited `setTimeout` (no overlapping cycles), and each queued ticket must be atomically claimed in Postgres before spawn.

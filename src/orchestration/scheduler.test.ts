@@ -6,14 +6,14 @@ import {
 } from "../test/fixtures.js";
 
 const {
+  mockClaimRunForSpawn,
+  mockReleaseSpawnClaim,
   mockEnv,
   mockGetActiveRunCount,
   mockGetRunsByStatus,
   mockListActiveProjectConfigs,
   mockGetRunsByProject,
   mockDeleteRun,
-  mockClaimRunForSpawn,
-  mockUpdateRunStatus,
   mockGetIssue,
   mockSearchIssuesInStatus,
   mockSpawnAgent,
@@ -30,14 +30,14 @@ const {
   }
 
   return {
+    mockClaimRunForSpawn: vi.fn(),
+    mockReleaseSpawnClaim: vi.fn(),
     mockEnv: { MAX_CONCURRENT_AGENTS: 4 },
     mockGetActiveRunCount: vi.fn(),
     mockGetRunsByStatus: vi.fn(),
     mockListActiveProjectConfigs: vi.fn(),
     mockGetRunsByProject: vi.fn(),
     mockDeleteRun: vi.fn(),
-    mockClaimRunForSpawn: vi.fn(),
-    mockUpdateRunStatus: vi.fn(),
     mockGetIssue: vi.fn(),
     mockSearchIssuesInStatus: vi.fn(),
     mockSpawnAgent: vi.fn(),
@@ -51,13 +51,13 @@ vi.mock("../config/env.js", () => ({
 }));
 
 vi.mock("../db/queries.js", () => ({
+  claimRunForSpawn: mockClaimRunForSpawn,
+  releaseSpawnClaim: mockReleaseSpawnClaim,
   getActiveRunCount: mockGetActiveRunCount,
   getRunsByStatus: mockGetRunsByStatus,
   listActiveProjectConfigs: mockListActiveProjectConfigs,
   getRunsByProject: mockGetRunsByProject,
   deleteRun: mockDeleteRun,
-  claimRunForSpawn: mockClaimRunForSpawn,
-  updateRunStatus: mockUpdateRunStatus,
 }));
 
 vi.mock("../jira/client.js", () => ({
@@ -80,13 +80,13 @@ describe("processQueue", () => {
   beforeEach(() => {
     vi.resetAllMocks();
     mockEnv.MAX_CONCURRENT_AGENTS = 4;
+    mockClaimRunForSpawn.mockResolvedValue(true);
+    mockReleaseSpawnClaim.mockResolvedValue(undefined);
     mockGetActiveRunCount.mockResolvedValue(0);
     mockGetRunsByStatus.mockResolvedValue([]);
     mockListActiveProjectConfigs.mockResolvedValue([]);
     mockGetRunsByProject.mockResolvedValue([]);
     mockDeleteRun.mockResolvedValue(undefined);
-    mockClaimRunForSpawn.mockResolvedValue(true);
-    mockUpdateRunStatus.mockResolvedValue(null);
     mockGetIssue.mockResolvedValue(makeJiraIssue());
     mockSearchIssuesInStatus.mockResolvedValue([]);
     mockSpawnAgent.mockResolvedValue(undefined);
@@ -132,6 +132,7 @@ describe("processQueue", () => {
     const spawned = await processQueue();
 
     expect(spawned).toBe(2);
+    expect(mockClaimRunForSpawn).toHaveBeenCalledTimes(2);
     expect(mockSpawnAgent).toHaveBeenCalledTimes(2);
     expect(mockSpawnAgent).toHaveBeenNthCalledWith(
       1,
@@ -161,6 +162,7 @@ describe("processQueue", () => {
     const spawned = await processQueue();
 
     expect(spawned).toBe(1);
+    expect(mockReleaseSpawnClaim).toHaveBeenCalledWith("OPS-1");
     expect(warnSpy).toHaveBeenCalledWith(
       "[scheduler] Skipping OPS-1: project OPS is not configured."
     );
@@ -170,27 +172,6 @@ describe("processQueue", () => {
       expect.any(Object)
     );
     warnSpy.mockRestore();
-  });
-
-  it("skips runs already claimed by another scheduler cycle", async () => {
-    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
-    const project = makeProjectConfig({ project_key: "HYDI" });
-    mockListActiveProjectConfigs
-      .mockResolvedValueOnce([])
-      .mockResolvedValueOnce([project]);
-    mockGetRunsByStatus.mockResolvedValue([
-      makeDispatchRun({ ticket_key: "HYDI-1", project_key: "HYDI" }),
-    ]);
-    mockClaimRunForSpawn.mockResolvedValueOnce(false);
-
-    const spawned = await processQueue();
-
-    expect(spawned).toBe(0);
-    expect(mockSpawnAgent).not.toHaveBeenCalled();
-    expect(logSpy).toHaveBeenCalledWith(
-      "[scheduler] Skipping HYDI-1: run already claimed by another cycle."
-    );
-    logSpy.mockRestore();
   });
 
   it("continues to later queued runs if spawnAgent throws", async () => {
@@ -211,11 +192,31 @@ describe("processQueue", () => {
 
     expect(spawned).toBe(1);
     expect(mockSpawnAgent).toHaveBeenCalledTimes(2);
+    expect(mockReleaseSpawnClaim).toHaveBeenCalledWith("HYDI-1");
     expect(errorSpy).toHaveBeenCalled();
-    expect(mockUpdateRunStatus).toHaveBeenCalledWith("HYDI-1", {
-      status: "queued",
-    });
     errorSpy.mockRestore();
+  });
+
+  it("skips runs that fail atomic claim and continues with next queued run", async () => {
+    const project = makeProjectConfig({ project_key: "HYDI" });
+    mockListActiveProjectConfigs
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([project]);
+    mockGetRunsByStatus.mockResolvedValue([
+      makeDispatchRun({ ticket_key: "HYDI-1", project_key: "HYDI" }),
+      makeDispatchRun({ ticket_key: "HYDI-2", project_key: "HYDI" }),
+    ]);
+    mockClaimRunForSpawn.mockResolvedValueOnce(false).mockResolvedValueOnce(true);
+
+    const spawned = await processQueue();
+
+    expect(spawned).toBe(1);
+    expect(mockSpawnAgent).toHaveBeenCalledTimes(1);
+    expect(mockSpawnAgent).toHaveBeenCalledWith(
+      "HYDI-2",
+      project,
+      expect.any(Object)
+    );
   });
 
   it("skips a run when getIssue throws and continues processing", async () => {
@@ -236,15 +237,13 @@ describe("processQueue", () => {
 
     expect(spawned).toBe(1);
     expect(mockSpawnAgent).toHaveBeenCalledTimes(1);
+    expect(mockReleaseSpawnClaim).toHaveBeenCalledWith("HYDI-1");
     expect(mockSpawnAgent).toHaveBeenCalledWith(
       "HYDI-2",
       project,
       expect.any(Object)
     );
     expect(errorSpy).toHaveBeenCalled();
-    expect(mockUpdateRunStatus).toHaveBeenCalledWith("HYDI-1", {
-      status: "queued",
-    });
     errorSpy.mockRestore();
   });
 
@@ -306,12 +305,12 @@ describe("startSchedulerLoop", () => {
     vi.useFakeTimers();
     vi.resetAllMocks();
     mockEnv.MAX_CONCURRENT_AGENTS = 4;
+    mockClaimRunForSpawn.mockResolvedValue(true);
+    mockReleaseSpawnClaim.mockResolvedValue(undefined);
     mockGetActiveRunCount.mockResolvedValue(0);
     mockGetRunsByStatus.mockResolvedValue([]);
     mockListActiveProjectConfigs.mockResolvedValue([]);
     mockGetRunsByProject.mockResolvedValue([]);
-    mockClaimRunForSpawn.mockResolvedValue(true);
-    mockUpdateRunStatus.mockResolvedValue(null);
     mockGetIssue.mockResolvedValue(makeJiraIssue());
     mockSearchIssuesInStatus.mockResolvedValue([]);
     mockSpawnAgent.mockResolvedValue(undefined);
@@ -322,7 +321,7 @@ describe("startSchedulerLoop", () => {
     vi.useRealTimers();
   });
 
-  it("starts and stops scheduler interval", async () => {
+  it("starts and stops scheduler loop", async () => {
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
 
     const stop = startSchedulerLoop();
@@ -333,7 +332,30 @@ describe("startSchedulerLoop", () => {
     logSpy.mockRestore();
   });
 
-  it("logs unhandled interval errors from processQueue", async () => {
+  it("does not overlap cycles when processQueue is still running", async () => {
+    let releaseFirstCycle: (() => void) | undefined;
+    mockListActiveProjectConfigs.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          releaseFirstCycle = () => resolve([]);
+        })
+    );
+
+    const stop = startSchedulerLoop();
+    await vi.advanceTimersByTimeAsync(30_000);
+    await vi.advanceTimersByTimeAsync(30_000);
+
+    expect(mockListActiveProjectConfigs).toHaveBeenCalledTimes(1);
+
+    releaseFirstCycle?.();
+    await vi.runAllTicks();
+    await vi.advanceTimersByTimeAsync(30_000);
+
+    expect(mockListActiveProjectConfigs).toHaveBeenCalledTimes(4);
+    stop();
+  });
+
+  it("logs unhandled loop errors from processQueue", async () => {
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     mockListActiveProjectConfigs.mockRejectedValueOnce(new Error("db down"));
 
@@ -346,22 +368,5 @@ describe("startSchedulerLoop", () => {
       expect.any(Error)
     );
     errorSpy.mockRestore();
-  });
-
-  it("does not start a new cycle until the previous cycle completes", async () => {
-    let release: (() => void) | undefined;
-    const pendingCycle = new Promise<number>((resolve) => {
-      release = () => resolve(0);
-    });
-    mockGetActiveRunCount.mockReturnValueOnce(pendingCycle);
-
-    const stop = startSchedulerLoop();
-    await vi.advanceTimersByTimeAsync(60_000);
-
-    expect(mockGetActiveRunCount).toHaveBeenCalledTimes(1);
-
-    release?.();
-    await Promise.resolve();
-    stop();
   });
 });

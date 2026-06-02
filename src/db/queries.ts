@@ -112,7 +112,7 @@ export async function upsertDispatchRun(
       summary     = COALESCE(EXCLUDED.summary, dispatch_runs.summary),
       status      = CASE
                       WHEN dispatch_runs.status IN ('running', 'succeeded')
-                       AND EXCLUDED.status = 'queued'
+                        AND EXCLUDED.status = 'queued'
                       THEN dispatch_runs.status
                       ELSE EXCLUDED.status
                     END,
@@ -125,20 +125,37 @@ export async function upsertDispatchRun(
 }
 
 /**
- * Atomically claim a queued run for spawning.
- * Returns true only when the row was in queued state and was claimed.
+ * Atomically claim a queued run for spawning by transitioning it to running.
+ * Returns true when claim succeeds, false when another scheduler cycle already claimed it.
  */
 export async function claimRunForSpawn(ticketKey: string): Promise<boolean> {
   const rows = await sql<Array<{ ticket_key: string }>>`
     UPDATE dispatch_runs
     SET
       status = 'running',
+      spawned_at = COALESCE(spawned_at, NOW()),
       updated_at = NOW()
     WHERE ticket_key = ${ticketKey}
       AND status = 'queued'
     RETURNING ticket_key
   `;
   return rows.length > 0;
+}
+
+/**
+ * Release a scheduler claim only if the run is still unbound to an Oz run_id.
+ */
+export async function releaseSpawnClaim(ticketKey: string): Promise<void> {
+  await sql`
+    UPDATE dispatch_runs
+    SET
+      status = 'queued',
+      spawned_at = NULL,
+      updated_at = NOW()
+    WHERE ticket_key = ${ticketKey}
+      AND status = 'running'
+      AND run_id IS NULL
+  `;
 }
 
 /**

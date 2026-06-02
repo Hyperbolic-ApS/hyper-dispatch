@@ -61,6 +61,9 @@ Tracks ticket → agent run state. Managed by the orchestration loop.
 - `removeBlocker(ticketKey, blockerKey)` removes a blocker from `blocked_by`.
 - If that removal empties `blocked_by`, only runs currently in `blocked` auto-transition to `queued`.
 - Runs in `blocked_cycle` remain `blocked_cycle` after blocker removal (cycle status is not auto-cleared by this query path).
+- `claimRunForSpawn(ticketKey)` atomically transitions a row from `queued` → `running` and returns whether the claim succeeded. This is used to prevent duplicate dispatches across concurrent triggers.
+- `releaseSpawnClaim(ticketKey)` reverts `running` → `queued` only when `run_id IS NULL` (failed pre-spawn path), so claimed rows tied to real Oz runs are never accidentally released.
+- `upsertDispatchRun` conflict updates do not allow stale incoming `queued` writes to overwrite rows already in `running` or `succeeded`.
 
 ## Migrations
 

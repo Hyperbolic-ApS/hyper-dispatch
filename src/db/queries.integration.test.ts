@@ -185,6 +185,62 @@ describe.skipIf(!process.env.RUN_DB_TESTS)("queries integration", () => {
     expect(updated.priority).toBe(2);
   });
 
+  it("integration: upsertDispatchRun does not downgrade running or succeeded rows back to queued", async () => {
+    await queries.upsertDispatchRun({
+      ticketKey: "HYDI-41",
+      projectKey: "HYDI",
+      summary: "Already running",
+      status: "running",
+      blockedBy: [],
+    });
+    const running = await queries.upsertDispatchRun({
+      ticketKey: "HYDI-41",
+      projectKey: "HYDI",
+      summary: "Webhook replay",
+      status: "queued",
+      blockedBy: [],
+    });
+    expect(running.status).toBe("running");
+
+    await queries.upsertDispatchRun({
+      ticketKey: "HYDI-42",
+      projectKey: "HYDI",
+      summary: "Already done",
+      status: "succeeded",
+      blockedBy: [],
+    });
+    const succeeded = await queries.upsertDispatchRun({
+      ticketKey: "HYDI-42",
+      projectKey: "HYDI",
+      summary: "Webhook replay",
+      status: "queued",
+      blockedBy: [],
+    });
+    expect(succeeded.status).toBe("succeeded");
+  });
+
+  it("integration: claimRunForSpawn is atomic and releaseSpawnClaim only releases unbound claims", async () => {
+    await queries.upsertDispatchRun({
+      ticketKey: "HYDI-43",
+      projectKey: "HYDI",
+      status: "queued",
+    });
+
+    const firstClaim = await queries.claimRunForSpawn("HYDI-43");
+    const secondClaim = await queries.claimRunForSpawn("HYDI-43");
+    expect(firstClaim).toBe(true);
+    expect(secondClaim).toBe(false);
+
+    await queries.releaseSpawnClaim("HYDI-43");
+    const reclaimed = await queries.claimRunForSpawn("HYDI-43");
+    expect(reclaimed).toBe(true);
+
+    await queries.updateRunStatus("HYDI-43", { run_id: "run-43" });
+    await queries.releaseSpawnClaim("HYDI-43");
+    const stillRunning = await queries.getRunsByStatus("running");
+    expect(stillRunning.map((run) => run.ticket_key)).toContain("HYDI-43");
+  });
+
   it("integration: removeBlocker removes one blocker while preserving status when blockers remain", async () => {
     await queries.upsertDispatchRun({
       ticketKey: "HYDI-50",
