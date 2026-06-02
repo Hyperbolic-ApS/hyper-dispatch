@@ -325,6 +325,50 @@ describe.skipIf(!process.env.RUN_DB_TESTS)("queries integration", () => {
     expect(activeConfigs.map((item) => item.project_key)).toEqual(["HYDI"]);
   });
 
+  it("integration: claimRunForSpawn atomically claims queued runs only once", async () => {
+    await queries.upsertDispatchRun({
+      ticketKey: "HYDI-110",
+      projectKey: "HYDI",
+      status: "queued",
+    });
+
+    const firstClaim = await queries.claimRunForSpawn("HYDI-110");
+    const secondClaim = await queries.claimRunForSpawn("HYDI-110");
+    const run = (await queries.getRunsByProject("HYDI")).find(
+      (item) => item.ticket_key === "HYDI-110"
+    );
+
+    expect(firstClaim).toBe(true);
+    expect(secondClaim).toBe(false);
+    expect(run?.status).toBe("running");
+  });
+
+  it("integration: upsertDispatchRun does not regress running or succeeded runs back to queued", async () => {
+    await queries.upsertDispatchRun({
+      ticketKey: "HYDI-120",
+      projectKey: "HYDI",
+      status: "running",
+      summary: "Initially running",
+    });
+    const runningUpdate = await queries.upsertDispatchRun({
+      ticketKey: "HYDI-120",
+      projectKey: "HYDI",
+      status: "queued",
+      summary: "Webhook replay attempted queue",
+    });
+
+    await queries.updateRunStatus("HYDI-120", { status: "succeeded" });
+    const succeededUpdate = await queries.upsertDispatchRun({
+      ticketKey: "HYDI-120",
+      projectKey: "HYDI",
+      status: "queued",
+      summary: "Another replay",
+    });
+
+    expect(runningUpdate.status).toBe("running");
+    expect(succeededUpdate.status).toBe("succeeded");
+  });
+
   it("integration: status/project listing helpers and deleteRun operate on persisted rows", async () => {
     await queries.upsertDispatchRun({
       ticketKey: "HYDI-100",

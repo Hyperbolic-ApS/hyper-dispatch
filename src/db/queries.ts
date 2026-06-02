@@ -110,13 +110,35 @@ export async function upsertDispatchRun(
     ON CONFLICT (ticket_key) DO UPDATE SET
       project_key = EXCLUDED.project_key,
       summary     = COALESCE(EXCLUDED.summary, dispatch_runs.summary),
-      status      = EXCLUDED.status,
+      status      = CASE
+                      WHEN dispatch_runs.status IN ('running', 'succeeded')
+                       AND EXCLUDED.status = 'queued'
+                      THEN dispatch_runs.status
+                      ELSE EXCLUDED.status
+                    END,
       blocked_by  = EXCLUDED.blocked_by,
       priority    = EXCLUDED.priority,
       updated_at  = NOW()
     RETURNING *
   `;
   return rows[0]!;
+}
+
+/**
+ * Atomically claim a queued run for spawning.
+ * Returns true only when the row was in queued state and was claimed.
+ */
+export async function claimRunForSpawn(ticketKey: string): Promise<boolean> {
+  const rows = await sql<Array<{ ticket_key: string }>>`
+    UPDATE dispatch_runs
+    SET
+      status = 'running',
+      updated_at = NOW()
+    WHERE ticket_key = ${ticketKey}
+      AND status = 'queued'
+    RETURNING ticket_key
+  `;
+  return rows.length > 0;
 }
 
 /**

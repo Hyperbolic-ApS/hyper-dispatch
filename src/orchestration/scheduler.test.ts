@@ -12,6 +12,8 @@ const {
   mockListActiveProjectConfigs,
   mockGetRunsByProject,
   mockDeleteRun,
+  mockClaimRunForSpawn,
+  mockUpdateRunStatus,
   mockGetIssue,
   mockSearchIssuesInStatus,
   mockSpawnAgent,
@@ -34,6 +36,8 @@ const {
     mockListActiveProjectConfigs: vi.fn(),
     mockGetRunsByProject: vi.fn(),
     mockDeleteRun: vi.fn(),
+    mockClaimRunForSpawn: vi.fn(),
+    mockUpdateRunStatus: vi.fn(),
     mockGetIssue: vi.fn(),
     mockSearchIssuesInStatus: vi.fn(),
     mockSpawnAgent: vi.fn(),
@@ -52,6 +56,8 @@ vi.mock("../db/queries.js", () => ({
   listActiveProjectConfigs: mockListActiveProjectConfigs,
   getRunsByProject: mockGetRunsByProject,
   deleteRun: mockDeleteRun,
+  claimRunForSpawn: mockClaimRunForSpawn,
+  updateRunStatus: mockUpdateRunStatus,
 }));
 
 vi.mock("../jira/client.js", () => ({
@@ -79,6 +85,8 @@ describe("processQueue", () => {
     mockListActiveProjectConfigs.mockResolvedValue([]);
     mockGetRunsByProject.mockResolvedValue([]);
     mockDeleteRun.mockResolvedValue(undefined);
+    mockClaimRunForSpawn.mockResolvedValue(true);
+    mockUpdateRunStatus.mockResolvedValue(null);
     mockGetIssue.mockResolvedValue(makeJiraIssue());
     mockSearchIssuesInStatus.mockResolvedValue([]);
     mockSpawnAgent.mockResolvedValue(undefined);
@@ -164,6 +172,27 @@ describe("processQueue", () => {
     warnSpy.mockRestore();
   });
 
+  it("skips runs already claimed by another scheduler cycle", async () => {
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const project = makeProjectConfig({ project_key: "HYDI" });
+    mockListActiveProjectConfigs
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([project]);
+    mockGetRunsByStatus.mockResolvedValue([
+      makeDispatchRun({ ticket_key: "HYDI-1", project_key: "HYDI" }),
+    ]);
+    mockClaimRunForSpawn.mockResolvedValueOnce(false);
+
+    const spawned = await processQueue();
+
+    expect(spawned).toBe(0);
+    expect(mockSpawnAgent).not.toHaveBeenCalled();
+    expect(logSpy).toHaveBeenCalledWith(
+      "[scheduler] Skipping HYDI-1: run already claimed by another cycle."
+    );
+    logSpy.mockRestore();
+  });
+
   it("continues to later queued runs if spawnAgent throws", async () => {
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     const project = makeProjectConfig({ project_key: "HYDI" });
@@ -183,6 +212,9 @@ describe("processQueue", () => {
     expect(spawned).toBe(1);
     expect(mockSpawnAgent).toHaveBeenCalledTimes(2);
     expect(errorSpy).toHaveBeenCalled();
+    expect(mockUpdateRunStatus).toHaveBeenCalledWith("HYDI-1", {
+      status: "queued",
+    });
     errorSpy.mockRestore();
   });
 
@@ -210,6 +242,9 @@ describe("processQueue", () => {
       expect.any(Object)
     );
     expect(errorSpy).toHaveBeenCalled();
+    expect(mockUpdateRunStatus).toHaveBeenCalledWith("HYDI-1", {
+      status: "queued",
+    });
     errorSpy.mockRestore();
   });
 
@@ -275,6 +310,8 @@ describe("startSchedulerLoop", () => {
     mockGetRunsByStatus.mockResolvedValue([]);
     mockListActiveProjectConfigs.mockResolvedValue([]);
     mockGetRunsByProject.mockResolvedValue([]);
+    mockClaimRunForSpawn.mockResolvedValue(true);
+    mockUpdateRunStatus.mockResolvedValue(null);
     mockGetIssue.mockResolvedValue(makeJiraIssue());
     mockSearchIssuesInStatus.mockResolvedValue([]);
     mockSpawnAgent.mockResolvedValue(undefined);
@@ -309,5 +346,22 @@ describe("startSchedulerLoop", () => {
       expect.any(Error)
     );
     errorSpy.mockRestore();
+  });
+
+  it("does not start a new cycle until the previous cycle completes", async () => {
+    let release: (() => void) | undefined;
+    const pendingCycle = new Promise<number>((resolve) => {
+      release = () => resolve(0);
+    });
+    mockGetActiveRunCount.mockReturnValueOnce(pendingCycle);
+
+    const stop = startSchedulerLoop();
+    await vi.advanceTimersByTimeAsync(60_000);
+
+    expect(mockGetActiveRunCount).toHaveBeenCalledTimes(1);
+
+    release?.();
+    await Promise.resolve();
+    stop();
   });
 });

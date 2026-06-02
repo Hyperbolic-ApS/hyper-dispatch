@@ -1,12 +1,14 @@
 import { env } from "../config/env.js";
 import * as jira from "../jira/client.js";
 import {
+  claimRunForSpawn,
   getActiveRunCount,
   getRunsByProject,
   getRunsByStatus,
   listActiveProjectConfigs,
   type ProjectConfig,
   deleteRun,
+  updateRunStatus,
 } from "../db/queries.js";
 import { spawnAgent } from "./spawner.js";
 import { syncTicketInToDo } from "./ticket-sync.js";
@@ -106,13 +108,18 @@ export async function processQueue(): Promise<number> {
   for (const run of queued) {
     if (spawned >= slots) break;
 
-    // Dedup: skip if a running entry exists for this ticket
-    // (can happen if the DB is slightly stale between polling cycles)
     try {
       const config = projectsByKey.get(run.project_key);
       if (!config) {
         console.warn(
           `[scheduler] Skipping ${run.ticket_key}: project ${run.project_key} is not configured.`
+        );
+        continue;
+      }
+      const claimed = await claimRunForSpawn(run.ticket_key);
+      if (!claimed) {
+        console.log(
+          `[scheduler] Skipping ${run.ticket_key}: run already claimed by another cycle.`
         );
         continue;
       }
@@ -125,6 +132,7 @@ export async function processQueue(): Promise<number> {
         `[scheduler] Failed to spawn agent for ${run.ticket_key}:`,
         err
       );
+      await updateRunStatus(run.ticket_key, { status: "queued" });
       // Continue processing remaining queued runs
     }
   }
@@ -145,16 +153,29 @@ export function startSchedulerLoop(): () => void {
     `[scheduler] Starting loop (interval: ${SCHEDULER_INTERVAL_MS}ms, max concurrent: ${env.MAX_CONCURRENT_AGENTS})`
   );
 
-  const handle = setInterval(async () => {
-    try {
-      await processQueue();
-    } catch (err) {
-      console.error("[scheduler] Unhandled error in processQueue:", err);
-    }
-  }, SCHEDULER_INTERVAL_MS);
+  let stopped = false;
+  let handle: ReturnType<typeof setTimeout> | null = null;
+
+  const scheduleNext = () => {
+    if (stopped) return;
+    handle = setTimeout(async () => {
+      try {
+        await processQueue();
+      } catch (err) {
+        console.error("[scheduler] Unhandled error in processQueue:", err);
+      } finally {
+        scheduleNext();
+      }
+    }, SCHEDULER_INTERVAL_MS);
+  };
+
+  scheduleNext();
 
   return () => {
-    clearInterval(handle);
+    stopped = true;
+    if (handle) {
+      clearTimeout(handle);
+    }
     console.log("[scheduler] Loop stopped.");
   };
 }
