@@ -86,7 +86,7 @@ export async function validateJiraProject(
         checks.push({
           name: "Workflow statuses",
           passed: false,
-          message: `Missing statuses: ${missing.join(", ")}`,
+          message: `Missing statuses: ${missing.join(", ")}. Found: ${statusNames.length > 0 ? statusNames.join(", ") : "(none)"}`,
         });
       }
     }
