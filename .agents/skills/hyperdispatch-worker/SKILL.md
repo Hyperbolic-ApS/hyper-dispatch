@@ -165,6 +165,8 @@ gh pr create \
 Co-Authored-By: Oz <oz-agent@warp.dev>"
 ```
 
+Create a normal pull request (non-draft). Do not pass `--draft`.
+
 The PR body must include a link to the Jira ticket. Use the Jira base URL from the environment variable `JIRA_BASE_URL` if available, otherwise use the URL from the prompt context.
 For UI-touching tickets, also include:
 - Iteration trail (each iteration's screenshot paths + one-paragraph rationale)
