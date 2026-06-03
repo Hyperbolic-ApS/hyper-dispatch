@@ -111,7 +111,7 @@ The default skill (`.agents/skills/hyperdispatch-worker/SKILL.md`) implements a 
 8. Read `docs/testing.md`, run `npm test` and `npm run test:coverage`, and add/update tests when required by scope
 9. Run lint/type checks (including explicit `npm run typecheck`)
 10. Commit with `{ticket-key}: {summary}` format + co-author line
-11. Create PR via `gh pr create` with Jira link in body, plus UI iteration trail for UI-touching tickets
+11. Create a non-draft PR via `gh pr create` with Jira link in body, plus UI iteration trail for UI-touching tickets
 12. Upload final desktop/mobile screenshots to Jira and comment with embedded images for UI-touching tickets
 13. Report PR URL via `report_pr` artifact
 

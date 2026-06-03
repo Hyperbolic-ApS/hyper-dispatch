@@ -219,7 +219,7 @@ describe("extractPrUrl", () => {
   it("falls back to status message pull request URL when artifacts are missing", async () => {
     const { extractPrUrl } = await importMonitor();
     const statusMessage =
-      "Implemented HYDI-33 and opened draft PR https://github.com/warp/hyper-dispatch/pull/456.";
+      "Implemented HYDI-33 and opened PR https://github.com/warp/hyper-dispatch/pull/456.";
 
     expect(extractPrUrl(undefined, statusMessage)).toBe(
       "https://github.com/warp/hyper-dispatch/pull/456"
@@ -235,7 +235,7 @@ describe("extractPrUrl", () => {
       },
     ] as unknown as ArtifactItem[];
     const statusMessage =
-      "Opened draft PR https://github.com/warp/hyper-dispatch/pull/456 while running tests.";
+      "Opened PR https://github.com/warp/hyper-dispatch/pull/456 while running tests.";
 
     expect(extractPrUrl(artifacts, statusMessage)).toBe(
       "https://github.com/warp/hyper-dispatch/pull/789"
@@ -251,7 +251,7 @@ describe("extractPrUrl", () => {
       },
     ] as unknown as ArtifactItem[];
     const statusMessage =
-      "Opened draft PR https://github.com/warp/hyper-dispatch/pull/456 while running tests.";
+      "Opened PR https://github.com/warp/hyper-dispatch/pull/456 while running tests.";
 
     expect(extractPrUrl(artifacts, statusMessage)).toBe(
       "https://github.com/warp/hyper-dispatch/pull/456"
