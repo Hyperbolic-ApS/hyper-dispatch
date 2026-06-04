@@ -15,7 +15,7 @@ export function buildPreviewUrl(
   const host = deploymentUrl.replace(/^https?:\/\//i, "").replace(/\/+$/, "");
   if (!host) return null;
 
-  return `https://pr-${prNumber}.${host}`;
+  return `https://${prNumber}.${host}`;
 }
 
 /**
