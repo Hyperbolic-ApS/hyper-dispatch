@@ -6,6 +6,9 @@ import {
 } from "../test/fixtures.js";
 
 const {
+  mockClaimRunForSpawn,
+  mockReleaseSpawnClaim,
+  mockUpdateRunStatus,
   mockEnv,
   mockGetActiveRunCount,
   mockGetRunsByStatus,
@@ -28,6 +31,9 @@ const {
   }
 
   return {
+    mockClaimRunForSpawn: vi.fn(),
+    mockReleaseSpawnClaim: vi.fn(),
+    mockUpdateRunStatus: vi.fn(),
     mockEnv: { MAX_CONCURRENT_AGENTS: 4 },
     mockGetActiveRunCount: vi.fn(),
     mockGetRunsByStatus: vi.fn(),
@@ -47,6 +53,9 @@ vi.mock("../config/env.js", () => ({
 }));
 
 vi.mock("../db/queries.js", () => ({
+  claimRunForSpawn: mockClaimRunForSpawn,
+  releaseSpawnClaim: mockReleaseSpawnClaim,
+  updateRunStatus: mockUpdateRunStatus,
   getActiveRunCount: mockGetActiveRunCount,
   getRunsByStatus: mockGetRunsByStatus,
   listActiveProjectConfigs: mockListActiveProjectConfigs,
@@ -74,6 +83,9 @@ describe("processQueue", () => {
   beforeEach(() => {
     vi.resetAllMocks();
     mockEnv.MAX_CONCURRENT_AGENTS = 4;
+    mockClaimRunForSpawn.mockResolvedValue(true);
+    mockReleaseSpawnClaim.mockResolvedValue(undefined);
+    mockUpdateRunStatus.mockResolvedValue(makeDispatchRun());
     mockGetActiveRunCount.mockResolvedValue(0);
     mockGetRunsByStatus.mockResolvedValue([]);
     mockListActiveProjectConfigs.mockResolvedValue([]);
@@ -124,6 +136,7 @@ describe("processQueue", () => {
     const spawned = await processQueue();
 
     expect(spawned).toBe(2);
+    expect(mockClaimRunForSpawn).toHaveBeenCalledTimes(2);
     expect(mockSpawnAgent).toHaveBeenCalledTimes(2);
     expect(mockSpawnAgent).toHaveBeenNthCalledWith(
       1,
@@ -153,6 +166,7 @@ describe("processQueue", () => {
     const spawned = await processQueue();
 
     expect(spawned).toBe(1);
+    expect(mockReleaseSpawnClaim).toHaveBeenCalledWith("OPS-1");
     expect(warnSpy).toHaveBeenCalledWith(
       "[scheduler] Skipping OPS-1: project OPS is not configured."
     );
@@ -162,6 +176,36 @@ describe("processQueue", () => {
       expect.any(Object)
     );
     warnSpy.mockRestore();
+  });
+
+  it("continues processing when releaseSpawnClaim fails on a pre-spawn rollback path", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const project = makeProjectConfig({ project_key: "HYDI" });
+    mockListActiveProjectConfigs
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([project]);
+    mockGetRunsByStatus.mockResolvedValue([
+      makeDispatchRun({ ticket_key: "OPS-1", project_key: "OPS" }),
+      makeDispatchRun({ ticket_key: "HYDI-2", project_key: "HYDI" }),
+    ]);
+    mockReleaseSpawnClaim
+      .mockRejectedValueOnce(new Error("release failed"))
+      .mockResolvedValue(undefined);
+
+    const spawned = await processQueue();
+
+    expect(spawned).toBe(1);
+    expect(mockUpdateRunStatus).toHaveBeenCalledWith("OPS-1", {
+      status: "failed",
+      error: "claim rollback failed (missing project config)",
+    });
+    expect(mockSpawnAgent).toHaveBeenCalledWith(
+      "HYDI-2",
+      project,
+      expect.any(Object)
+    );
+    expect(errorSpy).toHaveBeenCalled();
+    errorSpy.mockRestore();
   });
 
   it("continues to later queued runs if spawnAgent throws", async () => {
@@ -182,8 +226,85 @@ describe("processQueue", () => {
 
     expect(spawned).toBe(1);
     expect(mockSpawnAgent).toHaveBeenCalledTimes(2);
+    expect(mockReleaseSpawnClaim).not.toHaveBeenCalledWith("HYDI-1");
+    expect(mockUpdateRunStatus).toHaveBeenCalledWith("HYDI-1", {
+      status: "failed",
+      error: "spawn failed",
+    });
     expect(errorSpy).toHaveBeenCalled();
     errorSpy.mockRestore();
+  });
+
+  it("marks a claimed run failed if spawnAgent fails after claim", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const project = makeProjectConfig({ project_key: "HYDI" });
+    mockListActiveProjectConfigs
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([project]);
+    mockGetRunsByStatus.mockResolvedValue([
+      makeDispatchRun({ ticket_key: "HYDI-1", project_key: "HYDI" }),
+    ]);
+    mockSpawnAgent.mockRejectedValueOnce(new Error("post-run failure"));
+
+    const spawned = await processQueue();
+
+    expect(spawned).toBe(0);
+    expect(mockReleaseSpawnClaim).not.toHaveBeenCalledWith("HYDI-1");
+    expect(mockUpdateRunStatus).toHaveBeenCalledWith("HYDI-1", {
+      status: "failed",
+      error: "post-run failure",
+    });
+    errorSpy.mockRestore();
+  });
+
+  it("falls back to release claim when post-spawn status update fails", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const project = makeProjectConfig({ project_key: "HYDI" });
+    mockListActiveProjectConfigs
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([project]);
+    mockGetRunsByStatus.mockResolvedValue([
+      makeDispatchRun({ ticket_key: "HYDI-1", project_key: "HYDI" }),
+      makeDispatchRun({ ticket_key: "HYDI-2", project_key: "HYDI" }),
+    ]);
+    mockSpawnAgent
+      .mockRejectedValueOnce(new Error("spawn failed"))
+      .mockResolvedValueOnce(undefined);
+    mockUpdateRunStatus.mockRejectedValueOnce(new Error("status write failed"));
+
+    const spawned = await processQueue();
+
+    expect(spawned).toBe(1);
+    expect(mockReleaseSpawnClaim).toHaveBeenCalledWith("HYDI-1");
+    expect(mockSpawnAgent).toHaveBeenCalledWith(
+      "HYDI-2",
+      project,
+      expect.any(Object)
+    );
+    expect(errorSpy).toHaveBeenCalled();
+    errorSpy.mockRestore();
+  });
+
+  it("skips runs that fail atomic claim and continues with next queued run", async () => {
+    const project = makeProjectConfig({ project_key: "HYDI" });
+    mockListActiveProjectConfigs
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([project]);
+    mockGetRunsByStatus.mockResolvedValue([
+      makeDispatchRun({ ticket_key: "HYDI-1", project_key: "HYDI" }),
+      makeDispatchRun({ ticket_key: "HYDI-2", project_key: "HYDI" }),
+    ]);
+    mockClaimRunForSpawn.mockResolvedValueOnce(false).mockResolvedValueOnce(true);
+
+    const spawned = await processQueue();
+
+    expect(spawned).toBe(1);
+    expect(mockSpawnAgent).toHaveBeenCalledTimes(1);
+    expect(mockSpawnAgent).toHaveBeenCalledWith(
+      "HYDI-2",
+      project,
+      expect.any(Object)
+    );
   });
 
   it("skips a run when getIssue throws and continues processing", async () => {
@@ -204,6 +325,7 @@ describe("processQueue", () => {
 
     expect(spawned).toBe(1);
     expect(mockSpawnAgent).toHaveBeenCalledTimes(1);
+    expect(mockReleaseSpawnClaim).toHaveBeenCalledWith("HYDI-1");
     expect(mockSpawnAgent).toHaveBeenCalledWith(
       "HYDI-2",
       project,
@@ -271,6 +393,8 @@ describe("startSchedulerLoop", () => {
     vi.useFakeTimers();
     vi.resetAllMocks();
     mockEnv.MAX_CONCURRENT_AGENTS = 4;
+    mockClaimRunForSpawn.mockResolvedValue(true);
+    mockReleaseSpawnClaim.mockResolvedValue(undefined);
     mockGetActiveRunCount.mockResolvedValue(0);
     mockGetRunsByStatus.mockResolvedValue([]);
     mockListActiveProjectConfigs.mockResolvedValue([]);
@@ -285,7 +409,7 @@ describe("startSchedulerLoop", () => {
     vi.useRealTimers();
   });
 
-  it("starts and stops scheduler interval", async () => {
+  it("starts and stops scheduler loop", async () => {
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
 
     const stop = startSchedulerLoop();
@@ -296,7 +420,30 @@ describe("startSchedulerLoop", () => {
     logSpy.mockRestore();
   });
 
-  it("logs unhandled interval errors from processQueue", async () => {
+  it("does not overlap cycles when processQueue is still running", async () => {
+    let releaseFirstCycle: (() => void) | undefined;
+    mockListActiveProjectConfigs.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          releaseFirstCycle = () => resolve([]);
+        })
+    );
+
+    const stop = startSchedulerLoop();
+    await vi.advanceTimersByTimeAsync(30_000);
+    await vi.advanceTimersByTimeAsync(30_000);
+
+    expect(mockListActiveProjectConfigs).toHaveBeenCalledTimes(1);
+
+    releaseFirstCycle?.();
+    await vi.runAllTicks();
+    await vi.advanceTimersByTimeAsync(30_000);
+
+    expect(mockListActiveProjectConfigs).toHaveBeenCalledTimes(4);
+    stop();
+  });
+
+  it("logs unhandled loop errors from processQueue", async () => {
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     mockListActiveProjectConfigs.mockRejectedValueOnce(new Error("db down"));
 
