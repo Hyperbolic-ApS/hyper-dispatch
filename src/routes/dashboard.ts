@@ -5,6 +5,7 @@ import { env } from "../config/env.js";
 import { resolveProjectTokens } from "../config/env.js";
 import { brandIconSvg, faviconDataUri } from "./branding.js";
 import * as jira from "../jira/client.js";
+import { annotateRunsWithProdDeploymentStatus } from "../coolify/prod-deployment.js";
 import { getPullRequestState, parseGithubPullRequestUrl } from "../github/pull-requests.js";
 
 export const dashboardRouter = new Hono();
@@ -95,6 +96,15 @@ function prConflictBadge(hasConflicts: boolean | null, hasPr: boolean): string {
   }
   if (hasConflicts === false) {
     return '<span style="padding:2px 8px;border-radius:4px;font-size:0.75rem;font-weight:600;background:#22c55e;color:#fff">No conflicts</span>';
+  }
+  return '<span style="padding:2px 8px;border-radius:4px;font-size:0.75rem;font-weight:600;background:#e5e7eb;color:#111">Unknown</span>';
+}
+function prodDeploymentBadge(deployedToProd: boolean | null): string {
+  if (deployedToProd === true) {
+    return '<span style="padding:2px 8px;border-radius:4px;font-size:0.75rem;font-weight:600;background:#22c55e;color:#fff">Deployed</span>';
+  }
+  if (deployedToProd === false) {
+    return '<span style="padding:2px 8px;border-radius:4px;font-size:0.75rem;font-weight:600;background:#f97316;color:#fff">Not deployed</span>';
   }
   return '<span style="padding:2px 8px;border-radius:4px;font-size:0.75rem;font-weight:600;background:#e5e7eb;color:#111">Unknown</span>';
 }
@@ -231,6 +241,7 @@ dashboardRouter.get("/", async (c) => {
     ? (selectedStatusQuery as DashboardStatusFilterKey)
     : "";
   const [runs, configs] = await Promise.all([getAllDispatchRuns(), listProjectConfigs()]);
+  const runsWithProdDeployment = await annotateRunsWithProdDeploymentStatus(runs);
   const projects = Array.from(
     new Set([
       ...configs.filter((c) => c.active).map((c) => c.project_key),
@@ -239,7 +250,7 @@ dashboardRouter.get("/", async (c) => {
   ).sort((a, b) => a.localeCompare(b));
   const ticketStatusByKey = new Map<string, { name: string; categoryKey: string }>();
   await Promise.all(
-    runs.map(async (run) => {
+    runsWithProdDeployment.map(async (run) => {
       try {
         const issue = await jira.getIssue(run.ticket_key, ["status"]);
         const status = issue.fields.status;
@@ -255,8 +266,8 @@ dashboardRouter.get("/", async (c) => {
     })
   );
   const projectFilteredRuns = selectedProject
-    ? runs.filter((run) => run.project_key === selectedProject)
-    : runs;
+    ? runsWithProdDeployment.filter((run) => run.project_key === selectedProject)
+    : runsWithProdDeployment;
   const visibleRuns = hideDone
     ? projectFilteredRuns.filter(
         (run) => ticketStatusByKey.get(run.ticket_key)?.categoryKey !== "done"
@@ -362,6 +373,7 @@ dashboardRouter.get("/", async (c) => {
       </td>
       <td>${ozTaskLink}</td>
       <td>${prConflictBadge(run.pr_has_conflicts, Boolean(run.pr_url))}</td>
+      <td>${prodDeploymentBadge(run.deployed_to_prod)}</td>
       <td>${actionLink}${blockedByHtml}</td>
       <td class="row-actions-cell">${rowActions}</td>
     </tr>`;
@@ -412,6 +424,7 @@ dashboardRouter.get("/", async (c) => {
         <th>Branch</th>
         <th>Oz Task</th>
         <th>PR Mergeability</th>
+        <th>Prod Deployment (Coolify)</th>
         <th>Links</th>
         <th></th>
       </tr>
@@ -419,7 +432,7 @@ dashboardRouter.get("/", async (c) => {
     <tbody>
       ${
         statusFilteredRuns.length === 0
-          ? `<tr><td colspan="12" style="text-align:center;color:#6b7280">${
+          ? `<tr><td colspan="13" style="text-align:center;color:#6b7280">${
               selectedStatus
                 ? `no ${selectedStatus} tasks available`
                 : "No runs found for the current filter"

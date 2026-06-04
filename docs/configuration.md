@@ -12,6 +12,9 @@ These are set once for the HyperDispatch instance (not per-project).
 | `WARP_API_KEY` | Yes | — | Oz API key for spawning agents |
 | `DATABASE_URL` | Yes | — | PostgreSQL connection string |
 | `GITHUB_TOKEN` | Yes | — | GitHub token for skill discovery and repo access |
+| `COOLIFY_BASE_URL` | No | — | Coolify base URL (for example `https://coolify.example.com`) used to check prod deployment status |
+| `COOLIFY_API_TOKEN` | No | — | Coolify API bearer token used for deployment lookups |
+| `COOLIFY_PRODUCTION_APP_UUID` | No | — | Coolify application UUID for the production HyperDispatch deployment target |
 | `MAX_CONCURRENT_AGENTS` | No | `4` | Maximum parallel agent runs |
 | `MAX_RUN_DURATION_HOURS` | No | `2` | Stale run threshold (hours) |
 | `PORT` | No | `3000` | HTTP server port |

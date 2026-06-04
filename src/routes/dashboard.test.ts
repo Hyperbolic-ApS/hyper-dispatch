@@ -4,6 +4,7 @@ import { makeDispatchRun } from "../test/fixtures.js";
 const getAllDispatchRunsMock = vi.fn();
 const listProjectConfigsMock = vi.fn();
 const getIssueMock = vi.fn();
+const annotateRunsWithProdDeploymentStatusMock = vi.fn();
 const deleteRunMock = vi.fn();
 const parseGithubPullRequestUrlMock = vi.fn();
 const getPullRequestStateMock = vi.fn();
@@ -24,13 +25,26 @@ vi.mock("../github/pull-requests.js", () => ({
   getPullRequestState: getPullRequestStateMock,
 }));
 
+vi.mock("../coolify/prod-deployment.js", () => ({
+  annotateRunsWithProdDeploymentStatus: annotateRunsWithProdDeploymentStatusMock,
+}));
+
 describe("dashboardRouter", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     listProjectConfigsMock.mockResolvedValue([]);
+    annotateRunsWithProdDeploymentStatusMock.mockImplementation(async (runs: unknown[]) =>
+      runs.map((run) => ({ ...(run as object), deployed_to_prod: null }))
+    );
   });
   it("includes an immediate refresh trigger when the tab becomes active", async () => {
     getAllDispatchRunsMock.mockResolvedValue([makeDispatchRun()]);
+    annotateRunsWithProdDeploymentStatusMock.mockImplementation(async (runs) =>
+      runs.map((run: ReturnType<typeof makeDispatchRun>) => ({
+        ...run,
+        deployed_to_prod: false,
+      }))
+    );
     getIssueMock.mockResolvedValue({
       fields: { status: { name: "To Do", statusCategory: { key: "new" } } },
     });
@@ -44,6 +58,8 @@ describe("dashboardRouter", () => {
     expect(html).toContain("previousVisibilityState !== \"visible\"");
     expect(html).toContain("window.location.reload();");
     expect(html).toContain("⚙ Configure</a>");
+    expect(html).toContain("Prod Deployment (Coolify)");
+    expect(html).toContain("Not deployed");
   });
 
   it("renders a project dropdown and filters rows by selected project", async () => {
