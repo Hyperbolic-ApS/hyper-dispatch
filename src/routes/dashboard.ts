@@ -34,6 +34,15 @@ function formatDate(d: Date | null): string {
   return dashboardDateTimeFormatter.format(d);
 }
 
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
 const dashboardStatusFilterOptions = [
   { key: "running", label: "Running", style: "background:#3b82f6;color:#fff", statuses: ["running"] },
   { key: "queued", label: "Queued", style: "background:#eab308;color:#000", statuses: ["queued"] },
@@ -215,6 +224,9 @@ dashboardRouter.get("/", async (c) => {
   const selectedStatusQuery = c.req.query("status") ?? "";
   const notice = c.req.query("notice") ?? "";
   const noticeType = c.req.query("noticeType") === "error" ? "error" : "success";
+  const escapedSelectedProject = escapeHtml(selectedProject);
+  const escapedSelectedStatus = escapeHtml(selectedStatusQuery);
+  const escapedNotice = escapeHtml(notice);
   const selectedStatus = dashboardStatusFilterKeys.has(selectedStatusQuery as DashboardStatusFilterKey)
     ? (selectedStatusQuery as DashboardStatusFilterKey)
     : "";
@@ -279,7 +291,7 @@ dashboardRouter.get("/", async (c) => {
     `<option value=""${selectedProject === "" ? " selected" : ""}>All Projects</option>`,
     ...projects.map(
       (project) =>
-        `<option value="${project}"${selectedProject === project ? " selected" : ""}>${project}</option>`
+        `<option value="${escapeHtml(project)}"${selectedProject === project ? " selected" : ""}>${escapeHtml(project)}</option>`
     ),
   ].join("");
 
@@ -319,9 +331,9 @@ dashboardRouter.get("/", async (c) => {
       <button class="row-menu-btn" type="button" data-row-menu-button aria-label="Open actions for ${run.ticket_key}" aria-expanded="false">⋮</button>
       <div class="row-menu-list" role="menu">
         <form method="POST" action="/dashboard/${run.ticket_key}/delete" style="margin:0;">
-          ${selectedProject ? `<input type="hidden" name="project" value="${selectedProject}">` : ""}
+          ${selectedProject ? `<input type="hidden" name="project" value="${escapedSelectedProject}">` : ""}
           ${hideDone ? '<input type="hidden" name="hideDone" value="1">' : ""}
-          ${selectedStatus ? `<input type="hidden" name="status" value="${selectedStatus}">` : ""}
+          ${selectedStatus ? `<input type="hidden" name="status" value="${escapeHtml(selectedStatus)}">` : ""}
           <button class="row-menu-delete" type="submit" role="menuitem">Delete</button>
         </form>
       </div>
@@ -373,7 +385,7 @@ dashboardRouter.get("/", async (c) => {
           ${projectOptionsHtml}
         </select>
         ${hideDone ? '<input type="hidden" name="hideDone" value="1">' : ""}
-        ${selectedStatus ? `<input type="hidden" name="status" value="${selectedStatus}">` : ""}
+        ${selectedStatus ? `<input type="hidden" name="status" value="${escapedSelectedStatus}">` : ""}
       </form>
       <a href="${hideDoneToggleHref}" class="btn btn-secondary">${hideDone ? "Show Done" : "Hide Done"}</a>
       <a href="/config" class="btn btn-secondary">⚙ Configure</a>
@@ -382,7 +394,7 @@ dashboardRouter.get("/", async (c) => {
   <div class="stats">
     ${statsHtml}
   </div>
-  ${notice ? `<div class="notice notice-${noticeType}">${notice}</div>` : ""}
+  ${notice ? `<div class="notice notice-${noticeType}">${escapedNotice}</div>` : ""}
   <table>
     <thead>
       <tr>
