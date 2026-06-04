@@ -82,6 +82,30 @@ async function reconcilePollingState(): Promise<void> {
 }
 
 const SCHEDULER_INTERVAL_MS = 30_000;
+async function rollbackClaimToQueued(
+  ticketKey: string,
+  context: string
+): Promise<void> {
+  try {
+    await releaseSpawnClaim(ticketKey);
+  } catch (rollbackErr) {
+    console.error(
+      `[scheduler] Failed to release spawn claim for ${ticketKey} (${context}):`,
+      rollbackErr
+    );
+    try {
+      await updateRunStatus(ticketKey, {
+        status: "failed",
+        error: `claim rollback failed (${context})`,
+      });
+    } catch (updateErr) {
+      console.error(
+        `[scheduler] Failed to persist fallback failure state for ${ticketKey}:`,
+        updateErr
+      );
+    }
+  }
+}
 
 /**
  * Process the queue: spawn agents for queued runs up to the concurrency cap.
@@ -118,7 +142,7 @@ export async function processQueue(): Promise<number> {
       console.warn(
         `[scheduler] Skipping ${run.ticket_key}: project ${run.project_key} is not configured.`
       );
-      await releaseSpawnClaim(run.ticket_key);
+      await rollbackClaimToQueued(run.ticket_key, "missing project config");
       continue;
     }
 
@@ -126,7 +150,7 @@ export async function processQueue(): Promise<number> {
     try {
       issue = await jira.getIssue(run.ticket_key);
     } catch (err) {
-      await releaseSpawnClaim(run.ticket_key);
+      await rollbackClaimToQueued(run.ticket_key, "jira issue fetch failure");
       console.error(
         `[scheduler] Failed to fetch Jira issue for ${run.ticket_key}:`,
         err
@@ -148,6 +172,10 @@ export async function processQueue(): Promise<number> {
         console.error(
           `[scheduler] Failed to mark ${run.ticket_key} as failed after spawn error:`,
           updateErr
+        );
+        await rollbackClaimToQueued(
+          run.ticket_key,
+          "post-spawn status persistence failure"
         );
       }
       console.error(

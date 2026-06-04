@@ -178,6 +178,36 @@ describe("processQueue", () => {
     warnSpy.mockRestore();
   });
 
+  it("continues processing when releaseSpawnClaim fails on a pre-spawn rollback path", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const project = makeProjectConfig({ project_key: "HYDI" });
+    mockListActiveProjectConfigs
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([project]);
+    mockGetRunsByStatus.mockResolvedValue([
+      makeDispatchRun({ ticket_key: "OPS-1", project_key: "OPS" }),
+      makeDispatchRun({ ticket_key: "HYDI-2", project_key: "HYDI" }),
+    ]);
+    mockReleaseSpawnClaim
+      .mockRejectedValueOnce(new Error("release failed"))
+      .mockResolvedValue(undefined);
+
+    const spawned = await processQueue();
+
+    expect(spawned).toBe(1);
+    expect(mockUpdateRunStatus).toHaveBeenCalledWith("OPS-1", {
+      status: "failed",
+      error: "claim rollback failed (missing project config)",
+    });
+    expect(mockSpawnAgent).toHaveBeenCalledWith(
+      "HYDI-2",
+      project,
+      expect.any(Object)
+    );
+    expect(errorSpy).toHaveBeenCalled();
+    errorSpy.mockRestore();
+  });
+
   it("continues to later queued runs if spawnAgent throws", async () => {
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     const project = makeProjectConfig({ project_key: "HYDI" });
@@ -224,6 +254,34 @@ describe("processQueue", () => {
       status: "failed",
       error: "post-run failure",
     });
+    errorSpy.mockRestore();
+  });
+
+  it("falls back to release claim when post-spawn status update fails", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const project = makeProjectConfig({ project_key: "HYDI" });
+    mockListActiveProjectConfigs
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([project]);
+    mockGetRunsByStatus.mockResolvedValue([
+      makeDispatchRun({ ticket_key: "HYDI-1", project_key: "HYDI" }),
+      makeDispatchRun({ ticket_key: "HYDI-2", project_key: "HYDI" }),
+    ]);
+    mockSpawnAgent
+      .mockRejectedValueOnce(new Error("spawn failed"))
+      .mockResolvedValueOnce(undefined);
+    mockUpdateRunStatus.mockRejectedValueOnce(new Error("status write failed"));
+
+    const spawned = await processQueue();
+
+    expect(spawned).toBe(1);
+    expect(mockReleaseSpawnClaim).toHaveBeenCalledWith("HYDI-1");
+    expect(mockSpawnAgent).toHaveBeenCalledWith(
+      "HYDI-2",
+      project,
+      expect.any(Object)
+    );
+    expect(errorSpy).toHaveBeenCalled();
     errorSpy.mockRestore();
   });
 
