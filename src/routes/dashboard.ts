@@ -325,7 +325,11 @@ dashboardRouter.get("/", async (c) => {
       run.status === "running" && run.session_link
         ? `<a href="${run.session_link}" target="_blank">Session</a>`
         : run.status === "succeeded" && run.pr_url
-          ? `<a href="${run.pr_url}" target="_blank">PR</a>`
+          ? (() => {
+              const parsedPr = parseGithubPullRequestUrl(run.pr_url ?? "");
+              const prLabel = parsedPr ? `PR #${parsedPr.pullNumber}` : "PR";
+              return `<a href="${run.pr_url}" target="_blank">${prLabel}</a>`;
+            })()
           : "-";
     const rowActions = `<div class="row-menu" data-row-menu>
       <button class="row-menu-btn" type="button" data-row-menu-button aria-label="Open actions for ${run.ticket_key}" aria-expanded="false">⋮</button>

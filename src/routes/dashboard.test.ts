@@ -329,4 +329,25 @@ describe("dashboardRouter", () => {
     expect(res.headers.get("location")).toContain("noticeType=success");
     expect(deleteRunMock).toHaveBeenCalledWith("HYDI-48");
   });
+
+  it("renders PR link with pull request number when available", async () => {
+    getAllDispatchRunsMock.mockResolvedValue([
+      makeDispatchRun({
+        ticket_key: "HYDI-51",
+        status: "succeeded",
+        pr_url: "https://github.com/org/repo/pull/123",
+      }),
+    ]);
+    getIssueMock.mockResolvedValue({
+      fields: { status: { name: "Done", statusCategory: { key: "done" } } },
+    });
+    parseGithubPullRequestUrlMock.mockReturnValue({ owner: "org", repo: "repo", pullNumber: 123 });
+
+    const { dashboardRouter } = await import("./dashboard.js");
+    const res = await dashboardRouter.request("http://localhost/");
+    const html = await res.text();
+
+    expect(res.status).toBe(200);
+    expect(html).toContain('<a href="https://github.com/org/repo/pull/123" target="_blank">PR #123</a>');
+  });
 });

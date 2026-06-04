@@ -19,7 +19,7 @@ Displays all tracked dispatch runs in a table with:
 - Oz task link (opens the run task/session in Oz when available)
 - PR mergeability badge (`Merge conflicts`, `No conflicts`, or `Unknown` once a PR exists)
 - Session link (clickable, for live runs — opens Oz session)
-- PR link (for completed runs)
+- PR link with PR number (for completed runs, e.g. `PR #123` when parseable)
 - Compact row action menu (`⋮`) on the right side with `Delete`
   - Deletion is blocked when the run has an open GitHub PR, with an inline error prompt to close the PR first
   - Deletion is allowed when no PR exists or the linked PR is already closed
