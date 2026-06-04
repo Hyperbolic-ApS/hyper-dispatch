@@ -689,6 +689,45 @@ describe("checkRuns", () => {
     expect(jiraTransitionIssueMock).toHaveBeenCalledWith("HYDI-17", "200");
   });
 
+  it("transitions to custom Done column name when configured", async () => {
+    getRunsByStatusMock
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([
+        makeDispatchRun({
+          ticket_key: "HYDI-21",
+          status: "succeeded",
+          pr_url: "https://github.com/org/repo/pull/21",
+          project_key: "HYDI",
+        }),
+      ]);
+    jiraGetIssueMock.mockResolvedValue({
+      fields: { status: { statusCategory: { key: "in-progress" } } },
+    });
+    githubPullGetMock.mockResolvedValue({
+      data: {
+        merged_at: "2026-05-01T00:00:00.000Z",
+        mergeable_state: "clean",
+        mergeable: true,
+      },
+    });
+    getProjectConfigMock.mockResolvedValue(
+      makeProjectConfig({ done_column_name: "Completed" })
+    );
+    jiraGetTransitionsMock.mockResolvedValue({
+      transitions: [
+        { id: "201", name: "Done" },
+        { id: "202", name: "Completed" },
+      ],
+    });
+    getRunsBlockedByMock.mockResolvedValue([]);
+
+    const { checkRuns } = await importMonitor();
+    await checkRuns();
+
+    // Should use the configured "Completed" transition, not the hard-coded "Done"
+    expect(jiraTransitionIssueMock).toHaveBeenCalledWith("HYDI-21", "202");
+  });
+
   it("warns without transitioning when no Done transition is available", async () => {
     getRunsByStatusMock
       .mockResolvedValueOnce([])
