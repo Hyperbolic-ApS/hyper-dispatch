@@ -94,8 +94,7 @@ Workflow file: `.github/workflows/oz-pr-review-commenting.yml`
 - **Workflow permissions**: `contents: read`, `issues: write`, `pull-requests: write`
 - **Conditional secrets** (only required when the PR title or branch name references a Jira ticket key, e.g. `PROJ-123`):
   - `JIRA_API_TOKEN` — Atlassian API token
-  - `JIRA_EMAIL` — Atlassian account email
-  - `JIRA_SITE` (var) — Atlassian site name (e.g. `your-org`)
+  - `JIRA_CLOUD_ID` (var) — Atlassian cloud ID used by the `jira-view` helper API path
 
 ## Continuous Integration
 
@@ -113,9 +112,8 @@ Workflow file: `.github/workflows/ci.yml`
 1. Checks out the repository.
 2. Sets up Node.js 20 with npm dependency caching.
 3. Runs `npm ci`.
-4. Runs `npm test`.
-5. Runs `npm run test:coverage`.
-6. Runs `npm run typecheck`.
+4. Runs `npm run test:coverage` (single test execution with coverage output).
+5. Runs `npm run typecheck`.
 
 ## Default Worker Skill
 
