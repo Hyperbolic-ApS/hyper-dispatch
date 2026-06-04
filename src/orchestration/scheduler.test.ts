@@ -8,6 +8,7 @@ import {
 const {
   mockClaimRunForSpawn,
   mockReleaseSpawnClaim,
+  mockUpdateRunStatus,
   mockEnv,
   mockGetActiveRunCount,
   mockGetRunsByStatus,
@@ -32,6 +33,7 @@ const {
   return {
     mockClaimRunForSpawn: vi.fn(),
     mockReleaseSpawnClaim: vi.fn(),
+    mockUpdateRunStatus: vi.fn(),
     mockEnv: { MAX_CONCURRENT_AGENTS: 4 },
     mockGetActiveRunCount: vi.fn(),
     mockGetRunsByStatus: vi.fn(),
@@ -53,6 +55,7 @@ vi.mock("../config/env.js", () => ({
 vi.mock("../db/queries.js", () => ({
   claimRunForSpawn: mockClaimRunForSpawn,
   releaseSpawnClaim: mockReleaseSpawnClaim,
+  updateRunStatus: mockUpdateRunStatus,
   getActiveRunCount: mockGetActiveRunCount,
   getRunsByStatus: mockGetRunsByStatus,
   listActiveProjectConfigs: mockListActiveProjectConfigs,
@@ -82,6 +85,7 @@ describe("processQueue", () => {
     mockEnv.MAX_CONCURRENT_AGENTS = 4;
     mockClaimRunForSpawn.mockResolvedValue(true);
     mockReleaseSpawnClaim.mockResolvedValue(undefined);
+    mockUpdateRunStatus.mockResolvedValue(makeDispatchRun());
     mockGetActiveRunCount.mockResolvedValue(0);
     mockGetRunsByStatus.mockResolvedValue([]);
     mockListActiveProjectConfigs.mockResolvedValue([]);
@@ -192,8 +196,34 @@ describe("processQueue", () => {
 
     expect(spawned).toBe(1);
     expect(mockSpawnAgent).toHaveBeenCalledTimes(2);
-    expect(mockReleaseSpawnClaim).toHaveBeenCalledWith("HYDI-1");
+    expect(mockReleaseSpawnClaim).not.toHaveBeenCalledWith("HYDI-1");
+    expect(mockUpdateRunStatus).toHaveBeenCalledWith("HYDI-1", {
+      status: "failed",
+      error: "spawn failed",
+    });
     expect(errorSpy).toHaveBeenCalled();
+    errorSpy.mockRestore();
+  });
+
+  it("marks a claimed run failed if spawnAgent fails after claim", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const project = makeProjectConfig({ project_key: "HYDI" });
+    mockListActiveProjectConfigs
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([project]);
+    mockGetRunsByStatus.mockResolvedValue([
+      makeDispatchRun({ ticket_key: "HYDI-1", project_key: "HYDI" }),
+    ]);
+    mockSpawnAgent.mockRejectedValueOnce(new Error("post-run failure"));
+
+    const spawned = await processQueue();
+
+    expect(spawned).toBe(0);
+    expect(mockReleaseSpawnClaim).not.toHaveBeenCalledWith("HYDI-1");
+    expect(mockUpdateRunStatus).toHaveBeenCalledWith("HYDI-1", {
+      status: "failed",
+      error: "post-run failure",
+    });
     errorSpy.mockRestore();
   });
 

@@ -9,6 +9,7 @@ import {
   listActiveProjectConfigs,
   releaseSpawnClaim,
   type ProjectConfig,
+  updateRunStatus,
 } from "../db/queries.js";
 import { spawnAgent } from "./spawner.js";
 import { syncTicketInToDo } from "./ticket-sync.js";
@@ -107,30 +108,52 @@ export async function processQueue(): Promise<number> {
 
   for (const run of queued) {
     if (spawned >= slots) break;
-    try {
-      const claimed = await claimRunForSpawn(run.ticket_key);
-      if (!claimed) {
-        continue;
-      }
-      const config = projectsByKey.get(run.project_key);
-      if (!config) {
-        console.warn(
-          `[scheduler] Skipping ${run.ticket_key}: project ${run.project_key} is not configured.`
-        );
-        await releaseSpawnClaim(run.ticket_key);
-        continue;
-      }
+    const claimed = await claimRunForSpawn(run.ticket_key);
+    if (!claimed) {
+      continue;
+    }
 
-      const issue = await jira.getIssue(run.ticket_key);
+    const config = projectsByKey.get(run.project_key);
+    if (!config) {
+      console.warn(
+        `[scheduler] Skipping ${run.ticket_key}: project ${run.project_key} is not configured.`
+      );
+      await releaseSpawnClaim(run.ticket_key);
+      continue;
+    }
+
+    let issue;
+    try {
+      issue = await jira.getIssue(run.ticket_key);
+    } catch (err) {
+      await releaseSpawnClaim(run.ticket_key);
+      console.error(
+        `[scheduler] Failed to fetch Jira issue for ${run.ticket_key}:`,
+        err
+      );
+      continue;
+    }
+
+    try {
       await spawnAgent(run.ticket_key, config, issue);
       spawned++;
     } catch (err) {
-      await releaseSpawnClaim(run.ticket_key);
+      try {
+        await updateRunStatus(run.ticket_key, {
+          status: "failed",
+          error:
+            err instanceof Error ? err.message : "spawnAgent failed after claim",
+        });
+      } catch (updateErr) {
+        console.error(
+          `[scheduler] Failed to mark ${run.ticket_key} as failed after spawn error:`,
+          updateErr
+        );
+      }
       console.error(
         `[scheduler] Failed to spawn agent for ${run.ticket_key}:`,
         err
       );
-      // Continue processing remaining queued runs
     }
   }
 
