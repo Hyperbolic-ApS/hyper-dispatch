@@ -6,9 +6,9 @@ These are set once for the HyperDispatch instance (not per-project).
 
 | Variable | Required | Default | Description |
 |---|---|---|---|
-| `JIRA_BASE_URL` | Yes | — | Jira Cloud site URL (e.g., `https://your-site.atlassian.net`) |
-| `JIRA_EMAIL` | Yes | — | Service account email for Jira API auth |
-| `JIRA_API_TOKEN` | Yes | — | Jira API token |
+| `JIRA_SITE_URL` | Yes | — | Jira Cloud site URL for browse links (e.g., `https://your-site.atlassian.net`) |
+| `JIRA_CLOUD_ID` | Yes | — | Jira Cloud ID (UUID from `https://api.atlassian.com/ex/jira/<CLOUD-ID>`) |
+| `JIRA_API_TOKEN` | Yes | — | Service account bearer token (manage at admin.atlassian.com → API keys) |
 | `WARP_API_KEY` | Yes | — | Oz API key for spawning agents |
 | `DATABASE_URL` | Yes | — | PostgreSQL connection string |
 | `GITHUB_TOKEN` | Yes | — | GitHub token for skill discovery and repo access |
@@ -25,7 +25,9 @@ Key fields:
 - **Preview deployment URL** — optional Coolify preview host (no scheme), used to generate `https://pr-{N}.{host}` links.
 - **Default model** — LLM model for agent runs. Can be overridden per-ticket via a Jira custom field.
 - **Model override field** — Jira custom field ID (e.g., `customfield_10050`). If a ticket has a value in this field, it overrides the project default.
+- **Jira column name mappings** — per-project names for Backlog, To Do, In Progress, In Review, and Done. Defaults match Jira defaults, but can be customized for projects that renamed workflow columns/statuses.
 - **Skills** — selected from the GitHub repo's skill directories via the config UI.
+- **MCP servers JSON** — optional JSON object of MCP server definitions. On save, the config UI validates that the value is valid JSON and is an object; malformed JSON shows an error with the failing line number.
 
 ## Jira Automation Setup
 
@@ -41,8 +43,8 @@ One global automation rule is needed (covers all projects):
        ```json
        {
          "issueKey": "{{issue.key}}",
-         "projectKey": "{{issue.fields.project.key}}",
-         "toStatus": "{{transition.to_status.name}}"
+         "projectKey": "{{issue.project.key}}",
+         "transitionTarget": "{{issue.status.name}}"
        }
        ```
 

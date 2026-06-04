@@ -11,14 +11,14 @@ Receives Jira Automation webhook payloads on issue transitions.
 {
   "issueKey": "PROJ-123",
   "projectKey": "PROJ",
-  "toStatus": "To Do"
+  "transitionTarget": "To Do"
 }
 ```
 
 **Behavior:**
 - Looks up `projectKey` in `project_configs`. Ignores if not configured or inactive.
-- `toStatus = "To Do"` → dependency check → schedule or block.
-- `toStatus = "Done"` → re-evaluate any tickets blocked by this issue.
+- `transitionTarget = {to_do_column_name}` for that project → dependency check → schedule or block.
+- `transitionTarget = {done_column_name}` for that project → re-evaluate any tickets blocked by this issue.
 
 **Response:** `200 OK` (acknowledgement, processing is async).
 
@@ -41,6 +41,7 @@ Returns all tracked dispatch runs as JSON.
     "status": "running",
     "model": "claude-sonnet-4-20250514",
     "runId": "abc-123",
+    "prHasConflicts": null,
     "sessionLink": "https://...",
     "spawnedAt": "2025-01-01T12:00:00Z",
     "runtime": "12m"
@@ -61,6 +62,7 @@ View/edit form for a project (HTML page).
 
 ### `POST /config`
 Create a new project configuration.
+If required fields are missing (`project_key`, `jira_cloud_id`, `board_id`, `oz_env_id`, `github_repo`), the server responds with `400` and re-renders the form HTML with an inline error message.
 
 ### `PUT /config/:projectKey`
 Update an existing project configuration.
@@ -68,7 +70,7 @@ Update an existing project configuration.
 ### `DELETE /config/:projectKey`
 Deactivate a project configuration.
 
-### `POST /config/:projectKey/validate`
+### `GET /config/:projectKey/validate`
 Run Jira board validation for a project. Returns pass/fail per check.
 
 ## Skill Discovery API
@@ -89,6 +91,8 @@ Notes:
 - `repo` is required.
 - `projectKey` is optional and is used to look up a saved per-project token fallback.
 - `githubPat` is optional and, when present, is used immediately for discovery.
+- Returns `400` for malformed JSON payloads or invalid `repo` format.
+- Propagates upstream GitHub status codes when available (for example, `404` for missing repositories).
 
 **Response:**
 ```json

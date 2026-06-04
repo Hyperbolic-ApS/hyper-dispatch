@@ -77,6 +77,11 @@ export interface JiraIssue {
   fields: JiraIssueFields;
 }
 
+export interface JiraSearchResponse {
+  issues: JiraIssue[];
+  nextPageToken?: string;
+}
+
 export interface JiraTransition {
   id: string;
   name: string;
@@ -88,27 +93,6 @@ export interface JiraTransition {
 
 export interface JiraTransitionsResponse {
   transitions: JiraTransition[];
-}
-
-export interface JiraBoardColumnConfig {
-  columns: Array<{
-    name: string;
-    statuses: Array<{ id: string }>;
-  }>;
-}
-
-export interface JiraBoardConfig {
-  id: number;
-  name: string;
-  type: string;
-  columnConfig: JiraBoardColumnConfig;
-  estimation?: {
-    type: string;
-    field?: {
-      fieldId: string;
-      displayName: string;
-    };
-  };
 }
 
 export interface JiraField {

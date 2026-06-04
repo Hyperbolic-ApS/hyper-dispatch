@@ -42,6 +42,15 @@ See [configuration.md](./configuration.md) for the Jira Automation rule setup. T
   "transitionTarget": "To Do"
 }
 ```
+`transitionTarget` is matched against configured per-project column/status names, not hardcoded labels:
+- `to_do_column_name` triggers queueing logic.
+- `done_column_name` triggers unblock checks.
+
+## Polling Backfill
+
+In addition to webhook-triggered ingestion, the scheduler loop performs a Jira reconciliation poll each cycle:
+- It queries each active project's configured `to_do_column_name` and auto-ingests tickets that are in To Do but missing from `dispatch_runs` (same cycle/dependency checks as webhook ingestion).
+- It verifies tracked `dispatch_runs` tickets still exist in Jira and removes rows for issues that now return Jira `404` (deleted issues), so stale dashboard entries are cleaned up automatically.
 
 ## PR Merge to Done
 
@@ -50,8 +59,8 @@ When a worker run completes successfully, HyperDispatch stores the PR URL artifa
 ## Board Validation
 
 The validator checks:
-1. Board has required columns: Backlog, To Do, In Progress, In Review, Done.
+1. Board has all project-configured required columns (`backlog_column_name`, `to_do_column_name`, `in_progress_column_name`, `in_review_column_name`, `done_column_name`).
 2. Model override custom field exists (if configured).
-3. Workflow statuses include the required ones.
+3. Workflow statuses include those same configured mapped names.
 
 The Jira API is read-only for board configuration — HyperDispatch reports what's missing but cannot auto-create columns.

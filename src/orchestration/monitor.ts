@@ -2,9 +2,15 @@ import { Octokit } from "@octokit/rest";
 import OzAPI from "oz-agent-sdk";
 import type { ArtifactItem } from "oz-agent-sdk/resources/agent/runs.js";
 import { env } from "../config/env.js";
-import { getProjectConfig } from "../db/config-queries.js";
-import { getRunsByStatus, updateRunStatus } from "../db/queries.js";
 import * as jira from "../jira/client.js";
+import {
+  getRunsByStatus,
+  updateRunStatus,
+  getProjectConfig,
+  getRunsBlockedBy,
+  removeBlocker,
+} from "../db/queries.js";
+import { resolveJiraColumnMappings } from "../jira/columns.js";
 import { buildPreviewUrl, parseGitHubPrUrl } from "../preview/url.js";
 
 const MONITOR_INTERVAL_MS = 30_000;
@@ -64,18 +70,61 @@ async function postPreviewComment(
 }
 
 /**
- * Extract the GitHub PR URL from a run's artifact list, if present.
+ * Extract a GitHub pull-request URL from a run status message.
  */
-function extractPrUrl(artifacts: ArtifactItem[] | undefined): string | null {
-  if (!artifacts) return null;
-  for (const artifact of artifacts) {
-    if (artifact.artifact_type === "PULL_REQUEST") {
-      return artifact.data.url ?? null;
+export function extractPrUrlFromStatusMessage(
+  statusMessage: string | null | undefined
+): string | null {
+  if (!statusMessage) return null;
+
+  const candidates = statusMessage.match(/https:\/\/github\.com\/[^\s)]+/gi) ?? [];
+  for (const candidate of candidates) {
+    const normalized = candidate.replace(/[.,);]+$/, "");
+    if (parseGithubPullRequestUrl(normalized)) {
+      return normalized;
     }
   }
   return null;
 }
 
+/**
+ * Extract the GitHub PR URL from run artifacts, falling back to status text.
+ */
+export function extractPrUrl(
+  artifacts: ArtifactItem[] | undefined,
+  statusMessage?: string | null
+): string | null {
+  if (artifacts) {
+    for (const artifact of artifacts) {
+      if (artifact.artifact_type !== "PULL_REQUEST") continue;
+      const artifactUrl = artifact.data.url;
+      if (typeof artifactUrl === "string" && parseGithubPullRequestUrl(artifactUrl)) {
+        return artifactUrl;
+      }
+    }
+  }
+  return extractPrUrlFromStatusMessage(statusMessage);
+}
+
+export function parseGithubPullRequestUrl(
+  prUrl: string
+): { owner: string; repo: string; pullNumber: number } | null {
+  try {
+    const parsedUrl = new URL(prUrl);
+    const parts = parsedUrl.pathname.split("/").filter(Boolean);
+    if (parts.length < 4) return null;
+
+    const [owner, repo, type, pullNumberRaw] = parts;
+    if (!owner || !repo || type !== "pull" || !pullNumberRaw) return null;
+
+    const pullNumber = Number.parseInt(pullNumberRaw, 10);
+    if (!Number.isFinite(pullNumber)) return null;
+
+    return { owner, repo, pullNumber };
+  } catch {
+    return null;
+  }
+}
 
 async function transitionMergedPrsToDone(): Promise<void> {
   const succeededRuns = await getRunsByStatus("succeeded");
@@ -114,6 +163,11 @@ async function transitionMergedPrsToDone(): Promise<void> {
         repo: parsed.repo,
         pull_number: parsed.prNumber,
       });
+      const hasMergeConflicts =
+        pullRequest.mergeable_state === "dirty" || pullRequest.mergeable === false;
+      await updateRunStatus(run.ticket_key, {
+        pr_has_conflicts: hasMergeConflicts,
+      });
 
       if (!pullRequest.merged_at) continue;
 
@@ -127,8 +181,21 @@ async function transitionMergedPrsToDone(): Promise<void> {
       }
 
       await jira.transitionIssue(run.ticket_key, doneTransition.id);
+      let unblockedCount = 0;
+      try {
+        const blockedRuns = await getRunsBlockedBy(run.ticket_key);
+        for (const blockedRun of blockedRuns) {
+          const updated = await removeBlocker(blockedRun.ticket_key, run.ticket_key);
+          if (updated) unblockedCount++;
+        }
+      } catch (err) {
+        console.warn(
+          `[monitor] Failed to unblock dependents for ${run.ticket_key}:`,
+          err
+        );
+      }
       console.log(
-        `[monitor] ${run.ticket_key} moved to Done after PR merge: ${run.pr_url}`
+        `[monitor] ${run.ticket_key} moved to Done after PR merge: ${run.pr_url} (unblocked: ${unblockedCount})`
       );
     } catch (err) {
       console.warn(
@@ -163,7 +230,7 @@ export async function checkRuns(): Promise<void> {
         const state = ozRun.state;
 
         if (state === "SUCCEEDED") {
-          const prUrl = extractPrUrl(ozRun.artifacts);
+          const prUrl = extractPrUrl(ozRun.artifacts, ozRun.status_message?.message);
           const sessionLink = ozRun.session_link ?? null;
 
           await updateRunStatus(run.ticket_key, {
@@ -175,9 +242,17 @@ export async function checkRuns(): Promise<void> {
 
           // Transition Jira to "In Review" (best-effort)
           try {
+            const config = await getProjectConfig(run.project_key);
+            const columnMappings = resolveJiraColumnMappings({
+              backlog: config?.backlog_column_name,
+              toDo: config?.to_do_column_name,
+              inProgress: config?.in_progress_column_name,
+              inReview: config?.in_review_column_name,
+              done: config?.done_column_name,
+            });
             const transitions = await jira.getTransitions(run.ticket_key);
             const inReview = transitions.transitions.find(
-              (transition) => transition.name === "In Review"
+              (t) => t.name.trim().toLowerCase() === columnMappings.inReview.toLowerCase()
             );
             if (inReview) {
               await jira.transitionIssue(run.ticket_key, inReview.id);

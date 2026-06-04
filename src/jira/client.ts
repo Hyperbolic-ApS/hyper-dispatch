@@ -1,13 +1,12 @@
 import { env } from "../config/env.js";
 import type {
   JiraIssue,
-  JiraBoardConfig,
   JiraField,
   JiraStatus,
+  JiraSearchResponse,
   JiraTransitionsResponse,
 } from "./types.js";
-
-class JiraApiError extends Error {
+export class JiraApiError extends Error {
   constructor(
     public readonly status: number,
     public readonly body: string,
@@ -19,21 +18,25 @@ class JiraApiError extends Error {
 }
 
 function buildAuthHeader(): string {
-  const credentials = `${env.JIRA_EMAIL}:${env.JIRA_API_TOKEN}`;
-  return `Basic ${Buffer.from(credentials).toString("base64")}`;
+  return `Bearer ${env.JIRA_API_TOKEN}`;
+}
+
+function buildBaseUrl(): string {
+  return `https://api.atlassian.com/ex/jira/${env.JIRA_CLOUD_ID}`;
 }
 
 async function jiraFetch<T>(
   path: string,
   options: RequestInit = {}
 ): Promise<T> {
-  const url = `${env.JIRA_BASE_URL}${path}`;
+  const url = `${buildBaseUrl()}${path}`;
   const response = await fetch(url, {
     ...options,
     headers: {
       Authorization: buildAuthHeader(),
       "Content-Type": "application/json",
       Accept: "application/json",
+      "Accept-Language": "en",
       ...(options.headers ?? {}),
     },
   });
@@ -108,15 +111,6 @@ export async function transitionIssue(
 }
 
 /**
- * Fetch the board configuration for an Agile board.
- */
-export async function getBoardConfig(boardId: number): Promise<JiraBoardConfig> {
-  return jiraFetch<JiraBoardConfig>(
-    `/rest/agile/1.0/board/${boardId}/configuration`
-  );
-}
-
-/**
  * Fetch all fields defined in the Jira instance.
  */
 export async function getFields(): Promise<JiraField[]> {
@@ -128,4 +122,40 @@ export async function getFields(): Promise<JiraField[]> {
  */
 export async function getStatuses(): Promise<JiraStatus[]> {
   return jiraFetch<JiraStatus[]>("/rest/api/3/status");
+}
+
+function escapeJqlValue(raw: string): string {
+  return raw.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+}
+
+/**
+ * Find issues for a Jira project currently in the provided status name.
+ */
+export async function searchIssuesInStatus(
+  projectKey: string,
+  statusName: string,
+  fields: string[] = ["summary", "priority", "status"]
+): Promise<JiraIssue[]> {
+  const jql = `project = "${escapeJqlValue(projectKey)}" AND status = "${escapeJqlValue(statusName)}"`;
+  const pageSize = 100;
+  const issues: JiraIssue[] = [];
+  let nextPageToken: string | undefined;
+
+  while (true) {
+    const page = await jiraFetch<JiraSearchResponse>("/rest/api/3/search/jql", {
+      method: "POST",
+      body: JSON.stringify({
+        jql,
+        maxResults: pageSize,
+        fields,
+        ...(nextPageToken ? { nextPageToken } : {}),
+      }),
+    });
+
+    issues.push(...page.issues);
+    if (!page.nextPageToken) break;
+    nextPageToken = page.nextPageToken;
+  }
+
+  return issues;
 }
