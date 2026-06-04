@@ -1,8 +1,11 @@
 import { Hono } from "hono";
 import { getAllDispatchRuns, listProjectConfigs } from "../db/config-queries.js";
+import { deleteRun } from "../db/queries.js";
 import { env } from "../config/env.js";
+import { resolveProjectTokens } from "../config/env.js";
 import { brandIconSvg, faviconDataUri } from "./branding.js";
 import * as jira from "../jira/client.js";
+import { getPullRequestState, parseGithubPullRequestUrl } from "../github/pull-requests.js";
 
 export const dashboardRouter = new Hono();
 const dashboardDateTimeFormatter = new Intl.DateTimeFormat(undefined, {
@@ -87,6 +90,20 @@ function prConflictBadge(hasConflicts: boolean | null, hasPr: boolean): string {
   return '<span style="padding:2px 8px;border-radius:4px;font-size:0.75rem;font-weight:600;background:#e5e7eb;color:#111">Unknown</span>';
 }
 
+
+function buildDashboardRedirect(
+  filters: { project?: string | null; hideDone?: string | null; status?: string | null },
+  notice: { type: "success" | "error"; message: string }
+): string {
+  const params = new URLSearchParams();
+  if (filters.project) params.set("project", filters.project);
+  if (filters.hideDone === "1") params.set("hideDone", "1");
+  if (filters.status) params.set("status", filters.status);
+  params.set("noticeType", notice.type);
+  params.set("notice", notice.message);
+  return `/dashboard?${params.toString()}`;
+}
+
 const CSS = `
   body { font-family: system-ui, sans-serif; margin: 0; padding: 20px; background: #f9fafb; color: #111; }
   .header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; gap: 16px; }
@@ -117,12 +134,87 @@ const CSS = `
   .copy-branch-btn { border: 1px solid #d1d5db; background: #fff; color: #374151; border-radius: 6px; padding: 3px 5px; line-height: 0; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; }
   .copy-branch-btn:hover { background: #f9fafb; }
   .copy-branch-btn.copied { background: #dcfce7; border-color: #86efac; color: #166534; }
+  .notice { margin-bottom: 12px; padding: 10px 12px; border-radius: 6px; font-size: 0.875rem; font-weight: 500; }
+  .notice-success { background: #dcfce7; color: #166534; border: 1px solid #86efac; }
+  .notice-error { background: #fee2e2; color: #991b1b; border: 1px solid #fca5a5; }
+  .row-actions-cell { text-align: right; white-space: nowrap; position: relative; width: 1%; }
+  .row-menu { position: relative; display: inline-flex; }
+  .row-menu-btn { width: 22px; height: 22px; border: 1px solid #d1d5db; border-radius: 999px; background: #fff; color: #111827; font-size: 14px; line-height: 1; display: inline-flex; align-items: center; justify-content: center; cursor: pointer; padding: 0; }
+  .row-menu-btn:hover { background: #f9fafb; }
+  .row-menu-list { display: none; position: absolute; right: 0; top: calc(100% + 4px); min-width: 90px; background: #fff; border: 1px solid #d1d5db; border-radius: 6px; box-shadow: 0 8px 20px rgba(0,0,0,0.08); z-index: 20; padding: 4px; }
+  .row-menu.open .row-menu-list { display: block; }
+  .row-menu-delete { width: 100%; border: none; background: transparent; color: #b91c1c; text-align: left; border-radius: 4px; font-size: 0.8rem; padding: 6px 8px; cursor: pointer; }
+  .row-menu-delete:hover { background: #fee2e2; }
 `;
+
+dashboardRouter.post("/:ticketKey/delete", async (c) => {
+  const ticketKey = c.req.param("ticketKey");
+  const body = await c.req.parseBody();
+  const filters = {
+    project: typeof body.project === "string" ? body.project : null,
+    hideDone: typeof body.hideDone === "string" ? body.hideDone : null,
+    status: typeof body.status === "string" ? body.status : null,
+  };
+  const [runs, configs] = await Promise.all([getAllDispatchRuns(), listProjectConfigs()]);
+  const run = runs.find((item) => item.ticket_key === ticketKey);
+
+  if (!run) {
+    return c.redirect(
+      buildDashboardRedirect(filters, {
+        type: "error",
+        message: `Run ${ticketKey} was not found.`,
+      })
+    );
+  }
+
+  if (run.pr_url) {
+    const parsedPr = parseGithubPullRequestUrl(run.pr_url);
+    if (!parsedPr) {
+      return c.redirect(
+        buildDashboardRedirect(filters, {
+          type: "error",
+          message: `Cannot delete ${ticketKey} while PR URL is invalid. Close the PR first.`,
+        })
+      );
+    }
+
+    try {
+      const config = configs.find((item) => item.project_key === run.project_key);
+      const githubToken = config ? resolveProjectTokens(config).githubToken : env.GITHUB_TOKEN;
+      const prState = await getPullRequestState(run.pr_url, githubToken);
+      if (prState === "open") {
+        return c.redirect(
+          buildDashboardRedirect(filters, {
+            type: "error",
+            message: `Cannot delete ${ticketKey} while PR #${parsedPr.pullNumber} is open. Close it first.`,
+          })
+        );
+      }
+    } catch {
+      return c.redirect(
+        buildDashboardRedirect(filters, {
+          type: "error",
+          message: `Cannot verify PR status for ${ticketKey}. Close the PR first, then retry.`,
+        })
+      );
+    }
+  }
+
+  await deleteRun(ticketKey);
+  return c.redirect(
+    buildDashboardRedirect(filters, {
+      type: "success",
+      message: `Deleted ${ticketKey}.`,
+    })
+  );
+});
 
 dashboardRouter.get("/", async (c) => {
   const hideDone = c.req.query("hideDone") === "1";
   const selectedProject = c.req.query("project") ?? "";
   const selectedStatusQuery = c.req.query("status") ?? "";
+  const notice = c.req.query("notice") ?? "";
+  const noticeType = c.req.query("noticeType") === "error" ? "error" : "success";
   const selectedStatus = dashboardStatusFilterKeys.has(selectedStatusQuery as DashboardStatusFilterKey)
     ? (selectedStatusQuery as DashboardStatusFilterKey)
     : "";
@@ -223,6 +315,17 @@ dashboardRouter.get("/", async (c) => {
         : run.status === "succeeded" && run.pr_url
           ? `<a href="${run.pr_url}" target="_blank">PR</a>`
           : "-";
+    const rowActions = `<div class="row-menu" data-row-menu>
+      <button class="row-menu-btn" type="button" data-row-menu-button aria-label="Open actions for ${run.ticket_key}" aria-expanded="false">⋮</button>
+      <div class="row-menu-list" role="menu">
+        <form method="POST" action="/dashboard/${run.ticket_key}/delete" style="margin:0;">
+          ${selectedProject ? `<input type="hidden" name="project" value="${selectedProject}">` : ""}
+          ${hideDone ? '<input type="hidden" name="hideDone" value="1">' : ""}
+          ${selectedStatus ? `<input type="hidden" name="status" value="${selectedStatus}">` : ""}
+          <button class="row-menu-delete" type="submit" role="menuitem">Delete</button>
+        </form>
+      </div>
+    </div>`;
 
     return `<tr>
       <td><a href="${ticketUrl}" target="_blank">${run.ticket_key}</a></td>
@@ -244,6 +347,7 @@ dashboardRouter.get("/", async (c) => {
       <td>${ozTaskLink}</td>
       <td>${prConflictBadge(run.pr_has_conflicts, Boolean(run.pr_url))}</td>
       <td>${actionLink}${blockedByHtml}</td>
+      <td class="row-actions-cell">${rowActions}</td>
     </tr>`;
   });
 
@@ -278,6 +382,7 @@ dashboardRouter.get("/", async (c) => {
   <div class="stats">
     ${statsHtml}
   </div>
+  ${notice ? `<div class="notice notice-${noticeType}">${notice}</div>` : ""}
   <table>
     <thead>
       <tr>
@@ -292,12 +397,13 @@ dashboardRouter.get("/", async (c) => {
         <th>Oz Task</th>
         <th>PR Mergeability</th>
         <th>Links</th>
+        <th></th>
       </tr>
     </thead>
     <tbody>
       ${
         statusFilteredRuns.length === 0
-          ? `<tr><td colspan="11" style="text-align:center;color:#6b7280">${
+          ? `<tr><td colspan="12" style="text-align:center;color:#6b7280">${
               selectedStatus
                 ? `no ${selectedStatus} tasks available`
                 : "No runs found for the current filter"
@@ -339,6 +445,37 @@ dashboardRouter.get("/", async (c) => {
         button.classList.remove("copied");
         button.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="2" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>';
       }, 1200);
+    });
+    document.addEventListener("click", (event) => {
+      const target = event.target instanceof HTMLElement ? event.target : null;
+      if (!target) return;
+      const button = target.closest("[data-row-menu-button]");
+      if (button instanceof HTMLButtonElement) {
+        const menu = button.closest("[data-row-menu]");
+        if (!(menu instanceof HTMLElement)) return;
+        const isOpen = menu.classList.contains("open");
+        for (const openMenu of document.querySelectorAll("[data-row-menu].open")) {
+          openMenu.classList.remove("open");
+          const openButton = openMenu.querySelector("[data-row-menu-button]");
+          if (openButton instanceof HTMLButtonElement) {
+            openButton.setAttribute("aria-expanded", "false");
+          }
+        }
+        if (!isOpen) {
+          menu.classList.add("open");
+          button.setAttribute("aria-expanded", "true");
+        }
+        return;
+      }
+      for (const openMenu of document.querySelectorAll("[data-row-menu].open")) {
+        if (!(openMenu instanceof HTMLElement)) continue;
+        if (openMenu.contains(target)) continue;
+        openMenu.classList.remove("open");
+        const openButton = openMenu.querySelector("[data-row-menu-button]");
+        if (openButton instanceof HTMLButtonElement) {
+          openButton.setAttribute("aria-expanded", "false");
+        }
+      }
     });
   </script>
 </body>
