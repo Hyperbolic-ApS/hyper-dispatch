@@ -4,18 +4,29 @@ import { makeDispatchRun } from "../test/fixtures.js";
 const getAllDispatchRunsMock = vi.fn();
 const listProjectConfigsMock = vi.fn();
 const getIssueMock = vi.fn();
+const deleteRunMock = vi.fn();
+const parseGithubPullRequestUrlMock = vi.fn();
+const getPullRequestStateMock = vi.fn();
 
 vi.mock("../db/config-queries.js", () => ({
   getAllDispatchRuns: getAllDispatchRunsMock,
   listProjectConfigs: listProjectConfigsMock,
 }));
+vi.mock("../db/queries.js", () => ({
+  deleteRun: deleteRunMock,
+}));
 
 vi.mock("../jira/client.js", () => ({
   getIssue: getIssueMock,
 }));
+vi.mock("../github/pull-requests.js", () => ({
+  parseGithubPullRequestUrl: parseGithubPullRequestUrlMock,
+  getPullRequestState: getPullRequestStateMock,
+}));
 
 describe("dashboardRouter", () => {
   beforeEach(() => {
+    vi.clearAllMocks();
     listProjectConfigsMock.mockResolvedValue([]);
   });
   it("includes an immediate refresh trigger when the tab becomes active", async () => {
@@ -159,5 +170,163 @@ describe("dashboardRouter", () => {
     expect(html).toContain("no queued tasks available");
     expect(html).not.toContain(">HYDI-1</a>");
     expect(html).not.toContain(">TEST-1</a>");
+  });
+
+  it("renders a compact row actions menu with delete option", async () => {
+    getAllDispatchRunsMock.mockResolvedValue([makeDispatchRun()]);
+    getIssueMock.mockResolvedValue({
+      fields: { status: { name: "To Do", statusCategory: { key: "new" } } },
+    });
+
+    const { dashboardRouter } = await import("./dashboard.js");
+    const res = await dashboardRouter.request("http://localhost/");
+    const html = await res.text();
+
+    expect(res.status).toBe(200);
+    expect(html).toContain("data-row-menu-button");
+    expect(html).toContain(">⋮</button>");
+    expect(html).toContain(">Delete</button>");
+  });
+
+  it("escapes notice content from query string", async () => {
+    getAllDispatchRunsMock.mockResolvedValue([makeDispatchRun()]);
+    getIssueMock.mockResolvedValue({
+      fields: { status: { name: "To Do", statusCategory: { key: "new" } } },
+    });
+
+    const { dashboardRouter } = await import("./dashboard.js");
+    const res = await dashboardRouter.request(
+      "http://localhost/?noticeType=error&notice=%3Cimg%20src%3Dx%20onerror%3Dalert(1)%3E"
+    );
+    const html = await res.text();
+
+    expect(res.status).toBe(200);
+    expect(html).toContain("&lt;img src=x onerror=alert(1)&gt;");
+    expect(html).not.toContain("<img src=x onerror=alert(1)>");
+  });
+
+  it("escapes hidden input values derived from query filters", async () => {
+    const maliciousProject = 'HYDI"><script>alert(1)</script>';
+    getAllDispatchRunsMock.mockResolvedValue([
+      makeDispatchRun({ project_key: maliciousProject, status: "running" }),
+    ]);
+    getIssueMock.mockResolvedValue({
+      fields: { status: { name: "To Do", statusCategory: { key: "new" } } },
+    });
+
+    const { dashboardRouter } = await import("./dashboard.js");
+    const res = await dashboardRouter.request(
+      `http://localhost/?project=${encodeURIComponent(maliciousProject)}&status=running`
+    );
+    const html = await res.text();
+
+    expect(res.status).toBe(200);
+    expect(html).toContain(
+      'name="project" value="HYDI&quot;&gt;&lt;script&gt;alert(1)&lt;/script&gt;"'
+    );
+    expect(html).not.toContain('name="project" value="HYDI"><script>alert(1)</script>"');
+  });
+
+  it("declines delete when linked PR is open", async () => {
+    getAllDispatchRunsMock.mockResolvedValue([
+      makeDispatchRun({
+        ticket_key: "HYDI-48",
+        project_key: "HYDI",
+        pr_url: "https://github.com/org/repo/pull/123",
+      }),
+    ]);
+    listProjectConfigsMock.mockResolvedValue([]);
+    parseGithubPullRequestUrlMock.mockReturnValue({ owner: "org", repo: "repo", pullNumber: 123 });
+    getPullRequestStateMock.mockResolvedValue("open");
+
+    const { dashboardRouter } = await import("./dashboard.js");
+    const res = await dashboardRouter.request("http://localhost/HYDI-48/delete", {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      body: "project=HYDI",
+    });
+
+    expect(res.status).toBe(302);
+    expect(res.headers.get("location")).toContain("noticeType=error");
+    expect(res.headers.get("location")).toContain("PR+%23123+is+open");
+    expect(getPullRequestStateMock).toHaveBeenCalledWith(
+      "https://github.com/org/repo/pull/123",
+      expect.any(String)
+    );
+    expect(deleteRunMock).not.toHaveBeenCalled();
+  });
+
+  it("declines delete when linked PR URL is invalid", async () => {
+    getAllDispatchRunsMock.mockResolvedValue([
+      makeDispatchRun({
+        ticket_key: "HYDI-48",
+        project_key: "HYDI",
+        pr_url: "not-a-valid-pr-url",
+      }),
+    ]);
+    listProjectConfigsMock.mockResolvedValue([]);
+    parseGithubPullRequestUrlMock.mockReturnValue(null);
+
+    const { dashboardRouter } = await import("./dashboard.js");
+    const res = await dashboardRouter.request("http://localhost/HYDI-48/delete", {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      body: "project=HYDI",
+    });
+
+    expect(res.status).toBe(302);
+    expect(res.headers.get("location")).toContain("noticeType=error");
+    expect(res.headers.get("location")).toContain("PR+URL+is+invalid");
+    expect(getPullRequestStateMock).not.toHaveBeenCalled();
+    expect(deleteRunMock).not.toHaveBeenCalled();
+  });
+
+  it("declines delete when PR state lookup fails", async () => {
+    getAllDispatchRunsMock.mockResolvedValue([
+      makeDispatchRun({
+        ticket_key: "HYDI-48",
+        project_key: "HYDI",
+        pr_url: "https://github.com/org/repo/pull/123",
+      }),
+    ]);
+    listProjectConfigsMock.mockResolvedValue([]);
+    parseGithubPullRequestUrlMock.mockReturnValue({ owner: "org", repo: "repo", pullNumber: 123 });
+    getPullRequestStateMock.mockRejectedValue(new Error("lookup failed"));
+
+    const { dashboardRouter } = await import("./dashboard.js");
+    const res = await dashboardRouter.request("http://localhost/HYDI-48/delete", {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      body: "project=HYDI",
+    });
+
+    expect(res.status).toBe(302);
+    expect(res.headers.get("location")).toContain("noticeType=error");
+    expect(res.headers.get("location")).toContain("Cannot+verify+PR+status");
+    expect(deleteRunMock).not.toHaveBeenCalled();
+  });
+
+  it("allows delete when linked PR is closed", async () => {
+    getAllDispatchRunsMock.mockResolvedValue([
+      makeDispatchRun({
+        ticket_key: "HYDI-48",
+        project_key: "HYDI",
+        pr_url: "https://github.com/org/repo/pull/123",
+      }),
+    ]);
+    listProjectConfigsMock.mockResolvedValue([]);
+    parseGithubPullRequestUrlMock.mockReturnValue({ owner: "org", repo: "repo", pullNumber: 123 });
+    getPullRequestStateMock.mockResolvedValue("closed");
+
+    const { dashboardRouter } = await import("./dashboard.js");
+    const res = await dashboardRouter.request("http://localhost/HYDI-48/delete", {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      body: "project=HYDI",
+    });
+
+    expect(res.status).toBe(302);
+    expect(res.headers.get("location")).toContain("noticeType=success");
+    expect(deleteRunMock).toHaveBeenCalledWith("HYDI-48");
   });
 });

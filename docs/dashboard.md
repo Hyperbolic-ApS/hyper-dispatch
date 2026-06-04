@@ -20,6 +20,9 @@ Displays all tracked dispatch runs in a table with:
 - PR mergeability badge (`Merge conflicts`, `No conflicts`, or `Unknown` once a PR exists)
 - Session link (clickable, for live runs — opens Oz session)
 - PR link (for completed runs)
+- Compact row action menu (`⋮`) on the right side with `Delete`
+  - Deletion is blocked when the run has an open GitHub PR, with an inline error prompt to close the PR first
+  - Deletion is allowed when no PR exists or the linked PR is already closed
 - Blocked-by info (for blocked entries)
 - Header filter toggle to hide/show rows whose Jira ticket status category is `Done`
 - Header project dropdown to filter rows by project key (shows `All Projects` by default)
