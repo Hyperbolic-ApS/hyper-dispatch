@@ -38,6 +38,7 @@ Summary stats bar at the top: counts of running / queued / blocked / succeeded /
 Auto-refreshes every 15 seconds, and also triggers an immediate refresh when the browser tab becomes active again.
 
 **Data source**: Primarily the `dispatch_runs` table (fast), enriched with live Jira issue status per ticket and Oz run data (runtime, session link) when available.
+PR action-state badges are resolved from GitHub workflow runs associated with each PR, using the configured project GitHub token when present (falling back to the global token).
 
 ## Config UI
 

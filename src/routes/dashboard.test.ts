@@ -8,6 +8,8 @@ const deleteRunMock = vi.fn();
 const parseGithubPullRequestUrlMock = vi.fn();
 const getPullRequestStateMock = vi.fn();
 const listWorkflowRunsForRepoMock = vi.fn();
+const octokitAuthTokens: string[] = [];
+const workflowRunListRequests: Array<Record<string, unknown>> = [];
 
 vi.mock("../db/config-queries.js", () => ({
   getAllDispatchRuns: getAllDispatchRunsMock,
@@ -26,8 +28,14 @@ vi.mock("../github/pull-requests.js", () => ({
 }));
 vi.mock("@octokit/rest", () => ({
   Octokit: class MockOctokit {
+    constructor(config?: { auth?: string }) {
+      octokitAuthTokens.push(config?.auth ?? "");
+    }
     actions = {
-      listWorkflowRunsForRepo: listWorkflowRunsForRepoMock,
+      listWorkflowRunsForRepo: (params: Record<string, unknown>) => {
+        workflowRunListRequests.push(params);
+        return listWorkflowRunsForRepoMock(params);
+      },
     };
   },
 }));
@@ -35,6 +43,8 @@ vi.mock("@octokit/rest", () => ({
 describe("dashboardRouter", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    octokitAuthTokens.length = 0;
+    workflowRunListRequests.length = 0;
     listProjectConfigsMock.mockResolvedValue([]);
     listWorkflowRunsForRepoMock.mockResolvedValue({ data: { workflow_runs: [] } });
     parseGithubPullRequestUrlMock.mockImplementation((prUrl: string) => {
@@ -137,6 +147,76 @@ describe("dashboardRouter", () => {
     expect(res.status).toBe(200);
     expect(html).toContain("Revision running");
     expect(html).not.toContain("No conflicts");
+  });
+
+  it("shows combined PR status when review and revision workflows are both in progress", async () => {
+    getAllDispatchRunsMock.mockResolvedValue([
+      makeDispatchRun({
+        status: "succeeded",
+        pr_url: "https://github.com/warp/hyper-dispatch/pull/45",
+        pr_has_conflicts: false,
+      }),
+    ]);
+    getIssueMock.mockResolvedValue({
+      fields: { status: { name: "In Review", statusCategory: { key: "in-flight" } } },
+    });
+    listWorkflowRunsForRepoMock.mockResolvedValue({
+      data: {
+        workflow_runs: [
+          {
+            name: "Oz PR Review Commenting",
+            status: "in_progress",
+            pull_requests: [{ number: 45 }],
+          },
+          {
+            name: "Agent Revision on Review Feedback",
+            status: "queued",
+            pull_requests: [{ number: 45 }],
+          },
+        ],
+      },
+    });
+
+    const { dashboardRouter } = await import("./dashboard.js");
+    const res = await dashboardRouter.request("http://localhost/");
+    const html = await res.text();
+
+    expect(res.status).toBe(200);
+    expect(html).toContain("Review + revision running");
+  });
+
+  it("uses per-project GitHub token and does not constrain workflow lookup by event", async () => {
+    getAllDispatchRunsMock.mockResolvedValue([
+      makeDispatchRun({
+        ticket_key: "HYDI-77",
+        project_key: "HYDI",
+        status: "succeeded",
+        pr_url: "https://github.com/warp/hyper-dispatch/pull/77",
+      }),
+    ]);
+    listProjectConfigsMock.mockResolvedValue([
+      {
+        project_key: "HYDI",
+        github_pat: "project-token-123",
+        active: true,
+      },
+    ]);
+    getIssueMock.mockResolvedValue({
+      fields: { status: { name: "In Review", statusCategory: { key: "in-flight" } } },
+    });
+    listWorkflowRunsForRepoMock.mockResolvedValue({ data: { workflow_runs: [] } });
+
+    const { dashboardRouter } = await import("./dashboard.js");
+    const res = await dashboardRouter.request("http://localhost/");
+
+    expect(res.status).toBe(200);
+    expect(octokitAuthTokens).toContain("project-token-123");
+    expect(workflowRunListRequests[0]).toEqual({
+      owner: "warp",
+      repo: "hyper-dispatch",
+      per_page: 100,
+    });
+    expect(workflowRunListRequests[0]).not.toHaveProperty("event");
   });
   it("includes an immediate refresh trigger when the tab becomes active", async () => {
     getAllDispatchRunsMock.mockResolvedValue([makeDispatchRun()]);

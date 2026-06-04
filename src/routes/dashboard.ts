@@ -302,7 +302,8 @@ dashboardRouter.get("/", async (c) => {
         return allowedStatuses ? allowedStatuses.has(run.status) : true;
       })
     : visibleRuns;
-  const githubClient = new Octokit({ auth: env.GITHUB_TOKEN });
+  const configByProjectKey = new Map(configs.map((config) => [config.project_key, config]));
+  const githubClientByToken = new Map<string, Octokit>();
   const actionStateByPr = new Map<string, PrActionState>();
   await Promise.all(
     statusFilteredRuns.map(async (run) => {
@@ -311,11 +312,17 @@ dashboardRouter.get("/", async (c) => {
       if (!parsedPr) return;
       const prKey = `${parsedPr.owner}/${parsedPr.repo}#${parsedPr.pullNumber}`;
       if (actionStateByPr.has(prKey)) return;
+      const config = configByProjectKey.get(run.project_key);
+      const githubToken = config ? resolveProjectTokens(config).githubToken : env.GITHUB_TOKEN;
+      let githubClient = githubClientByToken.get(githubToken);
+      if (!githubClient) {
+        githubClient = new Octokit({ auth: githubToken });
+        githubClientByToken.set(githubToken, githubClient);
+      }
       try {
         const workflowRuns = await githubClient.actions.listWorkflowRunsForRepo({
           owner: parsedPr.owner,
           repo: parsedPr.repo,
-          event: "pull_request",
           per_page: 100,
         });
         const reviewRunning = workflowRuns.data.workflow_runs.some(
