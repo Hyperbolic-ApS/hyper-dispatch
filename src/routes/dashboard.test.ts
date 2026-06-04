@@ -185,6 +185,101 @@ describe("dashboardRouter", () => {
     expect(html).toContain("Review + revision running");
   });
 
+  it("detects review running via head_branch when pull_requests is empty", async () => {
+    getAllDispatchRunsMock.mockResolvedValue([
+      makeDispatchRun({
+        ticket_key: "HYDI-50",
+        status: "succeeded",
+        pr_url: "https://github.com/warp/hyper-dispatch/pull/50",
+        pr_has_conflicts: false,
+      }),
+    ]);
+    getIssueMock.mockResolvedValue({
+      fields: { status: { name: "In Review", statusCategory: { key: "in-flight" } } },
+    });
+    listWorkflowRunsForRepoMock.mockResolvedValue({
+      data: {
+        workflow_runs: [
+          {
+            name: "Oz PR Review Commenting",
+            status: "in_progress",
+            pull_requests: [],
+            head_branch: "agent/HYDI-50",
+          },
+        ],
+      },
+    });
+
+    const { dashboardRouter } = await import("./dashboard.js");
+    const res = await dashboardRouter.request("http://localhost/");
+    const html = await res.text();
+
+    expect(res.status).toBe(200);
+    expect(html).toContain("Review running");
+  });
+
+  it("detects revision running via head_branch when pull_requests is empty", async () => {
+    getAllDispatchRunsMock.mockResolvedValue([
+      makeDispatchRun({
+        ticket_key: "HYDI-51",
+        status: "succeeded",
+        pr_url: "https://github.com/warp/hyper-dispatch/pull/51",
+        pr_has_conflicts: false,
+      }),
+    ]);
+    getIssueMock.mockResolvedValue({
+      fields: { status: { name: "In Review", statusCategory: { key: "in-flight" } } },
+    });
+    listWorkflowRunsForRepoMock.mockResolvedValue({
+      data: {
+        workflow_runs: [
+          {
+            name: "Agent Revision on Review Feedback",
+            status: "queued",
+            pull_requests: [],
+            head_branch: "agent/HYDI-51",
+          },
+        ],
+      },
+    });
+
+    const { dashboardRouter } = await import("./dashboard.js");
+    const res = await dashboardRouter.request("http://localhost/");
+    const html = await res.text();
+
+    expect(res.status).toBe(200);
+    expect(html).toContain("Revision running");
+  });
+
+  it("issues one workflow-run fetch per repo, not per PR", async () => {
+    getAllDispatchRunsMock.mockResolvedValue([
+      makeDispatchRun({
+        ticket_key: "HYDI-60",
+        status: "succeeded",
+        pr_url: "https://github.com/warp/hyper-dispatch/pull/60",
+      }),
+      makeDispatchRun({
+        ticket_key: "HYDI-61",
+        status: "succeeded",
+        pr_url: "https://github.com/warp/hyper-dispatch/pull/61",
+      }),
+    ]);
+    getIssueMock.mockResolvedValue({
+      fields: { status: { name: "In Review", statusCategory: { key: "in-flight" } } },
+    });
+    listWorkflowRunsForRepoMock.mockResolvedValue({ data: { workflow_runs: [] } });
+
+    const { dashboardRouter } = await import("./dashboard.js");
+    await dashboardRouter.request("http://localhost/");
+
+    expect(workflowRunListRequests).toHaveLength(1);
+    expect(workflowRunListRequests[0]).toEqual({
+      owner: "warp",
+      repo: "hyper-dispatch",
+      per_page: 100,
+    });
+  });
+
   it("uses per-project GitHub token and does not constrain workflow lookup by event", async () => {
     getAllDispatchRunsMock.mockResolvedValue([
       makeDispatchRun({

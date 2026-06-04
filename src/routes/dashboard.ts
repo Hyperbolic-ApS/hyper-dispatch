@@ -305,43 +305,60 @@ dashboardRouter.get("/", async (c) => {
   const configByProjectKey = new Map(configs.map((config) => [config.project_key, config]));
   const githubClientByToken = new Map<string, Octokit>();
   const actionStateByPr = new Map<string, PrActionState>();
+
+  // Group PRs by repo so we issue one workflow-run fetch per repo, not per PR.
+  const repoGroups = new Map<
+    string,
+    { owner: string; repo: string; token: string; prs: { prKey: string; pullNumber: number; branchName: string }[] }
+  >();
+  for (const run of statusFilteredRuns) {
+    if (!run.pr_url) continue;
+    const parsedPr = parseGithubPullRequestUrl(run.pr_url);
+    if (!parsedPr) continue;
+    const prKey = `${parsedPr.owner}/${parsedPr.repo}#${parsedPr.pullNumber}`;
+    const config = configByProjectKey.get(run.project_key);
+    const githubToken = config ? resolveProjectTokens(config).githubToken : env.GITHUB_TOKEN;
+    const repoKey = `${parsedPr.owner}/${parsedPr.repo}`;
+    let group = repoGroups.get(repoKey);
+    if (!group) {
+      group = { owner: parsedPr.owner, repo: parsedPr.repo, token: githubToken, prs: [] };
+      repoGroups.set(repoKey, group);
+    }
+    if (!group.prs.some((p) => p.prKey === prKey)) {
+      group.prs.push({ prKey, pullNumber: parsedPr.pullNumber, branchName: `agent/${run.ticket_key}` });
+    }
+  }
+
   await Promise.all(
-    statusFilteredRuns.map(async (run) => {
-      if (!run.pr_url) return;
-      const parsedPr = parseGithubPullRequestUrl(run.pr_url);
-      if (!parsedPr) return;
-      const prKey = `${parsedPr.owner}/${parsedPr.repo}#${parsedPr.pullNumber}`;
-      if (actionStateByPr.has(prKey)) return;
-      const config = configByProjectKey.get(run.project_key);
-      const githubToken = config ? resolveProjectTokens(config).githubToken : env.GITHUB_TOKEN;
-      let githubClient = githubClientByToken.get(githubToken);
+    Array.from(repoGroups.values()).map(async ({ owner, repo, token, prs }) => {
+      let githubClient = githubClientByToken.get(token);
       if (!githubClient) {
-        githubClient = new Octokit({ auth: githubToken });
-        githubClientByToken.set(githubToken, githubClient);
+        githubClient = new Octokit({ auth: token });
+        githubClientByToken.set(token, githubClient);
       }
       try {
-        const workflowRuns = await githubClient.actions.listWorkflowRunsForRepo({
-          owner: parsedPr.owner,
-          repo: parsedPr.repo,
+        const { data } = await githubClient.actions.listWorkflowRunsForRepo({
+          owner,
+          repo,
           per_page: 100,
         });
-        const reviewRunning = workflowRuns.data.workflow_runs.some(
-          (workflowRun) =>
-            workflowRun.name === REVIEW_WORKFLOW_NAME &&
-            IN_FLIGHT_WORKFLOW_STATUSES.has(workflowRun.status ?? "") &&
-            (workflowRun.pull_requests ?? []).some(
-              (pullRequest) => pullRequest.number === parsedPr.pullNumber
-            )
-        );
-        const revisionRunning = workflowRuns.data.workflow_runs.some(
-          (workflowRun) =>
-            workflowRun.name === REVISION_WORKFLOW_NAME &&
-            IN_FLIGHT_WORKFLOW_STATUSES.has(workflowRun.status ?? "") &&
-            (workflowRun.pull_requests ?? []).some(
-              (pullRequest) => pullRequest.number === parsedPr.pullNumber
-            )
-        );
-        actionStateByPr.set(prKey, { reviewRunning, revisionRunning });
+        for (const pr of prs) {
+          const reviewRunning = data.workflow_runs.some(
+            (wfRun) =>
+              wfRun.name === REVIEW_WORKFLOW_NAME &&
+              IN_FLIGHT_WORKFLOW_STATUSES.has(wfRun.status ?? "") &&
+              ((wfRun.pull_requests ?? []).some((p) => p.number === pr.pullNumber) ||
+                wfRun.head_branch === pr.branchName)
+          );
+          const revisionRunning = data.workflow_runs.some(
+            (wfRun) =>
+              wfRun.name === REVISION_WORKFLOW_NAME &&
+              IN_FLIGHT_WORKFLOW_STATUSES.has(wfRun.status ?? "") &&
+              ((wfRun.pull_requests ?? []).some((p) => p.number === pr.pullNumber) ||
+                wfRun.head_branch === pr.branchName)
+          );
+          actionStateByPr.set(pr.prKey, { reviewRunning, revisionRunning });
+        }
       } catch {
         // Best effort only — dashboard should still render if GitHub is unavailable.
       }
