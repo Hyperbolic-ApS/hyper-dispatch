@@ -1,7 +1,7 @@
 # Agent Revision on Review Feedback
 #
 # This workflow can be triggered by:
-#   1) Completion of the "Oz PR Review Commenting" workflow
+#   1) Dispatch from the "Oz PR Review Commenting" workflow (runs on the PR branch)
 #   2) A manual "/revise" PR conversation comment
 # on PR branches that match the `agent/*` naming convention.
 #
@@ -13,6 +13,7 @@
 #
 # Setup requirements:
 #   - Required secret:  WARP_API_KEY        — your Warp API key for spawning agents
+#   - Required secret:  GH_PAT              — a PAT with repo scope so pushes trigger other workflows
 #   - Optional var:     WARP_AGENT_PROFILE  — Oz agent profile to use (uses Oz default if unset)
 #   - Optional var:     REVISION_MIN_SEVERITY — none|minor|important|critical (default: important)
 #   - Optional var:     REVISION_REVIEW_BOT_LOGIN — login used by automated reviewer (default: github-actions[bot])
@@ -23,21 +24,31 @@
 name: Agent Revision on Review Feedback
 
 on:
-  workflow_run:
-    workflows: ["Oz PR Review Commenting"]
-    types: [completed]
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: Pull request number
+        required: true
+        type: string
+      head_sha:
+        description: Head SHA of the PR at review time
+        required: false
+        type: string
+      review_run_url:
+        description: URL of the review workflow run
+        required: false
+        type: string
   issue_comment:
     types: [created]
 
 concurrency:
-  group: agent-revision-${{ github.event.issue.number || github.event.workflow_run.pull_requests[0].number || github.run_id }}
+  group: agent-revision-${{ github.event.inputs.pr_number || github.event.issue.number || github.run_id }}
   cancel-in-progress: true
 
 jobs:
   revision:
     if: >-
-      (github.event_name == 'workflow_run' &&
-       github.event.workflow_run.conclusion == 'success') ||
+      github.event_name == 'workflow_dispatch' ||
       (github.event_name == 'issue_comment' &&
        github.event.issue.pull_request &&
        contains(github.event.comment.body, '/revise'))
@@ -62,30 +73,17 @@ jobs:
             let workflowRunUrl = "";
             let workflowRunHeadSha = "";
 
-            if (eventName === "workflow_run") {
-              const run = context.payload.workflow_run;
-              workflowRunId = String(run.id);
-              workflowRunUrl = run.html_url || "";
-              workflowRunHeadSha = run.head_sha || "";
-              triggerAuthor = run.actor?.login || "";
-              reviewState = "workflow_run_completed";
+            if (eventName === "workflow_dispatch") {
+              prNumber = Number(context.payload.inputs?.pr_number);
+              workflowRunUrl = context.payload.inputs?.review_run_url || "";
+              workflowRunHeadSha = context.payload.inputs?.head_sha || "";
+              triggerAuthor = context.actor || "";
+              reviewState = "workflow_dispatch_completed";
               mode = "auto_workflow_run";
-              prNumber = run.pull_requests?.[0]?.number;
-
-              if (!prNumber && run.head_branch) {
-                const prsForHead = await github.paginate(github.rest.pulls.list, {
-                  owner: context.repo.owner,
-                  repo: context.repo.repo,
-                  state: "open",
-                  head: `${context.repo.owner}:${run.head_branch}`,
-                  per_page: 100,
-                });
-                prNumber = prsForHead[0]?.number;
-              }
 
               if (!prNumber) {
                 core.setOutput("should_run", "false");
-                core.setOutput("skip_reason", "No associated pull request found for completed review workflow run");
+                core.setOutput("skip_reason", "Missing pr_number input");
                 return;
               }
             } else {
@@ -289,6 +287,7 @@ jobs:
         if: steps.context.outputs.should_run == 'true' && steps.feedback.outputs.should_spawn == 'true'
         with:
           ref: ${{ steps.context.outputs.branch }}
+          token: ${{ secrets.GH_PAT }}
 
       - name: Spawn revision agent
         if: steps.context.outputs.should_run == 'true' && steps.feedback.outputs.should_spawn == 'true'

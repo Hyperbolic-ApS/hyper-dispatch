@@ -94,8 +94,26 @@ Workflow file: `.github/workflows/oz-pr-review-commenting.yml`
 - **Workflow permissions**: `contents: read`, `issues: write`, `pull-requests: write`
 - **Conditional secrets** (only required when the PR title or branch name references a Jira ticket key, e.g. `PROJ-123`):
   - `JIRA_API_TOKEN` — Atlassian API token
-  - `JIRA_EMAIL` — Atlassian account email
-  - `JIRA_SITE` (var) — Atlassian site name (e.g. `your-org`)
+  - `JIRA_CLOUD_ID` (var) — Atlassian cloud ID used by the `jira-view` helper API path
+
+## Continuous Integration
+
+HyperDispatch includes a standard CI workflow that validates pull requests and main branch pushes.
+
+Workflow file: `.github/workflows/ci.yml`
+
+### Trigger conditions
+
+- `pull_request` events
+- `push` to `main`
+
+### Behavior
+
+1. Checks out the repository.
+2. Sets up Node.js 20 with npm dependency caching.
+3. Runs `npm ci`.
+4. Runs `npm run test:coverage` (single test execution with coverage output).
+5. Runs `npm run typecheck`.
 
 ## Default Worker Skill
 
@@ -111,7 +129,7 @@ The default skill (`.agents/skills/hyperdispatch-worker/SKILL.md`) implements a 
 8. Read `docs/testing.md`, run `npm test` and `npm run test:coverage`, and add/update tests when required by scope
 9. Run lint/type checks (including explicit `npm run typecheck`)
 10. Commit with `{ticket-key}: {summary}` format + co-author line
-11. Create PR via `gh pr create` with Jira link in body, plus UI iteration trail for UI-touching tickets
+11. Create a non-draft PR via `gh pr create` with Jira link in body, plus UI iteration trail for UI-touching tickets
 12. Upload final desktop/mobile screenshots to Jira and comment with embedded images for UI-touching tickets
 13. Report PR URL via `report_pr` artifact
 

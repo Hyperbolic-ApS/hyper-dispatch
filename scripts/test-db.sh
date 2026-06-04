@@ -11,8 +11,8 @@ if ! command -v docker >/dev/null 2>&1; then
   RUN_DB_TESTS=1 \
   TEST_DB_MODE="pglite" \
   DATABASE_URL="${DATABASE_URL}" \
-  JIRA_BASE_URL="https://example.atlassian.net" \
-  JIRA_EMAIL="test@example.com" \
+  JIRA_SITE_URL="https://example.atlassian.net" \
+  JIRA_CLOUD_ID="test-cloud-id" \
   JIRA_API_TOKEN="test-token" \
   WARP_API_KEY="test-key" \
   GITHUB_TOKEN="test-token" \
@@ -46,8 +46,8 @@ fi
 
 RUN_DB_TESTS=1 \
 DATABASE_URL="${DATABASE_URL}" \
-JIRA_BASE_URL="https://example.atlassian.net" \
-JIRA_EMAIL="test@example.com" \
+JIRA_SITE_URL="https://example.atlassian.net" \
+JIRA_CLOUD_ID="test-cloud-id" \
 JIRA_API_TOKEN="test-token" \
 WARP_API_KEY="test-key" \
 GITHUB_TOKEN="test-token" \

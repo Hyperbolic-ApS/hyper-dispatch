@@ -1,7 +1,6 @@
 import { env } from "../config/env.js";
 import type {
   JiraIssue,
-  JiraBoardConfig,
   JiraField,
   JiraStatus,
   JiraSearchResponse,
@@ -19,21 +18,25 @@ export class JiraApiError extends Error {
 }
 
 function buildAuthHeader(): string {
-  const credentials = `${env.JIRA_EMAIL}:${env.JIRA_API_TOKEN}`;
-  return `Basic ${Buffer.from(credentials).toString("base64")}`;
+  return `Bearer ${env.JIRA_API_TOKEN}`;
+}
+
+function buildBaseUrl(): string {
+  return `https://api.atlassian.com/ex/jira/${env.JIRA_CLOUD_ID}`;
 }
 
 async function jiraFetch<T>(
   path: string,
   options: RequestInit = {}
 ): Promise<T> {
-  const url = `${env.JIRA_BASE_URL}${path}`;
+  const url = `${buildBaseUrl()}${path}`;
   const response = await fetch(url, {
     ...options,
     headers: {
       Authorization: buildAuthHeader(),
       "Content-Type": "application/json",
       Accept: "application/json",
+      "Accept-Language": "en",
       ...(options.headers ?? {}),
     },
   });
@@ -105,15 +108,6 @@ export async function transitionIssue(
     method: "POST",
     body: JSON.stringify({ transition: { id: transitionId } }),
   });
-}
-
-/**
- * Fetch the board configuration for an Agile board.
- */
-export async function getBoardConfig(boardId: number): Promise<JiraBoardConfig> {
-  return jiraFetch<JiraBoardConfig>(
-    `/rest/agile/1.0/board/${boardId}/configuration`
-  );
 }
 
 /**

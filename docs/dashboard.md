@@ -9,6 +9,7 @@ Both pages now share the HyperDispatch brand icon (header logo) and include the 
 
 Displays all tracked dispatch runs in a table with:
 - Ticket key (linked to Jira)
+- Project key
 - Summary
 - Ticket status (live Jira workflow status, e.g. To Do / In Progress / Done)
 - Status badge (color-coded: green=succeeded, blue=running, yellow=queued, orange=blocked, red=failed)
@@ -19,10 +20,20 @@ Displays all tracked dispatch runs in a table with:
 - PR status badge (`Review running`, `Revision running`, or `Review + revision running` when those actions are active; otherwise `Merge conflicts`, `No conflicts`, or `Unknown` once a PR exists)
 - Session link (clickable, for live runs — opens Oz session)
 - PR link (for completed runs)
+- Compact row action menu (`⋮`) on the right side with `Delete`
+  - Deletion is blocked when the run has an open GitHub PR, with an inline error prompt to close the PR first
+  - Deletion is allowed when no PR exists or the linked PR is already closed
 - Blocked-by info (for blocked entries)
 - Header filter toggle to hide/show rows whose Jira ticket status category is `Done`
+- Header project dropdown to filter rows by project key (shows `All Projects` by default)
+- Clickable status stat tags (`Running`, `Queued`, `Blocked`, `Succeeded`, `Failed`, `Stale`) that apply a status filter to the current dashboard view
+  - Clicking a stat tag filters rows by that status
+  - Clicking the selected tag again clears the status filter
+  - Selected tags use an outline/highlight state so selection is visible independently of each tag color
+  - Project filtering is applied first, then status-tag filtering
+  - When a selected status has no matching rows, the table shows `no {status} tasks available` (for example, `no stale tasks available`)
 
-Summary stats bar at the top: counts of running / queued / blocked / succeeded / failed.
+Summary stats bar at the top: counts of running / queued / blocked / succeeded / failed / stale.
 
 Auto-refreshes every 15 seconds, and also triggers an immediate refresh when the browser tab becomes active again.
 

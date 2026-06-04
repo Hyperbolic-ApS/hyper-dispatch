@@ -219,7 +219,7 @@ describe("extractPrUrl", () => {
   it("falls back to status message pull request URL when artifacts are missing", async () => {
     const { extractPrUrl } = await importMonitor();
     const statusMessage =
-      "Implemented HYDI-33 and opened draft PR https://github.com/warp/hyper-dispatch/pull/456.";
+      "Implemented HYDI-33 and opened PR https://github.com/warp/hyper-dispatch/pull/456.";
 
     expect(extractPrUrl(undefined, statusMessage)).toBe(
       "https://github.com/warp/hyper-dispatch/pull/456"
@@ -235,7 +235,7 @@ describe("extractPrUrl", () => {
       },
     ] as unknown as ArtifactItem[];
     const statusMessage =
-      "Opened draft PR https://github.com/warp/hyper-dispatch/pull/456 while running tests.";
+      "Opened PR https://github.com/warp/hyper-dispatch/pull/456 while running tests.";
 
     expect(extractPrUrl(artifacts, statusMessage)).toBe(
       "https://github.com/warp/hyper-dispatch/pull/789"
@@ -251,7 +251,7 @@ describe("extractPrUrl", () => {
       },
     ] as unknown as ArtifactItem[];
     const statusMessage =
-      "Opened draft PR https://github.com/warp/hyper-dispatch/pull/456 while running tests.";
+      "Opened PR https://github.com/warp/hyper-dispatch/pull/456 while running tests.";
 
     expect(extractPrUrl(artifacts, statusMessage)).toBe(
       "https://github.com/warp/hyper-dispatch/pull/456"
@@ -687,6 +687,45 @@ describe("checkRuns", () => {
     await checkRuns();
 
     expect(jiraTransitionIssueMock).toHaveBeenCalledWith("HYDI-17", "200");
+  });
+
+  it("transitions to custom Done column name when configured", async () => {
+    getRunsByStatusMock
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([
+        makeDispatchRun({
+          ticket_key: "HYDI-21",
+          status: "succeeded",
+          pr_url: "https://github.com/org/repo/pull/21",
+          project_key: "HYDI",
+        }),
+      ]);
+    jiraGetIssueMock.mockResolvedValue({
+      fields: { status: { statusCategory: { key: "in-progress" } } },
+    });
+    githubPullGetMock.mockResolvedValue({
+      data: {
+        merged_at: "2026-05-01T00:00:00.000Z",
+        mergeable_state: "clean",
+        mergeable: true,
+      },
+    });
+    getProjectConfigMock.mockResolvedValue(
+      makeProjectConfig({ done_column_name: "Completed" })
+    );
+    jiraGetTransitionsMock.mockResolvedValue({
+      transitions: [
+        { id: "201", name: "Done" },
+        { id: "202", name: "Completed" },
+      ],
+    });
+    getRunsBlockedByMock.mockResolvedValue([]);
+
+    const { checkRuns } = await importMonitor();
+    await checkRuns();
+
+    // Should use the configured "Completed" transition, not the hard-coded "Done"
+    expect(jiraTransitionIssueMock).toHaveBeenCalledWith("HYDI-21", "202");
   });
 
   it("warns without transitioning when no Done transition is available", async () => {

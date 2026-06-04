@@ -95,27 +95,6 @@ export interface JiraTransitionsResponse {
   transitions: JiraTransition[];
 }
 
-export interface JiraBoardColumnConfig {
-  columns: Array<{
-    name: string;
-    statuses: Array<{ id: string }>;
-  }>;
-}
-
-export interface JiraBoardConfig {
-  id: number;
-  name: string;
-  type: string;
-  columnConfig: JiraBoardColumnConfig;
-  estimation?: {
-    type: string;
-    field?: {
-      fieldId: string;
-      displayName: string;
-    };
-  };
-}
-
 export interface JiraField {
   id: string;
   name: string;
