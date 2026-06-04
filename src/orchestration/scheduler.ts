@@ -1,12 +1,15 @@
 import { env } from "../config/env.js";
 import * as jira from "../jira/client.js";
 import {
+  claimRunForSpawn,
+  deleteRun,
   getActiveRunCount,
   getRunsByProject,
   getRunsByStatus,
   listActiveProjectConfigs,
+  releaseSpawnClaim,
   type ProjectConfig,
-  deleteRun,
+  updateRunStatus,
 } from "../db/queries.js";
 import { spawnAgent } from "./spawner.js";
 import { syncTicketInToDo } from "./ticket-sync.js";
@@ -79,6 +82,30 @@ async function reconcilePollingState(): Promise<void> {
 }
 
 const SCHEDULER_INTERVAL_MS = 30_000;
+async function rollbackClaimToQueued(
+  ticketKey: string,
+  context: string
+): Promise<void> {
+  try {
+    await releaseSpawnClaim(ticketKey);
+  } catch (rollbackErr) {
+    console.error(
+      `[scheduler] Failed to release spawn claim for ${ticketKey} (${context}):`,
+      rollbackErr
+    );
+    try {
+      await updateRunStatus(ticketKey, {
+        status: "failed",
+        error: `claim rollback failed (${context})`,
+      });
+    } catch (updateErr) {
+      console.error(
+        `[scheduler] Failed to persist fallback failure state for ${ticketKey}:`,
+        updateErr
+      );
+    }
+  }
+}
 
 /**
  * Process the queue: spawn agents for queued runs up to the concurrency cap.
@@ -105,27 +132,56 @@ export async function processQueue(): Promise<number> {
 
   for (const run of queued) {
     if (spawned >= slots) break;
+    const claimed = await claimRunForSpawn(run.ticket_key);
+    if (!claimed) {
+      continue;
+    }
 
-    // Dedup: skip if a running entry exists for this ticket
-    // (can happen if the DB is slightly stale between polling cycles)
+    const config = projectsByKey.get(run.project_key);
+    if (!config) {
+      console.warn(
+        `[scheduler] Skipping ${run.ticket_key}: project ${run.project_key} is not configured.`
+      );
+      await rollbackClaimToQueued(run.ticket_key, "missing project config");
+      continue;
+    }
+
+    let issue;
     try {
-      const config = projectsByKey.get(run.project_key);
-      if (!config) {
-        console.warn(
-          `[scheduler] Skipping ${run.ticket_key}: project ${run.project_key} is not configured.`
-        );
-        continue;
-      }
+      issue = await jira.getIssue(run.ticket_key);
+    } catch (err) {
+      await rollbackClaimToQueued(run.ticket_key, "jira issue fetch failure");
+      console.error(
+        `[scheduler] Failed to fetch Jira issue for ${run.ticket_key}:`,
+        err
+      );
+      continue;
+    }
 
-      const issue = await jira.getIssue(run.ticket_key);
+    try {
       await spawnAgent(run.ticket_key, config, issue);
       spawned++;
     } catch (err) {
+      try {
+        await updateRunStatus(run.ticket_key, {
+          status: "failed",
+          error:
+            err instanceof Error ? err.message : "spawnAgent failed after claim",
+        });
+      } catch (updateErr) {
+        console.error(
+          `[scheduler] Failed to mark ${run.ticket_key} as failed after spawn error:`,
+          updateErr
+        );
+        await rollbackClaimToQueued(
+          run.ticket_key,
+          "post-spawn status persistence failure"
+        );
+      }
       console.error(
         `[scheduler] Failed to spawn agent for ${run.ticket_key}:`,
         err
       );
-      // Continue processing remaining queued runs
     }
   }
 
@@ -145,16 +201,30 @@ export function startSchedulerLoop(): () => void {
     `[scheduler] Starting loop (interval: ${SCHEDULER_INTERVAL_MS}ms, max concurrent: ${env.MAX_CONCURRENT_AGENTS})`
   );
 
-  const handle = setInterval(async () => {
+  let stopped = false;
+  let handle: ReturnType<typeof setTimeout> | null = null;
+
+  const runCycle = async (): Promise<void> => {
+    if (stopped) return;
+
     try {
       await processQueue();
     } catch (err) {
       console.error("[scheduler] Unhandled error in processQueue:", err);
+    } finally {
+      if (!stopped) {
+        handle = setTimeout(runCycle, SCHEDULER_INTERVAL_MS);
+      }
     }
-  }, SCHEDULER_INTERVAL_MS);
+  };
+
+  handle = setTimeout(runCycle, SCHEDULER_INTERVAL_MS);
 
   return () => {
-    clearInterval(handle);
+    stopped = true;
+    if (handle) {
+      clearTimeout(handle);
+    }
     console.log("[scheduler] Loop stopped.");
   };
 }

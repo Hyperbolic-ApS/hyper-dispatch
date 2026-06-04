@@ -17,8 +17,8 @@ function optionalEnvUndefined(name: string): string | undefined {
 
 export const env = {
   // Jira
-  JIRA_BASE_URL: requireEnv("JIRA_BASE_URL"),
-  JIRA_EMAIL: requireEnv("JIRA_EMAIL"),
+  JIRA_SITE_URL: requireEnv("JIRA_SITE_URL"),
+  JIRA_CLOUD_ID: requireEnv("JIRA_CLOUD_ID"),
   JIRA_API_TOKEN: requireEnv("JIRA_API_TOKEN"),
 
   // Warp
@@ -56,11 +56,9 @@ import type { ProjectConfig } from "../db/config-queries.js";
 export function resolveProjectTokens(config: ProjectConfig): {
   githubToken: string;
   jiraApiToken: string;
-  jiraEmail: string;
 } {
   return {
     githubToken: config.github_pat ?? env.GITHUB_TOKEN,
     jiraApiToken: config.jira_api_token ?? env.JIRA_API_TOKEN,
-    jiraEmail: config.jira_email ?? env.JIRA_EMAIL,
   };
 }

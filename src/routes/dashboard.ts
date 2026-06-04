@@ -1,9 +1,12 @@
 import { Hono } from "hono";
-import { getAllDispatchRuns, getRunCountsByStatus } from "../db/config-queries.js";
+import { getAllDispatchRuns, listProjectConfigs } from "../db/config-queries.js";
+import { deleteRun } from "../db/queries.js";
 import { env } from "../config/env.js";
+import { resolveProjectTokens } from "../config/env.js";
 import { brandIconSvg, faviconDataUri } from "./branding.js";
 import * as jira from "../jira/client.js";
 import { annotateRunsWithProdDeploymentStatus } from "../coolify/prod-deployment.js";
+import { getPullRequestState, parseGithubPullRequestUrl } from "../github/pull-requests.js";
 
 export const dashboardRouter = new Hono();
 const dashboardDateTimeFormatter = new Intl.DateTimeFormat(undefined, {
@@ -31,6 +34,37 @@ function formatDate(d: Date | null): string {
   if (!d) return "-";
   return dashboardDateTimeFormatter.format(d);
 }
+
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+const dashboardStatusFilterOptions = [
+  { key: "running", label: "Running", style: "background:#3b82f6;color:#fff", statuses: ["running"] },
+  { key: "queued", label: "Queued", style: "background:#eab308;color:#000", statuses: ["queued"] },
+  {
+    key: "blocked",
+    label: "Blocked",
+    style: "background:#f97316;color:#fff",
+    statuses: ["blocked", "blocked_cycle"],
+  },
+  { key: "succeeded", label: "Succeeded", style: "background:#22c55e;color:#fff", statuses: ["succeeded"] },
+  { key: "failed", label: "Failed", style: "background:#ef4444;color:#fff", statuses: ["failed"] },
+  { key: "stale", label: "Stale", style: "background:#6b7280;color:#fff", statuses: ["stale"] },
+] as const;
+type DashboardStatusFilterKey = (typeof dashboardStatusFilterOptions)[number]["key"];
+
+const dashboardStatusFilterKeys = new Set<DashboardStatusFilterKey>(
+  dashboardStatusFilterOptions.map((option) => option.key)
+);
+const dashboardStatusesByFilterKey = new Map<DashboardStatusFilterKey, Set<string>>(
+  dashboardStatusFilterOptions.map((option) => [option.key, new Set<string>(option.statuses)])
+);
 
 function statusBadge(status: string): string {
   const colors: Record<string, string> = {
@@ -75,11 +109,28 @@ function prodDeploymentBadge(deployedToProd: boolean | null): string {
   return '<span style="padding:2px 8px;border-radius:4px;font-size:0.75rem;font-weight:600;background:#e5e7eb;color:#111">Unknown</span>';
 }
 
+
+function buildDashboardRedirect(
+  filters: { project?: string | null; hideDone?: string | null; status?: string | null },
+  notice: { type: "success" | "error"; message: string }
+): string {
+  const params = new URLSearchParams();
+  if (filters.project) params.set("project", filters.project);
+  if (filters.hideDone === "1") params.set("hideDone", "1");
+  if (filters.status) params.set("status", filters.status);
+  params.set("noticeType", notice.type);
+  params.set("notice", notice.message);
+  return `/dashboard?${params.toString()}`;
+}
+
 const CSS = `
   body { font-family: system-ui, sans-serif; margin: 0; padding: 20px; background: #f9fafb; color: #111; }
   .header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; gap: 16px; }
   .header-left { display: flex; align-items: center; gap: 12px; }
   .header-actions { display: flex; align-items: center; gap: 8px; }
+  .header-filter-form { display: inline-flex; align-items: center; gap: 8px; margin: 0; }
+  .filter-label { font-size: 0.875rem; color: #374151; font-weight: 500; }
+  .filter-select { border: 1px solid #d1d5db; border-radius: 6px; padding: 6px 8px; font-size: 0.875rem; background: #fff; color: #111827; min-width: 160px; }
   .brand-logo { width: 34px; height: 34px; flex: 0 0 auto; display: inline-flex; }
   .header h1 { margin: 0; }
   h1 { margin: 0 0 16px; font-size: 1.4rem; }
@@ -88,6 +139,9 @@ const CSS = `
   .btn-secondary:hover { background: #d1d5db; }
   .stats { display: flex; gap: 12px; margin-bottom: 20px; flex-wrap: wrap; }
   .stat { padding: 10px 16px; border-radius: 6px; font-weight: 600; font-size: 0.9rem; }
+  .stat-link { border: none; text-decoration: none; display: inline-flex; align-items: center; }
+  .stat-link:hover { text-decoration: none; filter: brightness(0.95); }
+  .stat-selected { box-shadow: inset 0 0 0 2px #fff; outline: 2px solid #111827; outline-offset: 2px; }
   table { width: 100%; border-collapse: collapse; background: #fff; border-radius: 8px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
   th { background: #f3f4f6; text-align: left; padding: 10px 12px; font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.05em; border-bottom: 1px solid #e5e7eb; }
   td { padding: 10px 12px; border-bottom: 1px solid #f3f4f6; font-size: 0.875rem; vertical-align: top; }
@@ -99,15 +153,101 @@ const CSS = `
   .copy-branch-btn { border: 1px solid #d1d5db; background: #fff; color: #374151; border-radius: 6px; padding: 3px 5px; line-height: 0; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; }
   .copy-branch-btn:hover { background: #f9fafb; }
   .copy-branch-btn.copied { background: #dcfce7; border-color: #86efac; color: #166534; }
+  .notice { margin-bottom: 12px; padding: 10px 12px; border-radius: 6px; font-size: 0.875rem; font-weight: 500; }
+  .notice-success { background: #dcfce7; color: #166534; border: 1px solid #86efac; }
+  .notice-error { background: #fee2e2; color: #991b1b; border: 1px solid #fca5a5; }
+  .row-actions-cell { text-align: right; white-space: nowrap; position: relative; width: 1%; }
+  .row-menu { position: relative; display: inline-flex; }
+  .row-menu-btn { width: 22px; height: 22px; border: 1px solid #d1d5db; border-radius: 999px; background: #fff; color: #111827; font-size: 14px; line-height: 1; display: inline-flex; align-items: center; justify-content: center; cursor: pointer; padding: 0; }
+  .row-menu-btn:hover { background: #f9fafb; }
+  .row-menu-list { display: none; position: absolute; right: 0; top: calc(100% + 4px); min-width: 90px; background: #fff; border: 1px solid #d1d5db; border-radius: 6px; box-shadow: 0 8px 20px rgba(0,0,0,0.08); z-index: 20; padding: 4px; }
+  .row-menu.open .row-menu-list { display: block; }
+  .row-menu-delete { width: 100%; border: none; background: transparent; color: #b91c1c; text-align: left; border-radius: 4px; font-size: 0.8rem; padding: 6px 8px; cursor: pointer; }
+  .row-menu-delete:hover { background: #fee2e2; }
 `;
+
+dashboardRouter.post("/:ticketKey/delete", async (c) => {
+  const ticketKey = c.req.param("ticketKey");
+  const body = await c.req.parseBody();
+  const filters = {
+    project: typeof body.project === "string" ? body.project : null,
+    hideDone: typeof body.hideDone === "string" ? body.hideDone : null,
+    status: typeof body.status === "string" ? body.status : null,
+  };
+  const [runs, configs] = await Promise.all([getAllDispatchRuns(), listProjectConfigs()]);
+  const run = runs.find((item) => item.ticket_key === ticketKey);
+
+  if (!run) {
+    return c.redirect(
+      buildDashboardRedirect(filters, {
+        type: "error",
+        message: `Run ${ticketKey} was not found.`,
+      })
+    );
+  }
+
+  if (run.pr_url) {
+    const parsedPr = parseGithubPullRequestUrl(run.pr_url);
+    if (!parsedPr) {
+      return c.redirect(
+        buildDashboardRedirect(filters, {
+          type: "error",
+          message: `Cannot delete ${ticketKey} while PR URL is invalid. Close the PR first.`,
+        })
+      );
+    }
+
+    try {
+      const config = configs.find((item) => item.project_key === run.project_key);
+      const githubToken = config ? resolveProjectTokens(config).githubToken : env.GITHUB_TOKEN;
+      const prState = await getPullRequestState(run.pr_url, githubToken);
+      if (prState === "open") {
+        return c.redirect(
+          buildDashboardRedirect(filters, {
+            type: "error",
+            message: `Cannot delete ${ticketKey} while PR #${parsedPr.pullNumber} is open. Close it first.`,
+          })
+        );
+      }
+    } catch {
+      return c.redirect(
+        buildDashboardRedirect(filters, {
+          type: "error",
+          message: `Cannot verify PR status for ${ticketKey}. Close the PR first, then retry.`,
+        })
+      );
+    }
+  }
+
+  await deleteRun(ticketKey);
+  return c.redirect(
+    buildDashboardRedirect(filters, {
+      type: "success",
+      message: `Deleted ${ticketKey}.`,
+    })
+  );
+});
 
 dashboardRouter.get("/", async (c) => {
   const hideDone = c.req.query("hideDone") === "1";
-  const [runs, countRows] = await Promise.all([
-    getAllDispatchRuns(),
-    getRunCountsByStatus(),
-  ]);
+  const selectedProject = c.req.query("project") ?? "";
+  const selectedStatusQuery = c.req.query("status") ?? "";
+  const notice = c.req.query("notice") ?? "";
+  const noticeType = c.req.query("noticeType") === "error" ? "error" : "success";
+  const escapedSelectedProject = escapeHtml(selectedProject);
+  const escapedSelectedStatus = escapeHtml(selectedStatusQuery);
+  const escapedNotice = escapeHtml(notice);
+  const selectedStatus = dashboardStatusFilterKeys.has(selectedStatusQuery as DashboardStatusFilterKey)
+    ? (selectedStatusQuery as DashboardStatusFilterKey)
+    : "";
+  const [runs, configs] = await Promise.all([getAllDispatchRuns(), listProjectConfigs()]);
   const runsWithProdDeployment = await annotateRunsWithProdDeploymentStatus(runs);
+  const projects = Array.from(
+    new Set([
+      ...configs.filter((c) => c.active).map((c) => c.project_key),
+      ...runs.map((run) => run.project_key),
+    ])
+  ).sort((a, b) => a.localeCompare(b));
   const ticketStatusByKey = new Map<string, { name: string; categoryKey: string }>();
   await Promise.all(
     runsWithProdDeployment.map(async (run) => {
@@ -125,9 +265,20 @@ dashboardRouter.get("/", async (c) => {
       }
     })
   );
-  const visibleRuns = hideDone
-    ? runsWithProdDeployment.filter((run) => ticketStatusByKey.get(run.ticket_key)?.categoryKey !== "done")
+  const projectFilteredRuns = selectedProject
+    ? runsWithProdDeployment.filter((run) => run.project_key === selectedProject)
     : runsWithProdDeployment;
+  const visibleRuns = hideDone
+    ? projectFilteredRuns.filter(
+        (run) => ticketStatusByKey.get(run.ticket_key)?.categoryKey !== "done"
+      )
+    : projectFilteredRuns;
+  const statusFilteredRuns = selectedStatus
+    ? visibleRuns.filter((run) => {
+        const allowedStatuses = dashboardStatusesByFilterKey.get(selectedStatus);
+        return allowedStatuses ? allowedStatuses.has(run.status) : true;
+      })
+    : visibleRuns;
 
   const counts: Record<string, number> = {
     running: 0,
@@ -138,21 +289,40 @@ dashboardRouter.get("/", async (c) => {
     stale: 0,
     blocked_cycle: 0,
   };
-  for (const row of countRows) {
-    counts[row.status] = parseInt(row.count, 10);
+  for (const run of visibleRuns) {
+    counts[run.status] = (counts[run.status] ?? 0) + 1;
   }
   const totalBlocked = (counts.blocked ?? 0) + (counts.blocked_cycle ?? 0);
+  const hideDoneToggleParams = new URLSearchParams();
+  if (!hideDone) hideDoneToggleParams.set("hideDone", "1");
+  if (selectedProject) hideDoneToggleParams.set("project", selectedProject);
+  if (selectedStatus) hideDoneToggleParams.set("status", selectedStatus);
+  const hideDoneToggleHref = `/dashboard${hideDoneToggleParams.size > 0 ? `?${hideDoneToggleParams.toString()}` : ""}`;
+  const projectOptionsHtml = [
+    `<option value=""${selectedProject === "" ? " selected" : ""}>All Projects</option>`,
+    ...projects.map(
+      (project) =>
+        `<option value="${escapeHtml(project)}"${selectedProject === project ? " selected" : ""}>${escapeHtml(project)}</option>`
+    ),
+  ].join("");
 
-  const statsHtml = [
-    `<div class="stat" style="background:#3b82f6;color:#fff">${counts.running ?? 0} Running</div>`,
-    `<div class="stat" style="background:#eab308;color:#000">${counts.queued ?? 0} Queued</div>`,
-    `<div class="stat" style="background:#f97316;color:#fff">${totalBlocked} Blocked</div>`,
-    `<div class="stat" style="background:#22c55e;color:#fff">${counts.succeeded ?? 0} Succeeded</div>`,
-    `<div class="stat" style="background:#ef4444;color:#fff">${counts.failed ?? 0} Failed</div>`,
-    `<div class="stat" style="background:#6b7280;color:#fff">${counts.stale ?? 0} Stale</div>`,
-  ].join("\n");
-  const rows = visibleRuns.map((run) => {
-    const ticketUrl = `${env.JIRA_BASE_URL}/browse/${run.ticket_key}`;
+  const statsHtml = dashboardStatusFilterOptions
+    .map((option) => {
+      const count =
+        option.key === "blocked"
+          ? totalBlocked
+          : (counts[option.key] ?? 0);
+      const tagParams = new URLSearchParams();
+      if (selectedProject) tagParams.set("project", selectedProject);
+      if (hideDone) tagParams.set("hideDone", "1");
+      if (selectedStatus !== option.key) tagParams.set("status", option.key);
+      const href = `/dashboard${tagParams.size > 0 ? `?${tagParams.toString()}` : ""}`;
+      const selectedClass = selectedStatus === option.key ? " stat-selected" : "";
+      return `<a href="${href}" class="stat stat-link${selectedClass}" style="${option.style}" role="button" aria-pressed="${selectedStatus === option.key}">${count} ${option.label}</a>`;
+    })
+    .join("\n");
+  const rows = statusFilteredRuns.map((run) => {
+    const ticketUrl = `${env.JIRA_SITE_URL}/browse/${run.ticket_key}`;
     const branchName = `agent/${run.ticket_key}`;
     const runtime = formatDuration(run.spawned_at, run.completed_at);
     const ozTaskLink = run.session_link
@@ -166,11 +336,27 @@ dashboardRouter.get("/", async (c) => {
       run.status === "running" && run.session_link
         ? `<a href="${run.session_link}" target="_blank">Session</a>`
         : run.status === "succeeded" && run.pr_url
-          ? `<a href="${run.pr_url}" target="_blank">PR</a>`
+          ? (() => {
+              const parsedPr = parseGithubPullRequestUrl(run.pr_url ?? "");
+              const prLabel = parsedPr ? `PR #${parsedPr.pullNumber}` : "PR";
+              return `<a href="${run.pr_url}" target="_blank">${prLabel}</a>`;
+            })()
           : "-";
+    const rowActions = `<div class="row-menu" data-row-menu>
+      <button class="row-menu-btn" type="button" data-row-menu-button aria-label="Open actions for ${run.ticket_key}" aria-expanded="false">⋮</button>
+      <div class="row-menu-list" role="menu">
+        <form method="POST" action="/dashboard/${run.ticket_key}/delete" style="margin:0;">
+          ${selectedProject ? `<input type="hidden" name="project" value="${escapedSelectedProject}">` : ""}
+          ${hideDone ? '<input type="hidden" name="hideDone" value="1">' : ""}
+          ${selectedStatus ? `<input type="hidden" name="status" value="${escapeHtml(selectedStatus)}">` : ""}
+          <button class="row-menu-delete" type="submit" role="menuitem">Delete</button>
+        </form>
+      </div>
+    </div>`;
 
     return `<tr>
       <td><a href="${ticketUrl}" target="_blank">${run.ticket_key}</a></td>
+      <td>${run.project_key}</td>
       <td>${run.summary ? run.summary.slice(0, 80) : "-"}</td>
       <td>${ticketStatusBadge(
         ticketStatusByKey.get(run.ticket_key)?.name ?? null,
@@ -189,6 +375,7 @@ dashboardRouter.get("/", async (c) => {
       <td>${prConflictBadge(run.pr_has_conflicts, Boolean(run.pr_url))}</td>
       <td>${prodDeploymentBadge(run.deployed_to_prod)}</td>
       <td>${actionLink}${blockedByHtml}</td>
+      <td class="row-actions-cell">${rowActions}</td>
     </tr>`;
   });
 
@@ -208,17 +395,27 @@ dashboardRouter.get("/", async (c) => {
       <h1>HyperDispatch Dashboard</h1>
     </div>
     <div class="header-actions">
-      <a href="${hideDone ? "/dashboard" : "/dashboard?hideDone=1"}" class="btn btn-secondary">${hideDone ? "Show Done" : "Hide Done"}</a>
-      <a href="/config" class="btn btn-secondary">⚙ Configure Projects</a>
+      <form class="header-filter-form" method="GET" action="/dashboard">
+        <label class="filter-label" for="project-filter">Project</label>
+        <select class="filter-select" id="project-filter" name="project" onchange="this.form.submit()">
+          ${projectOptionsHtml}
+        </select>
+        ${hideDone ? '<input type="hidden" name="hideDone" value="1">' : ""}
+        ${selectedStatus ? `<input type="hidden" name="status" value="${escapedSelectedStatus}">` : ""}
+      </form>
+      <a href="${hideDoneToggleHref}" class="btn btn-secondary">${hideDone ? "Show Done" : "Hide Done"}</a>
+      <a href="/config" class="btn btn-secondary">⚙ Configure</a>
     </div>
   </div>
   <div class="stats">
     ${statsHtml}
   </div>
+  ${notice ? `<div class="notice notice-${noticeType}">${escapedNotice}</div>` : ""}
   <table>
     <thead>
       <tr>
         <th>Ticket</th>
+        <th>Project</th>
         <th>Summary</th>
         <th>Ticket Status</th>
         <th>Status</th>
@@ -229,10 +426,19 @@ dashboardRouter.get("/", async (c) => {
         <th>PR Mergeability</th>
         <th>Prod Deployment (Coolify)</th>
         <th>Links</th>
+        <th></th>
       </tr>
     </thead>
     <tbody>
-      ${visibleRuns.length === 0 ? '<tr><td colspan="11" style="text-align:center;color:#6b7280">No runs found for the current filter</td></tr>' : rows.join("\n")}
+      ${
+        statusFilteredRuns.length === 0
+          ? `<tr><td colspan="13" style="text-align:center;color:#6b7280">${
+              selectedStatus
+                ? `no ${selectedStatus} tasks available`
+                : "No runs found for the current filter"
+            }</td></tr>`
+          : rows.join("\n")
+      }
     </tbody>
   </table>
   <script>
@@ -268,6 +474,37 @@ dashboardRouter.get("/", async (c) => {
         button.classList.remove("copied");
         button.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="2" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>';
       }, 1200);
+    });
+    document.addEventListener("click", (event) => {
+      const target = event.target instanceof HTMLElement ? event.target : null;
+      if (!target) return;
+      const button = target.closest("[data-row-menu-button]");
+      if (button instanceof HTMLButtonElement) {
+        const menu = button.closest("[data-row-menu]");
+        if (!(menu instanceof HTMLElement)) return;
+        const isOpen = menu.classList.contains("open");
+        for (const openMenu of document.querySelectorAll("[data-row-menu].open")) {
+          openMenu.classList.remove("open");
+          const openButton = openMenu.querySelector("[data-row-menu-button]");
+          if (openButton instanceof HTMLButtonElement) {
+            openButton.setAttribute("aria-expanded", "false");
+          }
+        }
+        if (!isOpen) {
+          menu.classList.add("open");
+          button.setAttribute("aria-expanded", "true");
+        }
+        return;
+      }
+      for (const openMenu of document.querySelectorAll("[data-row-menu].open")) {
+        if (!(openMenu instanceof HTMLElement)) continue;
+        if (openMenu.contains(target)) continue;
+        openMenu.classList.remove("open");
+        const openButton = openMenu.querySelector("[data-row-menu-button]");
+        if (openButton instanceof HTMLButtonElement) {
+          openButton.setAttribute("aria-expanded", "false");
+        }
+      }
     });
   </script>
 </body>

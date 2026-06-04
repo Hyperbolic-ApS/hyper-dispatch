@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, vi } from "vitest";
 
-process.env.JIRA_BASE_URL ??= "https://example.atlassian.net";
-process.env.JIRA_EMAIL ??= "agent@example.com";
+process.env.JIRA_SITE_URL ??= "https://example.atlassian.net";
+process.env.JIRA_CLOUD_ID ??= "test-cloud-id";
 process.env.JIRA_API_TOKEN ??= "token";
 process.env.WARP_API_KEY ??= "warp-key";
 process.env.DATABASE_URL ??= "postgres://postgres:postgres@127.0.0.1:5432/hyper_dispatch_test";

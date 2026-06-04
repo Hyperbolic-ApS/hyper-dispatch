@@ -60,7 +60,6 @@ describe("configRouter", () => {
       mcp_servers: "{\"playwright\":{\"command\":\"npx\"}}",
       github_pat: "gh_pat_123",
       jira_api_token: "jira_token",
-      jira_email: "jira@example.com",
       active: "true",
     };
   }
@@ -130,7 +129,6 @@ describe("configRouter", () => {
         ...baseCreateForm(),
         github_pat: "",
         jira_api_token: "",
-        jira_email: "",
         backlog_column_name: "",
         to_do_column_name: "  ",
       },
@@ -147,7 +145,6 @@ describe("configRouter", () => {
     const updates = updateProjectConfigMock.mock.calls[0]?.[1];
     expect(updates?.github_pat).toBeUndefined();
     expect(updates?.jira_api_token).toBeUndefined();
-    expect(updates?.jira_email).toBeUndefined();
   });
 
   it("POST /:projectKey updates tokens when token fields are provided", async () => {
@@ -158,7 +155,6 @@ describe("configRouter", () => {
         ...baseCreateForm(),
         github_pat: "new-pat",
         jira_api_token: "new-jira-token",
-        jira_email: "new-jira@example.com",
       },
     });
 
@@ -167,7 +163,6 @@ describe("configRouter", () => {
       expect.objectContaining({
         github_pat: "new-pat",
         jira_api_token: "new-jira-token",
-        jira_email: "new-jira@example.com",
       })
     );
   });
@@ -239,16 +234,14 @@ describe("configRouter", () => {
         in_progress_column_name: "In Progress",
         in_review_column_name: "In Review",
         done_column_name: "Done",
-        jira_email: "project-jira@example.com",
         jira_api_token: "project-token",
       } as any)
     );
     validateJiraProjectMock.mockResolvedValue({
       valid: false,
       checks: [
-        { name: "Board columns", passed: true, message: "ok" },
-        { name: "Custom field", passed: false, message: "missing field" },
         { name: "Workflow statuses", passed: true, message: "ok" },
+        { name: "Custom field", passed: false, message: "missing field" },
       ],
     });
 
@@ -262,11 +255,11 @@ describe("configRouter", () => {
       checks: Array<{ passed: boolean }>;
     };
     expect(res.status).toBe(200);
-    expect(payload.checks).toHaveLength(3);
+    expect(payload.checks).toHaveLength(2);
     expect(payload.checks.some((check: { passed: boolean }) => check.passed === false)).toBe(true);
     expect(payload.checks.some((check: { passed: boolean }) => check.passed === true)).toBe(true);
     expect(validateJiraProjectMock).toHaveBeenCalledWith(
-      77,
+      "HYDI",
       "customfield_10010",
       {
         backlog: "Backlog",
@@ -276,7 +269,7 @@ describe("configRouter", () => {
         done: "Done",
       },
       {
-        email: "project-jira@example.com",
+        cloudId: "cloud-123",
         apiToken: "project-token",
       }
     );

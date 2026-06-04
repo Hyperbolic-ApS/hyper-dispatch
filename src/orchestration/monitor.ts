@@ -142,12 +142,21 @@ async function transitionMergedPrsToDone(): Promise<void> {
 
       if (!pullRequest.merged_at) continue;
 
+      const config = await getProjectConfig(run.project_key);
+      const columnMappings = resolveJiraColumnMappings({
+        backlog: config?.backlog_column_name,
+        toDo: config?.to_do_column_name,
+        inProgress: config?.in_progress_column_name,
+        inReview: config?.in_review_column_name,
+        done: config?.done_column_name,
+      });
+
       const transitions = await jira.getTransitions(run.ticket_key);
       const doneTransition = transitions.transitions.find(
-        (transition) => transition.name === "Done"
+        (t) => t.name.trim().toLowerCase() === columnMappings.done.toLowerCase()
       );
       if (!doneTransition) {
-        console.warn(`[monitor] No Done transition found for ${run.ticket_key}`);
+        console.warn(`[monitor] No ${columnMappings.done} transition found for ${run.ticket_key}`);
         continue;
       }
 

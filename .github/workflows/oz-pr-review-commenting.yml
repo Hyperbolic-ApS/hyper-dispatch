@@ -1,0 +1,116 @@
+name: Oz PR Review Commenting
+
+on:
+  pull_request:
+    types: [opened, reopened, ready_for_review, synchronize]
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: write
+
+concurrency:
+  group: oz-pr-review-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  review:
+    if: >-
+      !github.event.pull_request.draft &&
+      github.event.pull_request.user.login != 'dependabot[bot]' &&
+      github.event.pull_request.user.login != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Select review tier
+        id: tier
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
+          PR_BRANCH: ${{ github.event.pull_request.head.ref }}
+        run: python3 .github/scripts/select-review-tier.py
+
+      - name: Detect Jira ticket reference
+        id: jira-check
+        env:
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          combined="$HEAD_REF $PR_TITLE"
+          if echo "$combined" | grep -qE '[A-Z][A-Z0-9]+-[0-9]+'; then
+            echo "has_ticket=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_ticket=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Create Jira helper script
+        if: steps.jira-check.outputs.has_ticket == 'true'
+        run: |
+          cat > /usr/local/bin/jira-view <<'SCRIPT'
+          #!/usr/bin/env bash
+          set -euo pipefail
+          KEY="$1"
+          RESPONSE=$(curl -sf \
+            -H "Authorization: Bearer $JIRA_API_TOKEN" \
+            -H "Accept: application/json" \
+            "https://api.atlassian.com/ex/jira/${JIRA_CLOUD_ID}/rest/api/3/issue/${KEY}?fields=summary,description,status,issuetype,priority,labels,assignee")
+          echo "$RESPONSE" | python3 -c "
+          import sys, json
+          d = json.load(sys.stdin)
+          f = d['fields']
+          print(f'Key: {d["key"]}')
+          print(f'Summary: {f["summary"]}')
+          print(f'Status: {f["status"]["name"]}')
+          print(f'Type: {f["issuetype"]["name"]}')
+          if f.get('priority'): print(f'Priority: {f["priority"]["name"]}')
+          if f.get('assignee'): print(f'Assignee: {f["assignee"]["displayName"]}')
+          if f.get('labels'): print(f'Labels: {", ".join(f["labels"])}')
+          desc = f.get('description')
+          if desc:
+              # Flatten ADF to plain text
+              def extract(node):
+                  if isinstance(node, str): return node
+                  if isinstance(node, dict):
+                      if node.get('type') == 'text': return node.get('text', '')
+                      return ''.join(extract(c) for c in node.get('content', []))
+                  if isinstance(node, list): return ''.join(extract(c) for c in node)
+                  return ''
+              print(f'Description:\n{extract(desc)}')
+          "
+          SCRIPT
+          chmod +x /usr/local/bin/jira-view
+
+      - name: Run PR review commenting skill
+        uses: warpdotdev/oz-agent-action@v1
+        with:
+          skill: pr-review-commenting
+          model: ${{ steps.tier.outputs.model }}
+          mcp: |
+            {
+              "ref": {
+                "url": "https://api.ref.tools/mcp",
+                "headers": { "x-ref-api-key": "${{ secrets.REF_API_KEY }}" }
+              },
+              "exa": {
+                "url": "https://mcp.exa.ai/mcp?exaApiKey=${{ secrets.EXA_API_KEY }}"
+              }
+            }
+          prompt: |
+            Review PR #${{ github.event.pull_request.number }}.
+
+            PR URL: ${{ github.event.pull_request.html_url }}
+            Base: ${{ github.event.pull_request.base.ref }} (${{ github.event.pull_request.base.sha }})
+            Head: ${{ github.event.pull_request.head.ref }} (${{ github.event.pull_request.head.sha }})
+
+            Read the PR description and any linked issues. If the title or branch contains a Jira key (e.g. PROJ-123), fetch requirements via: jira-view <KEY>
+          warp_api_key: ${{ secrets.WARP_API_KEY }}
+          profile: ${{ vars.WARP_AGENT_PROFILE || '' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          JIRA_API_TOKEN: ${{ secrets.JIRA_API_TOKEN }}
+          JIRA_CLOUD_ID: ${{ vars.JIRA_CLOUD_ID }}

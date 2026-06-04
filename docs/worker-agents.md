@@ -40,21 +40,24 @@ When reading the per-ticket Jira custom field, HyperDispatch accepts either a di
 
 ## PR Review Feedback Loop
 
-When a reviewer requests changes on an agent-created PR, a GitHub Actions workflow automatically spawns a new Oz agent to address the feedback.
+When actionable feedback is available on an agent-created PR, a GitHub Actions workflow can spawn a new Oz agent to address that feedback.
 
 Workflow file: `.github/workflows/agent-revision.yml`
 
 ### Trigger conditions
 
-- A `pull_request_review` event is submitted with state `changes_requested`.
+- **Automatic loop trigger**: a `workflow_run` event for `Oz PR Review Commenting` completes successfully.
+- **Manual trigger**: an `issue_comment` event is created on the PR containing `/revise`.
 - The PR branch name starts with `agent/` (i.e., it was created by a HyperDispatch worker agent).
 
 ### Behavior
 
 1. Extracts the Jira ticket key from the branch name (`agent/{ticket-key}` → `{ticket-key}`).
-2. Collects the review summary and all inline comments from the latest "changes requested" review.
-3. Spawns an Oz agent via `warpdotdev/oz-agent-action@main` with a prompt containing the PR URL, branch, and all review feedback.
-4. The agent commits its changes directly to the existing PR branch and does **not** open a new PR.
+2. For automatic triggers, resolves the PR from the completed review workflow run and collects the latest automated review summary and inline comments.
+3. Applies a severity gate for automatic triggers: only runs revision when detected severity is at or above `REVISION_MIN_SEVERITY` (default `important`).
+4. For manual `/revise` triggers, bypasses the severity gate and includes the manual instruction plus latest automated review feedback (if present).
+5. Spawns an Oz agent via `warpdotdev/oz-agent-action@v1` with PR URL, branch, trigger metadata, and aggregated feedback.
+6. The agent commits its changes directly to the existing PR branch and does **not** open a new PR.
 
 ### Setup
 
@@ -62,6 +65,55 @@ To use this workflow in a target repo, copy `.github/workflows/agent-revision.ym
 
 - **Required secret**: `WARP_API_KEY` — Warp API key for spawning agents.
 - **Optional var**: `WARP_AGENT_PROFILE` — Oz agent profile (uses the Oz platform default if unset).
+- **Optional var**: `REVISION_MIN_SEVERITY` — `none|minor|important|critical` (default `important`) for automatic review-triggered revisions.
+- **Optional var**: `REVISION_REVIEW_BOT_LOGIN` — GitHub login treated as the automated reviewer (default `github-actions[bot]`).
+
+## Automated PR Review Commenting
+
+HyperDispatch also includes a PR review workflow that runs the `pr-review-commenting` skill whenever a non-draft pull request is created or updated.
+
+Workflow file: `.github/workflows/oz-pr-review-commenting.yml`
+
+### Trigger conditions
+
+- `pull_request` events: `opened`, `reopened`, `ready_for_review`, `synchronize`
+- Draft PRs are skipped.
+
+### Behavior
+
+1. Runs `warpdotdev/oz-agent-action@v1` with `skill: pr-review-commenting`.
+2. Selects the review model tier from `.github/review-tiers.yml`; changes under `.github/workflows/` and `.github/scripts/` trigger the `ci or automation changes` escalated-review signal.
+3. Passes PR URL, number, base/head refs, and SHAs in the prompt context.
+4. Uses per-PR concurrency (`oz-pr-review-<pr-number>`) and cancels in-progress runs when new commits are pushed.
+5. Posts review feedback as a GitHub PR Review: inline comments for code-level findings whose lines are in the diff, with summary, architecture assessment, and unmapped findings in the review body.
+
+### Setup
+
+- **Required secrets**: `WARP_API_KEY`, `REF_API_KEY`, `EXA_API_KEY`
+- **Optional var**: `WARP_AGENT_PROFILE` — Oz agent profile (uses the Oz platform default if unset).
+- **Workflow permissions**: `contents: read`, `issues: write`, `pull-requests: write`
+- **Conditional secrets** (only required when the PR title or branch name references a Jira ticket key, e.g. `PROJ-123`):
+  - `JIRA_API_TOKEN` — Atlassian API token
+  - `JIRA_CLOUD_ID` (var) — Atlassian cloud ID used by the `jira-view` helper API path
+
+## Continuous Integration
+
+HyperDispatch includes a standard CI workflow that validates pull requests and main branch pushes.
+
+Workflow file: `.github/workflows/ci.yml`
+
+### Trigger conditions
+
+- `pull_request` events
+- `push` to `main`
+
+### Behavior
+
+1. Checks out the repository.
+2. Sets up Node.js 20 with npm dependency caching.
+3. Runs `npm ci`.
+4. Runs `npm run test:coverage` (single test execution with coverage output).
+5. Runs `npm run typecheck`.
 
 ## Default Worker Skill
 
@@ -77,7 +129,7 @@ The default skill (`.agents/skills/hyperdispatch-worker/SKILL.md`) implements a 
 8. Read `docs/testing.md`, run `npm test` and `npm run test:coverage`, and add/update tests when required by scope
 9. Run lint/type checks (including explicit `npm run typecheck`)
 10. Commit with `{ticket-key}: {summary}` format + co-author line
-11. Create PR via `gh pr create` with Jira link in body, plus UI iteration trail for UI-touching tickets
+11. Create a non-draft PR via `gh pr create` with Jira link in body, plus UI iteration trail for UI-touching tickets
 12. Upload final desktop/mobile screenshots to Jira and comment with embedded images for UI-touching tickets
 13. Report PR URL via `report_pr` artifact
 

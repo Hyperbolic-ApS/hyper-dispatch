@@ -6,9 +6,9 @@ These are set once for the HyperDispatch instance (not per-project).
 
 | Variable | Required | Default | Description |
 |---|---|---|---|
-| `JIRA_BASE_URL` | Yes | — | Jira Cloud site URL (e.g., `https://your-site.atlassian.net`) |
-| `JIRA_EMAIL` | Yes | — | Service account email for Jira API auth |
-| `JIRA_API_TOKEN` | Yes | — | Jira API token |
+| `JIRA_SITE_URL` | Yes | — | Jira Cloud site URL for browse links (e.g., `https://your-site.atlassian.net`) |
+| `JIRA_CLOUD_ID` | Yes | — | Jira Cloud ID (UUID from `https://api.atlassian.com/ex/jira/<CLOUD-ID>`) |
+| `JIRA_API_TOKEN` | Yes | — | Service account bearer token (manage at admin.atlassian.com → API keys) |
 | `WARP_API_KEY` | Yes | — | Oz API key for spawning agents |
 | `DATABASE_URL` | Yes | — | PostgreSQL connection string |
 | `GITHUB_TOKEN` | Yes | — | GitHub token for skill discovery and repo access |
