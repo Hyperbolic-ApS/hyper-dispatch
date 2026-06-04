@@ -306,7 +306,7 @@ dashboardRouter.get("/", async (c) => {
   const githubClientByToken = new Map<string, Octokit>();
   const actionStateByPr = new Map<string, PrActionState>();
 
-  // Group PRs by repo so we issue one workflow-run fetch per repo, not per PR.
+  // Group PRs by repo + token so each configured credential boundary is respected.
   const repoGroups = new Map<
     string,
     { owner: string; repo: string; token: string; prs: { prKey: string; pullNumber: number; branchName: string }[] }
@@ -318,7 +318,7 @@ dashboardRouter.get("/", async (c) => {
     const prKey = `${parsedPr.owner}/${parsedPr.repo}#${parsedPr.pullNumber}`;
     const config = configByProjectKey.get(run.project_key);
     const githubToken = config ? resolveProjectTokens(config).githubToken : env.GITHUB_TOKEN;
-    const repoKey = `${parsedPr.owner}/${parsedPr.repo}`;
+    const repoKey = `${parsedPr.owner}/${parsedPr.repo}::${githubToken}`;
     let group = repoGroups.get(repoKey);
     if (!group) {
       group = { owner: parsedPr.owner, repo: parsedPr.repo, token: githubToken, prs: [] };
@@ -337,20 +337,31 @@ dashboardRouter.get("/", async (c) => {
         githubClientByToken.set(token, githubClient);
       }
       try {
-        const { data } = await githubClient.actions.listWorkflowRunsForRepo({
-          owner,
-          repo,
-          per_page: 100,
-        });
+        const workflowRuns: Array<{
+          name?: string | null;
+          status?: string | null;
+          head_branch?: string | null;
+          pull_requests?: Array<{ number?: number }> | null;
+        }> = [];
+        for (let page = 1; ; page += 1) {
+          const { data } = await githubClient.actions.listWorkflowRunsForRepo({
+            owner,
+            repo,
+            per_page: 100,
+            page,
+          });
+          workflowRuns.push(...(data.workflow_runs ?? []));
+          if ((data.workflow_runs ?? []).length < 100) break;
+        }
         for (const pr of prs) {
-          const reviewRunning = data.workflow_runs.some(
+          const reviewRunning = workflowRuns.some(
             (wfRun) =>
               wfRun.name === REVIEW_WORKFLOW_NAME &&
               IN_FLIGHT_WORKFLOW_STATUSES.has(wfRun.status ?? "") &&
               ((wfRun.pull_requests ?? []).some((p) => p.number === pr.pullNumber) ||
                 wfRun.head_branch === pr.branchName)
           );
-          const revisionRunning = data.workflow_runs.some(
+          const revisionRunning = workflowRuns.some(
             (wfRun) =>
               wfRun.name === REVISION_WORKFLOW_NAME &&
               IN_FLIGHT_WORKFLOW_STATUSES.has(wfRun.status ?? "") &&

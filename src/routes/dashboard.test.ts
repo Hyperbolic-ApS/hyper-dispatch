@@ -277,6 +277,7 @@ describe("dashboardRouter", () => {
       owner: "warp",
       repo: "hyper-dispatch",
       per_page: 100,
+      page: 1,
     });
   });
 
@@ -310,8 +311,87 @@ describe("dashboardRouter", () => {
       owner: "warp",
       repo: "hyper-dispatch",
       per_page: 100,
+      page: 1,
     });
     expect(workflowRunListRequests[0]).not.toHaveProperty("event");
+  });
+
+  it("separates workflow-run fetches by token when two projects share the same repo", async () => {
+    getAllDispatchRunsMock.mockResolvedValue([
+      makeDispatchRun({
+        ticket_key: "HYDI-80",
+        project_key: "HYDI",
+        status: "succeeded",
+        pr_url: "https://github.com/warp/hyper-dispatch/pull/80",
+      }),
+      makeDispatchRun({
+        ticket_key: "TEST-81",
+        project_key: "TEST",
+        status: "succeeded",
+        pr_url: "https://github.com/warp/hyper-dispatch/pull/81",
+      }),
+    ]);
+    listProjectConfigsMock.mockResolvedValue([
+      { project_key: "HYDI", github_pat: "token-hydi", active: true },
+      { project_key: "TEST", github_pat: "token-test", active: true },
+    ]);
+    getIssueMock.mockResolvedValue({
+      fields: { status: { name: "In Review", statusCategory: { key: "in-flight" } } },
+    });
+    listWorkflowRunsForRepoMock
+      .mockResolvedValueOnce({ data: { workflow_runs: [] } })
+      .mockResolvedValueOnce({ data: { workflow_runs: [] } });
+
+    const { dashboardRouter } = await import("./dashboard.js");
+    const res = await dashboardRouter.request("http://localhost/");
+
+    expect(res.status).toBe(200);
+    expect(octokitAuthTokens).toEqual(expect.arrayContaining(["token-hydi", "token-test"]));
+    expect(workflowRunListRequests).toHaveLength(2);
+  });
+
+  it("follows pagination and finds in-flight workflow runs on later pages", async () => {
+    getAllDispatchRunsMock.mockResolvedValue([
+      makeDispatchRun({
+        ticket_key: "HYDI-90",
+        status: "succeeded",
+        pr_url: "https://github.com/warp/hyper-dispatch/pull/90",
+        pr_has_conflicts: false,
+      }),
+    ]);
+    getIssueMock.mockResolvedValue({
+      fields: { status: { name: "In Review", statusCategory: { key: "in-flight" } } },
+    });
+
+    const firstPageRuns = Array.from({ length: 100 }, (_, i) => ({
+      name: "Oz PR Review Commenting",
+      status: "completed",
+      pull_requests: [{ number: i + 1000 }],
+      head_branch: `agent/OTHER-${i}`,
+    }));
+    listWorkflowRunsForRepoMock
+      .mockResolvedValueOnce({ data: { workflow_runs: firstPageRuns } })
+      .mockResolvedValueOnce({
+        data: {
+          workflow_runs: [
+            {
+              name: "Oz PR Review Commenting",
+              status: "in_progress",
+              pull_requests: [],
+              head_branch: "agent/HYDI-90",
+            },
+          ],
+        },
+      });
+
+    const { dashboardRouter } = await import("./dashboard.js");
+    const res = await dashboardRouter.request("http://localhost/");
+    const html = await res.text();
+
+    expect(res.status).toBe(200);
+    expect(html).toContain("Review running");
+    expect(workflowRunListRequests[0]).toMatchObject({ page: 1, per_page: 100 });
+    expect(workflowRunListRequests[1]).toMatchObject({ page: 2, per_page: 100 });
   });
   it("includes an immediate refresh trigger when the tab becomes active", async () => {
     getAllDispatchRunsMock.mockResolvedValue([makeDispatchRun()]);
