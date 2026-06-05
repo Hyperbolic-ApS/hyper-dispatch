@@ -161,6 +161,7 @@ const CSS = `
   .row-menu-btn { width: 22px; height: 22px; border: 1px solid #d1d5db; border-radius: 999px; background: #fff; color: #111827; font-size: 14px; line-height: 1; display: inline-flex; align-items: center; justify-content: center; cursor: pointer; padding: 0; }
   .row-menu-btn:hover { background: #f9fafb; }
   .row-menu-list { display: none; position: absolute; right: 0; top: calc(100% + 4px); min-width: 90px; background: #fff; border: 1px solid #d1d5db; border-radius: 6px; box-shadow: 0 8px 20px rgba(0,0,0,0.08); z-index: 20; padding: 4px; }
+  tr:last-child .row-menu-list { top: auto; bottom: calc(100% + 4px); }
   .row-menu.open .row-menu-list { display: block; }
   .row-menu-delete { width: 100%; border: none; background: transparent; color: #b91c1c; text-align: left; border-radius: 4px; font-size: 0.8rem; padding: 6px 8px; cursor: pointer; }
   .row-menu-delete:hover { background: #fee2e2; }
