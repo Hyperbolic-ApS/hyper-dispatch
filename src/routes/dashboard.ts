@@ -142,7 +142,7 @@ const CSS = `
   .stat-link { border: none; text-decoration: none; display: inline-flex; align-items: center; }
   .stat-link:hover { text-decoration: none; filter: brightness(0.95); }
   .stat-selected { box-shadow: inset 0 0 0 2px #fff; outline: 2px solid #111827; outline-offset: 2px; }
-  table { width: 100%; border-collapse: collapse; background: #fff; border-radius: 8px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+  table { width: 100%; border-collapse: collapse; background: #fff; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
   th { background: #f3f4f6; text-align: left; padding: 10px 12px; font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.05em; border-bottom: 1px solid #e5e7eb; }
   td { padding: 10px 12px; border-bottom: 1px solid #f3f4f6; font-size: 0.875rem; vertical-align: top; }
   tr:last-child td { border-bottom: none; }
