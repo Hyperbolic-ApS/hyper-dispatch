@@ -59,6 +59,7 @@ describe("dashboardRouter", () => {
     expect(html).toContain("window.location.reload();");
     expect(html).toContain("⚙ Configure</a>");
     expect(html).toContain("Prod Deployment (Coolify)");
+    expect(html).toContain("Agent Status");
     expect(html).toContain("Not deployed");
   });
 
