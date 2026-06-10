@@ -16,7 +16,7 @@ Displays all tracked dispatch runs in a table with:
 - Spawned-at timestamp in the viewer's local timezone, rendered in 24-hour format without seconds
 - Agent runtime (for running/completed entries)
 - Branch (`agent/{ticket-key}`) with an inline clipboard icon button that copies the branch name to clipboard (shows a checkmark on success)
-- Oz task link (opens the run task/session in Oz when available)
+- Oz task link labeled `Open` (opens the run task/session in Oz when available)
 - PR mergeability badge (`Merge conflicts`, `No conflicts`, or `Unknown` once a PR exists)
 - Production deployment badge from Coolify (`Deployed`, `Not deployed`, or `Unknown`)
 - Session link (clickable, for live runs — opens Oz session)
