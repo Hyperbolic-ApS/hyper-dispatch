@@ -63,6 +63,24 @@ describe("dashboardRouter", () => {
     expect(html).toContain("Not deployed");
   });
 
+  it("renders Spawned At using dd/MM/YY HH:MM format", async () => {
+    getAllDispatchRunsMock.mockResolvedValue([
+      makeDispatchRun({
+        spawned_at: new Date("2026-06-10T12:34:00.000Z"),
+      }),
+    ]);
+    getIssueMock.mockResolvedValue({
+      fields: { status: { name: "To Do", statusCategory: { key: "new" } } },
+    });
+
+    const { dashboardRouter } = await import("./dashboard.js");
+    const res = await dashboardRouter.request("http://localhost/");
+    const html = await res.text();
+
+    expect(res.status).toBe(200);
+    expect(html).toMatch(/\d{2}\/\d{2}\/\d{2} \d{2}:\d{2}/);
+  });
+
   it("renders a project dropdown and filters rows by selected project", async () => {
     getAllDispatchRunsMock.mockResolvedValue([
       makeDispatchRun({ ticket_key: "HYDI-31", project_key: "HYDI" }),
