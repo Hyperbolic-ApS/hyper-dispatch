@@ -109,8 +109,16 @@ export async function spawnAgent(
   // First skill in the array is the run skill (oz-agent-sdk accepts one skill)
   const skillSpec = config.skills.length > 0 ? config.skills[0] : undefined;
 
+  // Optional per-project Oz agent identity, used as the run's execution
+  // principal so all of a project's runs are attributed to the same agent.
+  // Only valid for team-owned runs (the default for single-team API keys).
+  const agentIdentityUid = config.oz_agent_identity_uid?.trim()
+    ? config.oz_agent_identity_uid.trim()
+    : undefined;
+
   const runResponse = await client.agent.run({
     prompt,
+    ...(agentIdentityUid ? { agent_identity_uid: agentIdentityUid } : {}),
     config: {
       name: ticketKey,
       environment_id: config.oz_env_id,

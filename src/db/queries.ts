@@ -7,6 +7,7 @@ export interface ProjectConfig {
   jira_cloud_id: string;
   board_id: number;
   oz_env_id: string;
+  oz_agent_identity_uid: string | null;
   github_repo: string;
   default_model: string | null;
   model_field_id: string | null;

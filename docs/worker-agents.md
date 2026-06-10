@@ -7,6 +7,7 @@ Worker agents are Oz cloud agent runs that perform the actual coding work. Hyper
 The Agent Spawner creates a run via the `oz-agent-sdk` with:
 - **name**: Jira ticket key (e.g., `PROJ-123`).
 - **environment_id**: from the project config.
+- **agent_identity_uid**: optional Oz agent identity from the project config (`oz_agent_identity_uid`). When set, it becomes the run's execution principal so all of the project's runs are tracked under one Oz agent. Only valid for team-owned runs (the default for single-team API keys); omitted when unset.
 - **model_id**: per-ticket custom field → project default → Oz default (cascade).
 - **skill**: from the project config (one or more skill specs).
 - **mcp_servers**: optional map from project config (`mcp_servers`) when set.
