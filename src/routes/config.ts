@@ -279,6 +279,11 @@ document.addEventListener('DOMContentLoaded', () => {
       <div class="hint">Run <code>oz environment list</code> in your terminal, or find it in Warp &rarr; Settings &rarr; Environments</div>
     </div>
     <div class="field">
+      <label for="oz_agent_identity_uid">Oz Agent ID</label>
+      <input type="text" id="oz_agent_identity_uid" name="oz_agent_identity_uid" value="${v.oz_agent_identity_uid ?? ""}">
+      <div class="hint">Optional. Oz agent identity UID used as the execution principal for this project\'s runs, so all of its work is tracked under one agent. Leave blank to use the API key\'s default principal.</div>
+    </div>
+    <div class="field">
       <label for="github_repo">GitHub Repo</label>
       <input type="text" id="github_repo" name="github_repo" value="${v.github_repo ?? ""}" required>
       <div class="hint">Format: owner/repo</div>
@@ -516,6 +521,9 @@ ${projectForm("/config")}`;
     jira_cloud_id: String(form.jira_cloud_id),
     board_id: parseInt(String(form.board_id), 10),
     oz_env_id: String(form.oz_env_id),
+    oz_agent_identity_uid: form.oz_agent_identity_uid
+      ? String(form.oz_agent_identity_uid)
+      : null,
     github_repo: String(form.github_repo),
     default_model: form.default_model ? String(form.default_model) : null,
     backlog_column_name: formColumnName(
@@ -607,6 +615,9 @@ configRouter.post("/:projectKey", async (c) => {
     jira_cloud_id: String(form.jira_cloud_id),
     board_id: parseInt(String(form.board_id), 10),
     oz_env_id: String(form.oz_env_id),
+    oz_agent_identity_uid: form.oz_agent_identity_uid
+      ? String(form.oz_agent_identity_uid)
+      : null,
     github_repo: String(form.github_repo),
     default_model: form.default_model ? String(form.default_model) : null,
     model_field_id: form.model_field_id ? String(form.model_field_id) : null,

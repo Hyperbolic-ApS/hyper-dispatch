@@ -48,6 +48,7 @@ describe("configRouter", () => {
       jira_cloud_id: "cloud-id",
       board_id: "21",
       oz_env_id: "env_123",
+      oz_agent_identity_uid: "agent_identity_123",
       github_repo: "owner/repo",
       default_model: "auto",
       model_field_id: "customfield_10010",
@@ -101,9 +102,21 @@ describe("configRouter", () => {
         in_progress_column_name: DEFAULT_JIRA_COLUMN_MAPPINGS.inProgress,
         in_review_column_name: "In Review",
         done_column_name: DEFAULT_JIRA_COLUMN_MAPPINGS.done,
+        oz_agent_identity_uid: "agent_identity_123",
         skills: ["owner/repo:first", "owner/repo:second"],
         mcp_servers: { playwright: { command: "npx" } },
       })
+    );
+  });
+
+  it("POST / normalizes empty Oz Agent ID to null", async () => {
+    const client = await getClient();
+    await client.index.$post({
+      form: { ...baseCreateForm(), oz_agent_identity_uid: "" },
+    });
+
+    expect(createProjectConfigMock).toHaveBeenCalledWith(
+      expect.objectContaining({ oz_agent_identity_uid: null })
     );
   });
 

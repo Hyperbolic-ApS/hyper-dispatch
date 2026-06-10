@@ -70,6 +70,7 @@ export function makeProjectConfig(
     jira_cloud_id: "cloud-123",
     board_id: 1,
     oz_env_id: "env_123",
+    oz_agent_identity_uid: null,
     github_repo: "org/hyper-dispatch",
     default_model: "auto",
     model_field_id: null,

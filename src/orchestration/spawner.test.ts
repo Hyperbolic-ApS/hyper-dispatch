@@ -344,4 +344,30 @@ describe("spawnAgent", () => {
     expect(warnSpy).toHaveBeenCalled();
     warnSpy.mockRestore();
   });
+
+  it("passes agent_identity_uid at the top level when configured", async () => {
+    getTransitionsMock.mockResolvedValue({ transitions: [] });
+    const issue = makeJiraIssue();
+    const config = makeProjectConfig({
+      oz_agent_identity_uid: "agent_identity_123",
+    });
+
+    await spawnAgent("HYDI-32", config, issue);
+
+    expect(runMock).toHaveBeenCalledWith(
+      expect.objectContaining({ agent_identity_uid: "agent_identity_123" })
+    );
+  });
+
+  it("omits agent_identity_uid when not configured", async () => {
+    getTransitionsMock.mockResolvedValue({ transitions: [] });
+    const issue = makeJiraIssue();
+    const config = makeProjectConfig({ oz_agent_identity_uid: null });
+
+    await spawnAgent("HYDI-32", config, issue);
+
+    expect(runMock).toHaveBeenCalledWith(
+      expect.not.objectContaining({ agent_identity_uid: expect.anything() })
+    );
+  });
 });
