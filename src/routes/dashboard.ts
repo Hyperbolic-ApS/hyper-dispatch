@@ -6,7 +6,11 @@ import { resolveProjectTokens } from "../config/env.js";
 import { brandIconSvg, faviconDataUri } from "./branding.js";
 import * as jira from "../jira/client.js";
 import { annotateRunsWithProdDeploymentStatus } from "../coolify/prod-deployment.js";
-import { getPullRequestState, parseGithubPullRequestUrl } from "../github/pull-requests.js";
+import {
+  getPullRequestDisplayState,
+  getPullRequestState,
+  parseGithubPullRequestUrl,
+} from "../github/pull-requests.js";
 
 export const dashboardRouter = new Hono();
 const spawnedAtDateTimeFormatter = new Intl.DateTimeFormat("en-GB", {
@@ -244,6 +248,7 @@ dashboardRouter.get("/", async (c) => {
     : "";
   const [runs, configs] = await Promise.all([getAllDispatchRuns(), listProjectConfigs()]);
   const runsWithProdDeployment = await annotateRunsWithProdDeploymentStatus(runs);
+  const prDisplayStateByKey = new Map<string, "open" | "draft" | "merged" | "closed">();
   const projects = Array.from(
     new Set([
       ...configs.filter((c) => c.active).map((c) => c.project_key),
@@ -264,6 +269,20 @@ dashboardRouter.get("/", async (c) => {
         }
       } catch {
         // Best effort only — dashboard should still render if Jira is unavailable.
+      }
+    })
+  );
+  await Promise.all(
+    runsWithProdDeployment.map(async (run) => {
+      if (!run.pr_url) return;
+      if (!parseGithubPullRequestUrl(run.pr_url)) return;
+      try {
+        const config = configs.find((item) => item.project_key === run.project_key);
+        const githubToken = config ? resolveProjectTokens(config).githubToken : env.GITHUB_TOKEN;
+        const prDisplayState = await getPullRequestDisplayState(run.pr_url, githubToken);
+        prDisplayStateByKey.set(run.ticket_key, prDisplayState);
+      } catch {
+        // Best effort only — dashboard should still render if GitHub is unavailable.
       }
     })
   );
@@ -341,7 +360,16 @@ dashboardRouter.get("/", async (c) => {
           ? (() => {
               const parsedPr = parseGithubPullRequestUrl(run.pr_url ?? "");
               const prLabel = parsedPr ? `PR #${parsedPr.pullNumber}` : "PR";
-              return `<a href="${run.pr_url}" target="_blank">${prLabel}</a>`;
+              const prDisplayState = prDisplayStateByKey.get(run.ticket_key);
+              const prSuffix =
+                prDisplayState === "merged"
+                  ? " (Merged)"
+                  : prDisplayState === "draft"
+                    ? " (Draft)"
+                    : prDisplayState === "closed"
+                      ? " (Closed)"
+                      : "";
+              return `<a href="${run.pr_url}" target="_blank">${prLabel}${prSuffix}</a>`;
             })()
           : "-";
     const rowActions = `<div class="row-menu" data-row-menu>

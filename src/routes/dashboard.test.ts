@@ -7,6 +7,7 @@ const getIssueMock = vi.fn();
 const annotateRunsWithProdDeploymentStatusMock = vi.fn();
 const deleteRunMock = vi.fn();
 const parseGithubPullRequestUrlMock = vi.fn();
+const getPullRequestDisplayStateMock = vi.fn();
 const getPullRequestStateMock = vi.fn();
 
 vi.mock("../db/config-queries.js", () => ({
@@ -22,6 +23,7 @@ vi.mock("../jira/client.js", () => ({
 }));
 vi.mock("../github/pull-requests.js", () => ({
   parseGithubPullRequestUrl: parseGithubPullRequestUrlMock,
+  getPullRequestDisplayState: getPullRequestDisplayStateMock,
   getPullRequestState: getPullRequestStateMock,
 }));
 
@@ -377,6 +379,7 @@ describe("dashboardRouter", () => {
       fields: { status: { name: "Done", statusCategory: { key: "done" } } },
     });
     parseGithubPullRequestUrlMock.mockReturnValue({ owner: "org", repo: "repo", pullNumber: 123 });
+    getPullRequestDisplayStateMock.mockResolvedValue("open");
 
     const { dashboardRouter } = await import("./dashboard.js");
     const res = await dashboardRouter.request("http://localhost/");
@@ -384,5 +387,77 @@ describe("dashboardRouter", () => {
 
     expect(res.status).toBe(200);
     expect(html).toContain('<a href="https://github.com/org/repo/pull/123" target="_blank">PR #123</a>');
+  });
+
+  it("renders PR link with merged suffix when pull request is merged", async () => {
+    getAllDispatchRunsMock.mockResolvedValue([
+      makeDispatchRun({
+        ticket_key: "HYDI-54",
+        status: "succeeded",
+        pr_url: "https://github.com/org/repo/pull/54",
+      }),
+    ]);
+    getIssueMock.mockResolvedValue({
+      fields: { status: { name: "Done", statusCategory: { key: "done" } } },
+    });
+    parseGithubPullRequestUrlMock.mockReturnValue({ owner: "org", repo: "repo", pullNumber: 54 });
+    getPullRequestDisplayStateMock.mockResolvedValue("merged");
+
+    const { dashboardRouter } = await import("./dashboard.js");
+    const res = await dashboardRouter.request("http://localhost/");
+    const html = await res.text();
+
+    expect(res.status).toBe(200);
+    expect(html).toContain(
+      '<a href="https://github.com/org/repo/pull/54" target="_blank">PR #54 (Merged)</a>'
+    );
+  });
+
+  it("renders PR link with draft suffix when pull request is draft", async () => {
+    getAllDispatchRunsMock.mockResolvedValue([
+      makeDispatchRun({
+        ticket_key: "HYDI-54",
+        status: "succeeded",
+        pr_url: "https://github.com/org/repo/pull/54",
+      }),
+    ]);
+    getIssueMock.mockResolvedValue({
+      fields: { status: { name: "In Review", statusCategory: { key: "in-flight" } } },
+    });
+    parseGithubPullRequestUrlMock.mockReturnValue({ owner: "org", repo: "repo", pullNumber: 54 });
+    getPullRequestDisplayStateMock.mockResolvedValue("draft");
+
+    const { dashboardRouter } = await import("./dashboard.js");
+    const res = await dashboardRouter.request("http://localhost/");
+    const html = await res.text();
+
+    expect(res.status).toBe(200);
+    expect(html).toContain(
+      '<a href="https://github.com/org/repo/pull/54" target="_blank">PR #54 (Draft)</a>'
+    );
+  });
+
+  it("renders PR link with closed suffix when pull request is closed and unmerged", async () => {
+    getAllDispatchRunsMock.mockResolvedValue([
+      makeDispatchRun({
+        ticket_key: "HYDI-54",
+        status: "succeeded",
+        pr_url: "https://github.com/org/repo/pull/54",
+      }),
+    ]);
+    getIssueMock.mockResolvedValue({
+      fields: { status: { name: "In Review", statusCategory: { key: "in-flight" } } },
+    });
+    parseGithubPullRequestUrlMock.mockReturnValue({ owner: "org", repo: "repo", pullNumber: 54 });
+    getPullRequestDisplayStateMock.mockResolvedValue("closed");
+
+    const { dashboardRouter } = await import("./dashboard.js");
+    const res = await dashboardRouter.request("http://localhost/");
+    const html = await res.text();
+
+    expect(res.status).toBe(200);
+    expect(html).toContain(
+      '<a href="https://github.com/org/repo/pull/54" target="_blank">PR #54 (Closed)</a>'
+    );
   });
 });
