@@ -120,6 +120,17 @@ describe("configRouter", () => {
     );
   });
 
+  it("POST / normalizes whitespace-only Oz Agent ID to null", async () => {
+    const client = await getClient();
+    await client.index.$post({
+      form: { ...baseCreateForm(), oz_agent_identity_uid: "   " },
+    });
+
+    expect(createProjectConfigMock).toHaveBeenCalledWith(
+      expect.objectContaining({ oz_agent_identity_uid: null })
+    );
+  });
+
   it("POST / returns MCP JSON parse errors with line numbers", async () => {
     const client = await getClient();
     const res = await client.index.$post({
@@ -177,6 +188,32 @@ describe("configRouter", () => {
         github_pat: "new-pat",
         jira_api_token: "new-jira-token",
       })
+    );
+  });
+
+  it("POST /:projectKey forwards oz_agent_identity_uid to updateProjectConfig", async () => {
+    const client = await getClient();
+    await client[":projectKey"].$post({
+      param: { projectKey: "HYDI" },
+      form: { ...baseCreateForm(), oz_agent_identity_uid: "agent_identity_123" },
+    });
+
+    expect(updateProjectConfigMock).toHaveBeenCalledWith(
+      "HYDI",
+      expect.objectContaining({ oz_agent_identity_uid: "agent_identity_123" })
+    );
+  });
+
+  it("POST /:projectKey normalizes empty Oz Agent ID to null", async () => {
+    const client = await getClient();
+    await client[":projectKey"].$post({
+      param: { projectKey: "HYDI" },
+      form: { ...baseCreateForm(), oz_agent_identity_uid: "" },
+    });
+
+    expect(updateProjectConfigMock).toHaveBeenCalledWith(
+      "HYDI",
+      expect.objectContaining({ oz_agent_identity_uid: null })
     );
   });
 

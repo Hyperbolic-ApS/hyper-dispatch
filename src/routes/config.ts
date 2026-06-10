@@ -521,9 +521,7 @@ ${projectForm("/config")}`;
     jira_cloud_id: String(form.jira_cloud_id),
     board_id: parseInt(String(form.board_id), 10),
     oz_env_id: String(form.oz_env_id),
-    oz_agent_identity_uid: form.oz_agent_identity_uid
-      ? String(form.oz_agent_identity_uid)
-      : null,
+    oz_agent_identity_uid: String(form.oz_agent_identity_uid ?? "").trim() || null,
     github_repo: String(form.github_repo),
     default_model: form.default_model ? String(form.default_model) : null,
     backlog_column_name: formColumnName(
@@ -615,9 +613,7 @@ configRouter.post("/:projectKey", async (c) => {
     jira_cloud_id: String(form.jira_cloud_id),
     board_id: parseInt(String(form.board_id), 10),
     oz_env_id: String(form.oz_env_id),
-    oz_agent_identity_uid: form.oz_agent_identity_uid
-      ? String(form.oz_agent_identity_uid)
-      : null,
+    oz_agent_identity_uid: String(form.oz_agent_identity_uid ?? "").trim() || null,
     github_repo: String(form.github_repo),
     default_model: form.default_model ? String(form.default_model) : null,
     model_field_id: form.model_field_id ? String(form.model_field_id) : null,
