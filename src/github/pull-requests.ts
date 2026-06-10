@@ -37,3 +37,27 @@ export async function getPullRequestState(
   });
   return pullRequest.state;
 }
+
+export type PullRequestDisplayState = "open" | "draft" | "merged" | "closed";
+
+export async function getPullRequestDisplayState(
+  prUrl: string,
+  githubToken: string
+): Promise<PullRequestDisplayState> {
+  const parsed = parseGithubPullRequestUrl(prUrl);
+  if (!parsed) {
+    throw new Error("Invalid GitHub pull request URL.");
+  }
+
+  const github = new Octokit({ auth: githubToken });
+  const { data: pullRequest } = await github.pulls.get({
+    owner: parsed.owner,
+    repo: parsed.repo,
+    pull_number: parsed.pullNumber,
+  });
+
+  if (pullRequest.merged_at) return "merged";
+  if (pullRequest.state === "open" && pullRequest.draft) return "draft";
+  if (pullRequest.state === "open") return "open";
+  return "closed";
+}

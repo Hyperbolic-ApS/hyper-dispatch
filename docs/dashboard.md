@@ -21,6 +21,7 @@ Displays all tracked dispatch runs in a table with:
 - Production deployment badge from Coolify (`Deployed`, `Not deployed`, or `Unknown`)
 - Session link (clickable, for live runs — opens Oz session)
 - PR link with PR number (for completed runs, e.g. `PR #123` when parseable)
+  - Non-open PRs include a status suffix in the link text: `(Merged)`, `(Draft)`, or `(Closed)`
 - Compact row action menu (`⋮`) on the right side with `Delete`
   - The action popover is allowed to extend beyond table bounds so the `Delete` action remains fully visible on the last row, including at non-default browser zoom levels
   - Deletion is blocked when the run has an open GitHub PR, with an inline error prompt to close the PR first
