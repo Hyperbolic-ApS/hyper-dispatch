@@ -418,7 +418,7 @@ dashboardRouter.get("/", async (c) => {
         <th>Project</th>
         <th>Summary</th>
         <th>Ticket Status</th>
-        <th>Status</th>
+        <th>Agent Status</th>
         <th>Spawned At</th>
         <th>Runtime</th>
         <th>Branch</th>
