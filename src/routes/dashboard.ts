@@ -326,7 +326,7 @@ dashboardRouter.get("/", async (c) => {
     const branchName = `agent/${run.ticket_key}`;
     const runtime = formatDuration(run.spawned_at, run.completed_at);
     const ozTaskLink = run.session_link
-      ? `<a href="${run.session_link}" target="_blank">Open task</a>`
+      ? `<a href="${run.session_link}" target="_blank">Open</a>`
       : "-";
     const blockedByHtml =
       run.blocked_by && run.blocked_by.length > 0
