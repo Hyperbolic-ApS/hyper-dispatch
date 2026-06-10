@@ -9,10 +9,10 @@ import { annotateRunsWithProdDeploymentStatus } from "../coolify/prod-deployment
 import { getPullRequestState, parseGithubPullRequestUrl } from "../github/pull-requests.js";
 
 export const dashboardRouter = new Hono();
-const dashboardDateTimeFormatter = new Intl.DateTimeFormat(undefined, {
-  year: "numeric",
-  month: "short",
-  day: "numeric",
+const spawnedAtDateTimeFormatter = new Intl.DateTimeFormat("en-GB", {
+  year: "2-digit",
+  month: "2-digit",
+  day: "2-digit",
   hour: "2-digit",
   minute: "2-digit",
   hour12: false,
@@ -30,9 +30,11 @@ function formatDuration(start: Date | null, end: Date | null): string {
   return `${hours}h ${minutes % 60}m`;
 }
 
-function formatDate(d: Date | null): string {
+function formatSpawnedAtDate(d: Date | null): string {
   if (!d) return "-";
-  return dashboardDateTimeFormatter.format(d);
+  const parts = spawnedAtDateTimeFormatter.formatToParts(d);
+  const values = new Map(parts.map((part) => [part.type, part.value]));
+  return `${values.get("day")}/${values.get("month")}/${values.get("year")} ${values.get("hour")}:${values.get("minute")}`;
 }
 
 function escapeHtml(value: string): string {
@@ -363,7 +365,7 @@ dashboardRouter.get("/", async (c) => {
         ticketStatusByKey.get(run.ticket_key)?.categoryKey ?? null
       )}</td>
       <td>${statusBadge(run.status)}</td>
-      <td>${formatDate(run.spawned_at)}</td>
+      <td>${formatSpawnedAtDate(run.spawned_at)}</td>
       <td>${runtime}</td>
       <td>
         <span class="branch-cell">
