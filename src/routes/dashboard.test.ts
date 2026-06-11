@@ -518,4 +518,46 @@ describe("dashboardRouter", () => {
       '<a href="https://github.com/org/repo/pull/54" target="_blank">PR #54 (Closed)</a>'
     );
   });
+
+  it("logs a warning but still renders the row when the PR display-state lookup fails", async () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    getAllDispatchRunsMock.mockResolvedValue([
+      makeDispatchRun({
+        ticket_key: "HYDI-60",
+        status: "succeeded",
+        pr_url: "https://github.com/org/repo/pull/60",
+      }),
+    ]);
+    getIssueMock.mockResolvedValue({
+      fields: { status: { name: "In Review", statusCategory: { key: "in-flight" } } },
+    });
+    parseGithubPullRequestUrlMock.mockReturnValue({ owner: "org", repo: "repo", pullNumber: 60 });
+    getPullRequestDisplayStateMock.mockRejectedValue(new Error("rate limited"));
+
+    const { dashboardRouter } = await import("./dashboard.js");
+    const res = await dashboardRouter.request("http://localhost/");
+    const html = await res.text();
+
+    // The row still renders (no status suffix), and the swallowed failure is logged.
+    expect(res.status).toBe(200);
+    expect(html).toContain('<a href="https://github.com/org/repo/pull/60" target="_blank">PR #60</a>');
+    expect(warnSpy).toHaveBeenCalled();
+  });
+
+  it("logs a warning but still renders the row when the Jira status lookup fails", async () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    getAllDispatchRunsMock.mockResolvedValue([
+      makeDispatchRun({ ticket_key: "HYDI-61", project_key: "HYDI", status: "running" }),
+    ]);
+    getIssueMock.mockRejectedValue(new Error("jira down"));
+
+    const { dashboardRouter } = await import("./dashboard.js");
+    const res = await dashboardRouter.request("http://localhost/");
+    const html = await res.text();
+
+    // The row still renders (no ticket-status badge), and the swallowed failure is logged.
+    expect(res.status).toBe(200);
+    expect(html).toContain(">HYDI-61</a>");
+    expect(warnSpy).toHaveBeenCalled();
+  });
 });

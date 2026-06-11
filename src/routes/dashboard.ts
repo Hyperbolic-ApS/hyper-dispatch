@@ -272,8 +272,9 @@ dashboardRouter.get("/", async (c) => {
             categoryKey: status.statusCategory.key,
           });
         }
-      } catch {
+      } catch (err) {
         // Best effort only — dashboard should still render if Jira is unavailable.
+        console.warn(`[dashboard] Failed to load Jira status for ${run.ticket_key}:`, err);
       }
     })
   );
@@ -286,8 +287,9 @@ dashboardRouter.get("/", async (c) => {
         const githubToken = config ? resolveProjectTokens(config).githubToken : env.GITHUB_TOKEN;
         const prDisplayState = await getPullRequestDisplayState(run.pr_url, githubToken);
         prDisplayStateByKey.set(run.ticket_key, prDisplayState);
-      } catch {
+      } catch (err) {
         // Best effort only — dashboard should still render if GitHub is unavailable.
+        console.warn(`[dashboard] Failed to load PR status for ${run.ticket_key}:`, err);
       }
     })
   );
