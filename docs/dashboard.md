@@ -18,7 +18,7 @@ Displays all tracked dispatch runs in a table with:
 - Branch (`agent/{ticket-key}`) with an inline clipboard icon button that copies the branch name to clipboard (shows a checkmark on success)
 - Oz task link labeled `Open` (opens the run task/session in Oz when available)
 - PR mergeability badge (`Merge conflicts`, `No conflicts`, or `Unknown` once a PR exists)
-- Production deployment badge from Coolify (`Deployed`, `Not deployed`, or `Unknown`)
+- Production deployment badge from Coolify (`Deployed`, `Not deployed`, or `Unknown`) is currently hidden from the dashboard table while feature wiring is retained in code for quick re-enablement
 - Session link (clickable, for live runs — opens Oz session)
 - PR link with PR number (for completed runs, e.g. `PR #123` when parseable)
   - Non-open PRs include a status suffix in the link text: `(Merged)`, `(Draft)`, or `(Closed)`

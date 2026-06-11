@@ -115,6 +115,7 @@ function prodDeploymentBadge(deployedToProd: boolean | null): string {
   return '<span style="padding:2px 8px;border-radius:4px;font-size:0.75rem;font-weight:600;background:#e5e7eb;color:#111">Unknown</span>';
 }
 
+const showProdDeploymentColumn = false;
 
 function buildDashboardRedirect(
   filters: { project?: string | null; hideDone?: string | null; status?: string | null },
@@ -429,7 +430,7 @@ dashboardRouter.get("/", async (c) => {
       </td>
       <td>${ozTaskLink}</td>
       <td>${prConflictBadge(run.pr_has_conflicts, Boolean(run.pr_url))}</td>
-      <td>${prodDeploymentBadge(run.deployed_to_prod)}</td>
+      ${showProdDeploymentColumn ? `<td>${prodDeploymentBadge(run.deployed_to_prod)}</td>` : ""}
       <td>${actionLink}${blockedByHtml}</td>
       <td class="row-actions-cell">${rowActions}</td>
     </tr>`;
@@ -480,7 +481,7 @@ dashboardRouter.get("/", async (c) => {
         <th>Branch</th>
         <th>Oz Task</th>
         <th>PR Mergeability</th>
-        <th>Prod Deployment (Coolify)</th>
+        ${showProdDeploymentColumn ? "<th>Prod Deployment (Coolify)</th>" : ""}
         <th>Links</th>
         <th></th>
       </tr>
@@ -488,7 +489,7 @@ dashboardRouter.get("/", async (c) => {
     <tbody>
       ${
         statusFilteredRuns.length === 0
-          ? `<tr><td colspan="13" style="text-align:center;color:#6b7280">${
+          ? `<tr><td colspan="${showProdDeploymentColumn ? 13 : 12}" style="text-align:center;color:#6b7280">${
               selectedStatus
                 ? `no ${selectedStatus} tasks available`
                 : "No runs found for the current filter"
