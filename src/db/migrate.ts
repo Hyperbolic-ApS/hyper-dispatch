@@ -14,6 +14,7 @@ export async function runMigrations(): Promise<void> {
   await sql.unsafe(`
     ALTER TABLE project_configs
       ADD COLUMN IF NOT EXISTS oz_agent_identity_uid TEXT,
+      ADD COLUMN IF NOT EXISTS oz_api_key TEXT,
       ADD COLUMN IF NOT EXISTS github_pat TEXT,
       ADD COLUMN IF NOT EXISTS jira_api_token TEXT,
       ADD COLUMN IF NOT EXISTS mcp_servers JSONB,

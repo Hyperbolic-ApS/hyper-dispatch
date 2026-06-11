@@ -1,7 +1,7 @@
 import { Octokit } from "@octokit/rest";
 import OzAPI from "oz-agent-sdk";
 import type { ArtifactItem } from "oz-agent-sdk/resources/agent/runs.js";
-import { env } from "../config/env.js";
+import { env, resolveProjectTokens } from "../config/env.js";
 import * as jira from "../jira/client.js";
 import {
   getRunsByStatus,
@@ -23,14 +23,17 @@ const INPROGRESS_STATES = new Set([
 ]);
 
 // Lazy singletons
-let _ozClient: OzAPI | null = null;
+const ozClientsByApiKey = new Map<string, OzAPI>();
 let _githubClient: Octokit | null = null;
 
-function getOzClient(): OzAPI {
-  if (!_ozClient) {
-    _ozClient = new OzAPI({ apiKey: env.WARP_API_KEY });
+function getOzClient(apiKey: string): OzAPI {
+  const existing = ozClientsByApiKey.get(apiKey);
+  if (existing) {
+    return existing;
   }
-  return _ozClient;
+  const client = new OzAPI({ apiKey });
+  ozClientsByApiKey.set(apiKey, client);
+  return client;
 }
 
 function getGithubClient(): Octokit {
@@ -195,7 +198,6 @@ export async function checkRuns(): Promise<void> {
   const runningRuns = await getRunsByStatus("running");
 
   if (runningRuns.length > 0) {
-    const client = getOzClient();
     const maxDurationMs = env.MAX_RUN_DURATION_HOURS * 60 * 60 * 1000;
     const now = new Date();
 
@@ -206,6 +208,12 @@ export async function checkRuns(): Promise<void> {
       }
 
       try {
+        const projectConfig = await getProjectConfig(run.project_key);
+        const client = getOzClient(
+          projectConfig
+            ? resolveProjectTokens(projectConfig).ozApiKey
+            : env.WARP_API_KEY
+        );
         const ozRun = await client.agent.runs.retrieve(run.run_id);
         const state = ozRun.state;
 
@@ -222,13 +230,12 @@ export async function checkRuns(): Promise<void> {
 
           // Transition Jira to "In Review" (best-effort)
           try {
-            const config = await getProjectConfig(run.project_key);
             const columnMappings = resolveJiraColumnMappings({
-              backlog: config?.backlog_column_name,
-              toDo: config?.to_do_column_name,
-              inProgress: config?.in_progress_column_name,
-              inReview: config?.in_review_column_name,
-              done: config?.done_column_name,
+              backlog: projectConfig?.backlog_column_name,
+              toDo: projectConfig?.to_do_column_name,
+              inProgress: projectConfig?.in_progress_column_name,
+              inReview: projectConfig?.in_review_column_name,
+              done: projectConfig?.done_column_name,
             });
             const transitions = await jira.getTransitions(run.ticket_key);
             const inReview = transitions.transitions.find(

@@ -14,6 +14,7 @@ Stores per-project configuration. Managed via the config UI.
 | `jira_cloud_id` | `TEXT` | Jira cloud site ID for API calls |
 | `board_id` | `INTEGER` | Board ID for validation |
 | `oz_env_id` | `TEXT` | Oz environment ID |
+| `oz_api_key` | `TEXT` | Optional per-project Oz API key override used for all Oz SDK calls (null = global `WARP_API_KEY`) |
 | `oz_agent_identity_uid` | `TEXT` | Optional Oz agent identity UID used as the execution principal for spawned runs (null = API key default) |
 | `github_repo` | `TEXT` | GitHub repo (e.g., "org/mono-repo") |
 | `default_model` | `TEXT` | Default LLM model ID (null = Oz default) |

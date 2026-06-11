@@ -7,6 +7,7 @@ export interface ProjectConfig {
   jira_cloud_id: string;
   board_id: number;
   oz_env_id: string;
+  oz_api_key: string | null;
   oz_agent_identity_uid: string | null;
   github_repo: string;
   default_model: string | null;
@@ -18,6 +19,8 @@ export interface ProjectConfig {
   done_column_name: string;
   skills: string[];
   mcp_servers: Record<string, unknown> | null;
+  github_pat: string | null;
+  jira_api_token: string | null;
   active: boolean;
   created_at: Date;
   updated_at: Date;
