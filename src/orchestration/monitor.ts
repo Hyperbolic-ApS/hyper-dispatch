@@ -201,6 +201,13 @@ export async function checkRuns(): Promise<void> {
     const maxDurationMs = env.MAX_RUN_DURATION_HOURS * 60 * 60 * 1000;
     const now = new Date();
 
+    // Deduplicate DB lookups — fetch each project config once regardless of
+    // how many running runs share the same project key.
+    const projectKeys = [...new Set(runningRuns.map(r => r.project_key))];
+    const configMap = new Map(
+      await Promise.all(projectKeys.map(async k => [k, await getProjectConfig(k)] as const))
+    );
+
     for (const run of runningRuns) {
       if (!run.run_id) {
         console.warn(`[monitor] Run for ${run.ticket_key} has no run_id, skipping.`);
@@ -208,7 +215,7 @@ export async function checkRuns(): Promise<void> {
       }
 
       try {
-        const projectConfig = await getProjectConfig(run.project_key);
+        const projectConfig = configMap.get(run.project_key) ?? null;
         const client = getOzClient(
           projectConfig
             ? resolveProjectTokens(projectConfig).ozApiKey

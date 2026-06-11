@@ -281,7 +281,7 @@ document.addEventListener('DOMContentLoaded', () => {
     <div class="field">
       <label for="oz_api_key">Oz API Key <span style="font-weight:400;color:#6b7280">(per-project override)</span></label>
       <input type="password" id="oz_api_key" name="oz_api_key" autocomplete="new-password" ${config?.oz_api_key ? 'placeholder="\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022"' : ""}>
-      <div class="hint">Input an Oz Cloud API Key here. If a Agent ID is provided, the key should be created specifically for that agent.</div>
+      <div class="hint">Input an Oz Cloud API Key here. If an Agent ID is provided, the key should be created specifically for that agent.</div>
     </div>
     <div class="field">
       <label for="oz_agent_identity_uid">Oz Agent ID</label>
