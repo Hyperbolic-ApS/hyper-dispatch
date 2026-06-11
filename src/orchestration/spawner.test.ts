@@ -2,11 +2,22 @@ import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
 import { makeJiraIssue, makeProjectConfig } from "../test/fixtures.js";
 const {
   runMock,
+  retrieveRunMock,
   getTransitionsMock,
   transitionIssueMock,
   updateRunStatusMock,
 } = vi.hoisted(() => ({
-  runMock: vi.fn(async () => ({ run_id: "run_hydi_32" })),
+  runMock: vi.fn(async () => ({ run_id: "run_hydi_32", state: "QUEUED", task_id: "run_hydi_32" })),
+  retrieveRunMock: vi.fn(async () => ({
+    run_id: "run_hydi_32",
+    state: "INPROGRESS",
+    task_id: "run_hydi_32",
+    title: "HYDI-32",
+    prompt: "Implement HYDI-32",
+    created_at: "2026-01-01T00:00:00Z",
+    updated_at: "2026-01-01T00:00:00Z",
+    session_link: "https://oz.example/runs/run_hydi_32",
+  })),
   getTransitionsMock: vi.fn(),
   transitionIssueMock: vi.fn(),
   updateRunStatusMock: vi.fn(),
@@ -15,7 +26,7 @@ const {
 vi.mock("oz-agent-sdk", () => {
   return {
     default: class MockOzApi {
-      agent = { run: runMock };
+      agent = { run: runMock, runs: { retrieve: retrieveRunMock } };
     },
   };
 });
@@ -265,6 +276,7 @@ describe("spawnAgent", () => {
   beforeEach(() => {
     fetchSpy = vi.spyOn(globalThis, "fetch");
     runMock.mockClear();
+    retrieveRunMock.mockClear();
     getTransitionsMock.mockReset();
     transitionIssueMock.mockReset();
     updateRunStatusMock.mockReset();
@@ -313,8 +325,10 @@ describe("spawnAgent", () => {
         run_id: "run_hydi_32",
         model: "default-model",
         spawned_at: expect.any(Date),
+        session_link: "https://oz.example/runs/run_hydi_32",
       })
     );
+    expect(retrieveRunMock).toHaveBeenCalledWith("run_hydi_32");
     expect(transitionIssueMock).toHaveBeenCalledWith("HYDI-32", "31");
   });
 
@@ -341,6 +355,27 @@ describe("spawnAgent", () => {
 
     expect(runMock).toHaveBeenCalledTimes(1);
     expect(updateRunStatusMock).toHaveBeenCalledTimes(1);
+    expect(warnSpy).toHaveBeenCalled();
+    warnSpy.mockRestore();
+  });
+
+  it("continues when run detail lookup fails and stores null session link", async () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    retrieveRunMock.mockRejectedValueOnce(new Error("runs.retrieve unavailable"));
+    getTransitionsMock.mockResolvedValue({ transitions: [] });
+    const issue = makeJiraIssue();
+    const config = makeProjectConfig();
+
+    await spawnAgent("HYDI-32", config, issue);
+
+    expect(runMock).toHaveBeenCalledTimes(1);
+    expect(updateRunStatusMock).toHaveBeenCalledWith(
+      "HYDI-32",
+      expect.objectContaining({
+        status: "running",
+        session_link: null,
+      })
+    );
     expect(warnSpy).toHaveBeenCalled();
     warnSpy.mockRestore();
   });

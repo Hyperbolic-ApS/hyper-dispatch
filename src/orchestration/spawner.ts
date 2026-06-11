@@ -127,12 +127,23 @@ export async function spawnAgent(
       ...(mcpServers ? { mcp_servers: mcpServers } : {}),
     },
   });
+  let sessionLink: string | null = null;
+  try {
+    const runDetails = await client.agent.runs.retrieve(runResponse.run_id);
+    sessionLink = runDetails.session_link ?? null;
+  } catch (err) {
+    console.warn(
+      `[spawner] Failed to fetch session link for ${ticketKey} (${runResponse.run_id}):`,
+      err
+    );
+  }
 
   await updateRunStatus(ticketKey, {
     status: "running",
     run_id: runResponse.run_id,
     model: model ?? null,
     spawned_at: new Date(),
+    session_link: sessionLink,
   });
 
   // Transition Jira issue to "In Progress" (best-effort)
