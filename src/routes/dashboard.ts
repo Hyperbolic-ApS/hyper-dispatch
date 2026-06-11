@@ -118,7 +118,8 @@ function prodDeploymentBadge(deployedToProd: boolean | null): string {
 
 function buildDashboardRedirect(
   filters: { project?: string | null; hideDone?: string | null; status?: string | null },
-  notice: { type: "success" | "error"; message: string }
+  notice: { type: "success" | "error"; message: string },
+  options?: { deleteFailed?: string | null }
 ): string {
   const params = new URLSearchParams();
   if (filters.project) params.set("project", filters.project);
@@ -126,6 +127,9 @@ function buildDashboardRedirect(
   if (filters.status) params.set("status", filters.status);
   params.set("noticeType", notice.type);
   params.set("notice", notice.message);
+  // Marks which run's normal delete was just declined, so the dashboard can
+  // surface a Force delete affordance for that row only.
+  if (options?.deleteFailed) params.set("deleteFailed", options.deleteFailed);
   return `/dashboard?${params.toString()}`;
 }
 
@@ -168,7 +172,7 @@ const CSS = `
   .row-menu-btn:hover { background: #f9fafb; }
   .row-menu-list { display: none; position: absolute; right: 0; top: calc(100% + 4px); min-width: 90px; background: #fff; border: 1px solid #d1d5db; border-radius: 6px; box-shadow: 0 8px 20px rgba(0,0,0,0.08); z-index: 20; padding: 4px; }
   .row-menu.open .row-menu-list { display: block; }
-  .row-menu-delete { width: 100%; border: none; background: transparent; color: #b91c1c; text-align: left; border-radius: 4px; font-size: 0.8rem; padding: 6px 8px; cursor: pointer; }
+  .row-menu-delete { display: block; width: 100%; border: none; background: transparent; color: #b91c1c; text-align: left; border-radius: 4px; font-size: 0.8rem; padding: 6px 8px; cursor: pointer; }
   .row-menu-delete:hover { background: #fee2e2; }
 `;
 
@@ -197,10 +201,14 @@ dashboardRouter.post("/:ticketKey/delete", async (c) => {
     const parsedPr = parseGithubPullRequestUrl(run.pr_url);
     if (!parsedPr) {
       return c.redirect(
-        buildDashboardRedirect(filters, {
-          type: "error",
-          message: `Cannot delete ${ticketKey} while PR URL is invalid. Use Force delete to remove it anyway.`,
-        })
+        buildDashboardRedirect(
+          filters,
+          {
+            type: "error",
+            message: `Cannot delete ${ticketKey} while PR URL is invalid. Use Force delete to remove it anyway.`,
+          },
+          { deleteFailed: ticketKey }
+        )
       );
     }
 
@@ -210,10 +218,14 @@ dashboardRouter.post("/:ticketKey/delete", async (c) => {
       const prState = await getPullRequestState(run.pr_url, githubToken);
       if (prState === "open") {
         return c.redirect(
-          buildDashboardRedirect(filters, {
-            type: "error",
-            message: `Cannot delete ${ticketKey} while PR #${parsedPr.pullNumber} is open. Close it first, or use Force delete.`,
-          })
+          buildDashboardRedirect(
+            filters,
+            {
+              type: "error",
+              message: `Cannot delete ${ticketKey} while PR #${parsedPr.pullNumber} is open. Close it first, or use Force delete.`,
+            },
+            { deleteFailed: ticketKey }
+          )
         );
       }
     } catch (err) {
@@ -222,10 +234,14 @@ dashboardRouter.post("/:ticketKey/delete", async (c) => {
         err
       );
       return c.redirect(
-        buildDashboardRedirect(filters, {
-          type: "error",
-          message: `Could not verify the PR status for ${ticketKey} (GitHub API error, possibly rate-limited). Use Force delete to remove it anyway.`,
-        })
+        buildDashboardRedirect(
+          filters,
+          {
+            type: "error",
+            message: `Could not verify the PR status for ${ticketKey} (GitHub API error, possibly rate-limited). Use Force delete to remove it anyway.`,
+          },
+          { deleteFailed: ticketKey }
+        )
       );
     }
   }
@@ -245,6 +261,7 @@ dashboardRouter.get("/", async (c) => {
   const selectedStatusQuery = c.req.query("status") ?? "";
   const notice = c.req.query("notice") ?? "";
   const noticeType = c.req.query("noticeType") === "error" ? "error" : "success";
+  const deleteFailedKey = c.req.query("deleteFailed") ?? "";
   const escapedSelectedProject = escapeHtml(selectedProject);
   const escapedSelectedStatus = escapeHtml(selectedStatusQuery);
   const escapedNotice = escapeHtml(notice);
@@ -379,6 +396,7 @@ dashboardRouter.get("/", async (c) => {
               return `<a href="${run.pr_url}" target="_blank">${prLabel}${prSuffix}</a>`;
             })()
           : "-";
+    const showForceDelete = run.ticket_key === deleteFailedKey;
     const rowActions = `<div class="row-menu" data-row-menu>
       <button class="row-menu-btn" type="button" data-row-menu-button aria-label="Open actions for ${run.ticket_key}" aria-expanded="false">⋮</button>
       <div class="row-menu-list" role="menu">
@@ -387,7 +405,7 @@ dashboardRouter.get("/", async (c) => {
           ${hideDone ? '<input type="hidden" name="hideDone" value="1">' : ""}
           ${selectedStatus ? `<input type="hidden" name="status" value="${escapeHtml(selectedStatus)}">` : ""}
           <button class="row-menu-delete" type="submit" role="menuitem">Delete</button>
-          <button class="row-menu-delete" type="submit" name="force" value="1" role="menuitem" onclick="return confirm('Force delete ${run.ticket_key}? This skips the open-PR safety check and only removes the run from the dashboard.')">Force delete</button>
+          ${showForceDelete ? `<button class="row-menu-delete" type="submit" name="force" value="1" role="menuitem" onclick="return confirm('Force delete ${run.ticket_key}? This skips the open-PR safety check and only removes the run from the dashboard.')">Force delete</button>` : ""}
         </form>
       </div>
     </div>`;

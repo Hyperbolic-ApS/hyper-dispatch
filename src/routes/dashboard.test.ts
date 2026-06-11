@@ -286,6 +286,7 @@ describe("dashboardRouter", () => {
     expect(res.status).toBe(302);
     expect(res.headers.get("location")).toContain("noticeType=error");
     expect(res.headers.get("location")).toContain("PR+%23123+is+open");
+    expect(res.headers.get("location")).toContain("deleteFailed=HYDI-48");
     expect(getPullRequestStateMock).toHaveBeenCalledWith(
       "https://github.com/org/repo/pull/123",
       expect.any(String)
@@ -314,6 +315,7 @@ describe("dashboardRouter", () => {
     expect(res.status).toBe(302);
     expect(res.headers.get("location")).toContain("noticeType=error");
     expect(res.headers.get("location")).toContain("PR+URL+is+invalid");
+    expect(res.headers.get("location")).toContain("deleteFailed=HYDI-48");
     expect(getPullRequestStateMock).not.toHaveBeenCalled();
     expect(deleteRunMock).not.toHaveBeenCalled();
   });
@@ -343,6 +345,7 @@ describe("dashboardRouter", () => {
     // Message must no longer claim the PR is open; it should point to Force delete.
     expect(res.headers.get("location")).not.toContain("Close+the+PR");
     expect(res.headers.get("location")).toContain("Use+Force+delete");
+    expect(res.headers.get("location")).toContain("deleteFailed=HYDI-48");
     expect(deleteRunMock).not.toHaveBeenCalled();
     // The swallowed error must be logged so the failure is debuggable.
     expect(warnSpy).toHaveBeenCalled();
@@ -559,5 +562,41 @@ describe("dashboardRouter", () => {
     expect(res.status).toBe(200);
     expect(html).toContain(">HYDI-61</a>");
     expect(warnSpy).toHaveBeenCalled();
+  });
+
+  it("shows Force delete only for the row whose delete previously failed", async () => {
+    getAllDispatchRunsMock.mockResolvedValue([
+      makeDispatchRun({ ticket_key: "HYDI-1", project_key: "HYDI", status: "succeeded" }),
+      makeDispatchRun({ ticket_key: "HYDI-2", project_key: "HYDI", status: "succeeded" }),
+    ]);
+    getIssueMock.mockResolvedValue({
+      fields: { status: { name: "Done", statusCategory: { key: "done" } } },
+    });
+
+    const { dashboardRouter } = await import("./dashboard.js");
+    const res = await dashboardRouter.request("http://localhost/?deleteFailed=HYDI-1");
+    const html = await res.text();
+
+    expect(res.status).toBe(200);
+    // Force delete is offered for the failed row only.
+    expect(html).toContain("Force delete HYDI-1?");
+    expect(html).not.toContain("Force delete HYDI-2?");
+  });
+
+  it("does not show Force delete when no delete has failed", async () => {
+    getAllDispatchRunsMock.mockResolvedValue([
+      makeDispatchRun({ ticket_key: "HYDI-1", project_key: "HYDI", status: "succeeded" }),
+    ]);
+    getIssueMock.mockResolvedValue({
+      fields: { status: { name: "Done", statusCategory: { key: "done" } } },
+    });
+
+    const { dashboardRouter } = await import("./dashboard.js");
+    const res = await dashboardRouter.request("http://localhost/");
+    const html = await res.text();
+
+    expect(res.status).toBe(200);
+    expect(html).toContain(">HYDI-1</a>");
+    expect(html).not.toContain("Force delete");
   });
 });
