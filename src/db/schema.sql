@@ -34,6 +34,7 @@ CREATE TABLE IF NOT EXISTS dispatch_runs (
   completed_at   TIMESTAMPTZ,
   pr_url         TEXT,
   pr_has_conflicts BOOLEAN,
+  pr_display_state TEXT,
   session_link   TEXT,
   error          TEXT,
   created_at     TIMESTAMPTZ DEFAULT NOW(),

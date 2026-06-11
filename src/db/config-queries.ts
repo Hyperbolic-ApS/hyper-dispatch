@@ -57,6 +57,7 @@ export interface DispatchRun {
   completed_at: Date | null;
   pr_url: string | null;
   pr_has_conflicts: boolean | null;
+  pr_display_state: "open" | "draft" | "merged" | "closed" | null;
   session_link: string | null;
   error: string | null;
   created_at: Date;

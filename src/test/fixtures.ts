@@ -53,6 +53,7 @@ export function makeDispatchRun(
     completed_at: null,
     pr_url: null,
     pr_has_conflicts: null,
+    pr_display_state: null,
     session_link: null,
     error: null,
     created_at: new Date("2026-01-01T00:00:00.000Z"),
