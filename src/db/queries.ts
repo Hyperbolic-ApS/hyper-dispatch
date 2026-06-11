@@ -91,6 +91,7 @@ export async function getRunsByPrUrl(prUrl: string): Promise<DispatchRun[]> {
     SELECT *
     FROM dispatch_runs
     WHERE pr_url = ${prUrl}
+    ORDER BY created_at DESC
   `;
 }
 

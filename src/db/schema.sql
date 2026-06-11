@@ -34,7 +34,7 @@ CREATE TABLE IF NOT EXISTS dispatch_runs (
   completed_at   TIMESTAMPTZ,
   pr_url         TEXT,
   pr_has_conflicts BOOLEAN,
-  pr_display_state TEXT,
+  pr_display_state TEXT CHECK (pr_display_state IN ('open', 'draft', 'merged', 'closed')),
   session_link   TEXT,
   error          TEXT,
   created_at     TIMESTAMPTZ DEFAULT NOW(),

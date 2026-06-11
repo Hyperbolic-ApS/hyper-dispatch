@@ -1,4 +1,6 @@
 import { sql } from "./connection.js";
+import type { DispatchRun } from "./queries.js";
+export type { DispatchRun };
 
 export interface ProjectConfig {
   project_key: string;
@@ -44,25 +46,6 @@ export interface ProjectConfigInput {
   active?: boolean;
 }
 
-export interface DispatchRun {
-  ticket_key: string;
-  project_key: string;
-  summary: string | null;
-  run_id: string | null;
-  status: string;
-  blocked_by: string[] | null;
-  model: string | null;
-  priority: number;
-  spawned_at: Date | null;
-  completed_at: Date | null;
-  pr_url: string | null;
-  pr_has_conflicts: boolean | null;
-  pr_display_state: "open" | "draft" | "merged" | "closed" | null;
-  session_link: string | null;
-  error: string | null;
-  created_at: Date;
-  updated_at: Date;
-}
 
 export interface RunStatusCount {
   status: string;
