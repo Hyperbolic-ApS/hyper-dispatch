@@ -60,9 +60,9 @@ describe("dashboardRouter", () => {
     expect(html).toContain("previousVisibilityState !== \"visible\"");
     expect(html).toContain("window.location.reload();");
     expect(html).toContain("⚙ Configure</a>");
-    expect(html).toContain("Prod Deployment (Coolify)");
     expect(html).toContain("Agent Status");
-    expect(html).toContain("Not deployed");
+    expect(html).not.toContain("Prod Deployment (Coolify)");
+    expect(html).not.toContain("Not deployed");
   });
 
   it("renders Spawned At using dd/MM/YY HH:MM format", async () => {
