@@ -318,7 +318,8 @@ describe("dashboardRouter", () => {
     expect(deleteRunMock).not.toHaveBeenCalled();
   });
 
-  it("declines delete when PR state lookup fails", async () => {
+  it("declines delete with an accurate, actionable message and logs when PR status lookup fails", async () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
     getAllDispatchRunsMock.mockResolvedValue([
       makeDispatchRun({
         ticket_key: "HYDI-48",
@@ -339,8 +340,65 @@ describe("dashboardRouter", () => {
 
     expect(res.status).toBe(302);
     expect(res.headers.get("location")).toContain("noticeType=error");
-    expect(res.headers.get("location")).toContain("Cannot+verify+PR+status");
+    // Message must no longer claim the PR is open; it should point to Force delete.
+    expect(res.headers.get("location")).not.toContain("Close+the+PR");
+    expect(res.headers.get("location")).toContain("Use+Force+delete");
     expect(deleteRunMock).not.toHaveBeenCalled();
+    // The swallowed error must be logged so the failure is debuggable.
+    expect(warnSpy).toHaveBeenCalled();
+    warnSpy.mockRestore();
+  });
+
+  it("force delete bypasses the PR check entirely and deletes the run", async () => {
+    getAllDispatchRunsMock.mockResolvedValue([
+      makeDispatchRun({
+        ticket_key: "HYDI-48",
+        project_key: "HYDI",
+        pr_url: "https://github.com/org/repo/pull/123",
+      }),
+    ]);
+    listProjectConfigsMock.mockResolvedValue([]);
+    parseGithubPullRequestUrlMock.mockReturnValue({ owner: "org", repo: "repo", pullNumber: 123 });
+    // Even an open PR must not block a forced delete.
+    getPullRequestStateMock.mockResolvedValue("open");
+
+    const { dashboardRouter } = await import("./dashboard.js");
+    const res = await dashboardRouter.request("http://localhost/HYDI-48/delete", {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      body: "project=HYDI&force=1",
+    });
+
+    expect(res.status).toBe(302);
+    expect(res.headers.get("location")).toContain("noticeType=success");
+    // Force delete must skip the GitHub lookup altogether.
+    expect(getPullRequestStateMock).not.toHaveBeenCalled();
+    expect(deleteRunMock).toHaveBeenCalledWith("HYDI-48");
+  });
+
+  it("force delete removes the run even when the PR status lookup would fail", async () => {
+    getAllDispatchRunsMock.mockResolvedValue([
+      makeDispatchRun({
+        ticket_key: "HYDI-48",
+        project_key: "HYDI",
+        pr_url: "https://github.com/org/repo/pull/123",
+      }),
+    ]);
+    listProjectConfigsMock.mockResolvedValue([]);
+    parseGithubPullRequestUrlMock.mockReturnValue({ owner: "org", repo: "repo", pullNumber: 123 });
+    getPullRequestStateMock.mockRejectedValue(new Error("rate limited"));
+
+    const { dashboardRouter } = await import("./dashboard.js");
+    const res = await dashboardRouter.request("http://localhost/HYDI-48/delete", {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      body: "project=HYDI&force=1",
+    });
+
+    expect(res.status).toBe(302);
+    expect(res.headers.get("location")).toContain("noticeType=success");
+    expect(getPullRequestStateMock).not.toHaveBeenCalled();
+    expect(deleteRunMock).toHaveBeenCalledWith("HYDI-48");
   });
 
   it("allows delete when linked PR is closed", async () => {

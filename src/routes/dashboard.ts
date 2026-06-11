@@ -180,6 +180,7 @@ dashboardRouter.post("/:ticketKey/delete", async (c) => {
     hideDone: typeof body.hideDone === "string" ? body.hideDone : null,
     status: typeof body.status === "string" ? body.status : null,
   };
+  const force = body.force === "1";
   const [runs, configs] = await Promise.all([getAllDispatchRuns(), listProjectConfigs()]);
   const run = runs.find((item) => item.ticket_key === ticketKey);
 
@@ -192,13 +193,13 @@ dashboardRouter.post("/:ticketKey/delete", async (c) => {
     );
   }
 
-  if (run.pr_url) {
+  if (!force && run.pr_url) {
     const parsedPr = parseGithubPullRequestUrl(run.pr_url);
     if (!parsedPr) {
       return c.redirect(
         buildDashboardRedirect(filters, {
           type: "error",
-          message: `Cannot delete ${ticketKey} while PR URL is invalid. Close the PR first.`,
+          message: `Cannot delete ${ticketKey} while PR URL is invalid. Use Force delete to remove it anyway.`,
         })
       );
     }
@@ -211,15 +212,19 @@ dashboardRouter.post("/:ticketKey/delete", async (c) => {
         return c.redirect(
           buildDashboardRedirect(filters, {
             type: "error",
-            message: `Cannot delete ${ticketKey} while PR #${parsedPr.pullNumber} is open. Close it first.`,
+            message: `Cannot delete ${ticketKey} while PR #${parsedPr.pullNumber} is open. Close it first, or use Force delete.`,
           })
         );
       }
-    } catch {
+    } catch (err) {
+      console.warn(
+        `[dashboard] Could not verify PR status for ${ticketKey} before delete:`,
+        err
+      );
       return c.redirect(
         buildDashboardRedirect(filters, {
           type: "error",
-          message: `Cannot verify PR status for ${ticketKey}. Close the PR first, then retry.`,
+          message: `Could not verify the PR status for ${ticketKey} (GitHub API error, possibly rate-limited). Use Force delete to remove it anyway.`,
         })
       );
     }
@@ -380,6 +385,7 @@ dashboardRouter.get("/", async (c) => {
           ${hideDone ? '<input type="hidden" name="hideDone" value="1">' : ""}
           ${selectedStatus ? `<input type="hidden" name="status" value="${escapeHtml(selectedStatus)}">` : ""}
           <button class="row-menu-delete" type="submit" role="menuitem">Delete</button>
+          <button class="row-menu-delete" type="submit" name="force" value="1" role="menuitem" onclick="return confirm('Force delete ${run.ticket_key}? This skips the open-PR safety check and only removes the run from the dashboard.')">Force delete</button>
         </form>
       </div>
     </div>`;
