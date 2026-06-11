@@ -1,4 +1,3 @@
-import OzAPI from "oz-agent-sdk";
 import { resolveProjectTokens } from "../config/env.js";
 import * as jira from "../jira/client.js";
 import { updateRunStatus } from "../db/queries.js";
@@ -6,19 +5,7 @@ import type { ProjectConfig } from "../db/queries.js";
 import type { JiraIssue } from "../jira/types.js";
 import type { McpServerConfig } from "oz-agent-sdk/resources/agent/agent";
 import { resolveJiraColumnMappings } from "../jira/columns.js";
-
-// Bounded by the number of distinct oz_api_key values across active projects.
-const ozClientsByApiKey = new Map<string, OzAPI>();
-
-function getOzClient(apiKey: string): OzAPI {
-  const existing = ozClientsByApiKey.get(apiKey);
-  if (existing) {
-    return existing;
-  }
-  const client = new OzAPI({ apiKey });
-  ozClientsByApiKey.set(apiKey, client);
-  return client;
-}
+import { getOzClient } from "./oz-client.js";
 
 // ─── ADF helpers ───────────────────────────────────────────────────────────
 

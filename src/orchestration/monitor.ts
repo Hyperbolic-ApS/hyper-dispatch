@@ -1,5 +1,4 @@
 import { Octokit } from "@octokit/rest";
-import OzAPI from "oz-agent-sdk";
 import type { ArtifactItem } from "oz-agent-sdk/resources/agent/runs.js";
 import { env, resolveProjectTokens } from "../config/env.js";
 import * as jira from "../jira/client.js";
@@ -11,6 +10,7 @@ import {
   removeBlocker,
 } from "../db/queries.js";
 import { resolveJiraColumnMappings } from "../jira/columns.js";
+import { getOzClient } from "./oz-client.js";
 
 const MONITOR_INTERVAL_MS = 30_000;
 
@@ -23,18 +23,7 @@ const INPROGRESS_STATES = new Set([
 ]);
 
 // Lazy singletons
-const ozClientsByApiKey = new Map<string, OzAPI>();
 let _githubClient: Octokit | null = null;
-
-function getOzClient(apiKey: string): OzAPI {
-  const existing = ozClientsByApiKey.get(apiKey);
-  if (existing) {
-    return existing;
-  }
-  const client = new OzAPI({ apiKey });
-  ozClientsByApiKey.set(apiKey, client);
-  return client;
-}
 
 function getGithubClient(): Octokit {
   if (!_githubClient) {
