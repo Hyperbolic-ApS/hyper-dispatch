@@ -5,6 +5,7 @@ export interface ProjectConfig {
   jira_cloud_id: string;
   board_id: number;
   oz_env_id: string;
+  oz_api_key: string | null;
   oz_agent_identity_uid: string | null;
   github_repo: string;
   default_model: string | null;
@@ -28,6 +29,7 @@ export interface ProjectConfigInput {
   jira_cloud_id: string;
   board_id: number;
   oz_env_id: string;
+  oz_api_key?: string | null;
   oz_agent_identity_uid?: string | null;
   github_repo: string;
   default_model?: string | null;
@@ -92,6 +94,7 @@ export async function createProjectConfig(
       jira_cloud_id,
       board_id,
       oz_env_id,
+      oz_api_key,
       oz_agent_identity_uid,
       github_repo,
       default_model,
@@ -111,6 +114,7 @@ export async function createProjectConfig(
       ${config.jira_cloud_id},
       ${config.board_id},
       ${config.oz_env_id},
+      ${config.oz_api_key ?? null},
       ${config.oz_agent_identity_uid ?? null},
       ${config.github_repo},
       ${config.default_model ?? null},
@@ -145,6 +149,7 @@ export async function updateProjectConfig(
       jira_cloud_id  = ${merged.jira_cloud_id},
       board_id       = ${merged.board_id},
       oz_env_id      = ${merged.oz_env_id},
+      oz_api_key     = ${merged.oz_api_key ?? null},
       oz_agent_identity_uid = ${merged.oz_agent_identity_uid ?? null},
       github_repo    = ${merged.github_repo},
       default_model  = ${merged.default_model ?? null},

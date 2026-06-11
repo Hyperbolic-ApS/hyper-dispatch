@@ -3,6 +3,7 @@ CREATE TABLE IF NOT EXISTS project_configs (
   jira_cloud_id  TEXT NOT NULL,
   board_id       INTEGER NOT NULL,
   oz_env_id      TEXT NOT NULL,
+  oz_api_key     TEXT,
   oz_agent_identity_uid TEXT,
   github_repo    TEXT NOT NULL,
   default_model  TEXT,

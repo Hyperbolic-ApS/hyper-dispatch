@@ -59,6 +59,9 @@ The config UI allows managing project configurations:
   - Discovery uses the current in-form `GitHub Repo` value immediately (no save required)
   - If entered, the current in-form `GitHub PAT` is used for discovery before save
 - Set default model and model override field
+- Configure optional per-project **Oz API Key** override in the project form
+  - Used for all Oz SDK calls for that project (spawn + monitor)
+  - Leave blank to use global `WARP_API_KEY`
 - Configure optional **MCP Servers JSON** in the project form
   - Must be a valid JSON object
   - Save is blocked for invalid JSON

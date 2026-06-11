@@ -1,27 +1,8 @@
 import { sql } from "./connection.js";
+import type { ProjectConfig } from "./config-queries.js";
+export type { ProjectConfig };
 
 // ─── Types ─────────────────────────────────────────────────────────────────
-
-export interface ProjectConfig {
-  project_key: string;
-  jira_cloud_id: string;
-  board_id: number;
-  oz_env_id: string;
-  oz_agent_identity_uid: string | null;
-  github_repo: string;
-  default_model: string | null;
-  model_field_id: string | null;
-  backlog_column_name: string;
-  to_do_column_name: string;
-  in_progress_column_name: string;
-  in_review_column_name: string;
-  done_column_name: string;
-  skills: string[];
-  mcp_servers: Record<string, unknown> | null;
-  active: boolean;
-  created_at: Date;
-  updated_at: Date;
-}
 
 export interface DispatchRun {
   ticket_key: string;

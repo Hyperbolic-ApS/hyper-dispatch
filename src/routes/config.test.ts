@@ -48,6 +48,7 @@ describe("configRouter", () => {
       jira_cloud_id: "cloud-id",
       board_id: "21",
       oz_env_id: "env_123",
+      oz_api_key: "oz_key_123",
       oz_agent_identity_uid: "agent_identity_123",
       github_repo: "owner/repo",
       default_model: "auto",
@@ -103,6 +104,7 @@ describe("configRouter", () => {
         in_review_column_name: "In Review",
         done_column_name: DEFAULT_JIRA_COLUMN_MAPPINGS.done,
         oz_agent_identity_uid: "agent_identity_123",
+        oz_api_key: "oz_key_123",
         skills: ["owner/repo:first", "owner/repo:second"],
         mcp_servers: { playwright: { command: "npx" } },
       })
@@ -151,6 +153,7 @@ describe("configRouter", () => {
       param: { projectKey: "HYDI" },
       form: {
         ...baseCreateForm(),
+        oz_api_key: "",
         github_pat: "",
         jira_api_token: "",
         backlog_column_name: "",
@@ -167,6 +170,7 @@ describe("configRouter", () => {
       })
     );
     const updates = updateProjectConfigMock.mock.calls[0]?.[1];
+    expect(updates?.oz_api_key).toBeUndefined();
     expect(updates?.github_pat).toBeUndefined();
     expect(updates?.jira_api_token).toBeUndefined();
   });
@@ -177,6 +181,7 @@ describe("configRouter", () => {
       param: { projectKey: "HYDI" },
       form: {
         ...baseCreateForm(),
+        oz_api_key: "new-oz-key",
         github_pat: "new-pat",
         jira_api_token: "new-jira-token",
       },
@@ -185,6 +190,7 @@ describe("configRouter", () => {
     expect(updateProjectConfigMock).toHaveBeenCalledWith(
       "HYDI",
       expect.objectContaining({
+        oz_api_key: "new-oz-key",
         github_pat: "new-pat",
         jira_api_token: "new-jira-token",
       })
