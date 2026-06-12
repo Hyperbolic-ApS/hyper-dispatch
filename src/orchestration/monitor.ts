@@ -10,6 +10,7 @@ import {
 import { resolveJiraColumnMappings } from "../jira/columns.js";
 import { getOzClient } from "./oz-client.js";
 import { transitionMergedPrToDone } from "./pr-merge.js";
+import { derivePullRequestDisplayState } from "../github/pull-requests.js";
 
 const MONITOR_INTERVAL_MS = 30_000;
 
@@ -127,8 +128,14 @@ async function transitionMergedPrsToDone(): Promise<void> {
       });
       const hasMergeConflicts =
         pullRequest.mergeable_state === "dirty" || pullRequest.mergeable === false;
+      const prDisplayState = derivePullRequestDisplayState({
+        merged_at: pullRequest.merged_at,
+        state: pullRequest.state,
+        draft: pullRequest.draft,
+      });
       await updateRunStatus(run.ticket_key, {
         pr_has_conflicts: hasMergeConflicts,
+        pr_display_state: prDisplayState,
       });
 
       if (!pullRequest.merged_at) continue;

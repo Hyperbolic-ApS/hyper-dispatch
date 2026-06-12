@@ -679,7 +679,13 @@ describe("checkRuns", () => {
       fields: { status: { statusCategory: { key: "in-progress" } } },
     });
     githubPullGetMock.mockResolvedValue({
-      data: { merged_at: null, mergeable_state: "dirty", mergeable: false },
+      data: {
+        merged_at: null,
+        mergeable_state: "dirty",
+        mergeable: false,
+        state: "open",
+        draft: false,
+      },
     });
 
     const { checkRuns } = await importMonitor();
@@ -687,6 +693,7 @@ describe("checkRuns", () => {
 
     expect(updateRunStatusMock).toHaveBeenCalledWith("HYDI-16", {
       pr_has_conflicts: true,
+      pr_display_state: "open",
     });
     expect(jiraTransitionIssueMock).not.toHaveBeenCalled();
   });
@@ -709,6 +716,8 @@ describe("checkRuns", () => {
         merged_at: "2026-05-01T00:00:00.000Z",
         mergeable_state: "clean",
         mergeable: true,
+        state: "closed",
+        draft: false,
       },
     });
     jiraGetTransitionsMock.mockResolvedValue({
@@ -718,6 +727,10 @@ describe("checkRuns", () => {
 
     const { checkRuns } = await importMonitor();
     await checkRuns();
+    expect(updateRunStatusMock).toHaveBeenCalledWith("HYDI-17", {
+      pr_has_conflicts: false,
+      pr_display_state: "merged",
+    });
 
     expect(jiraTransitionIssueMock).toHaveBeenCalledWith("HYDI-17", "200");
   });
@@ -741,6 +754,8 @@ describe("checkRuns", () => {
         merged_at: "2026-05-01T00:00:00.000Z",
         mergeable_state: "clean",
         mergeable: true,
+        state: "closed",
+        draft: false,
       },
     });
     getProjectConfigMock.mockResolvedValue(
@@ -779,6 +794,8 @@ describe("checkRuns", () => {
         merged_at: "2026-05-01T00:00:00.000Z",
         mergeable_state: "clean",
         mergeable: true,
+        state: "closed",
+        draft: false,
       },
     });
     jiraGetTransitionsMock.mockResolvedValue({
@@ -815,7 +832,13 @@ describe("checkRuns", () => {
     githubPullGetMock
       .mockRejectedValueOnce(new Error("rate limited"))
       .mockResolvedValueOnce({
-        data: { merged_at: null, mergeable_state: "clean", mergeable: true },
+        data: {
+          merged_at: null,
+          mergeable_state: "clean",
+          mergeable: true,
+          state: "open",
+          draft: true,
+        },
       });
 
     const { checkRuns } = await importMonitor();
@@ -827,6 +850,7 @@ describe("checkRuns", () => {
     );
     expect(updateRunStatusMock).toHaveBeenCalledWith("HYDI-20", {
       pr_has_conflicts: false,
+      pr_display_state: "draft",
     });
   });
 });
