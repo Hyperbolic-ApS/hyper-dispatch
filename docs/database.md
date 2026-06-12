@@ -48,6 +48,7 @@ Tracks ticket → agent run state. Managed by the orchestration loop.
 | `completed_at` | `TIMESTAMPTZ` | When the run completed |
 | `pr_url` | `TEXT` | Pull request URL |
 | `pr_has_conflicts` | `BOOLEAN` | Whether GitHub currently reports merge conflicts for the PR (`true`/`false`/`null` unknown) |
+| `pr_display_state` | `TEXT` | Persisted PR display state for dashboard rendering (`open`/`draft`/`merged`/`closed`/`null` unknown), DB-constrained to the four non-null states |
 | `session_link` | `TEXT` | Oz session link for live monitoring |
 | `error` | `TEXT` | Last failure reason |
 | `created_at` | `TIMESTAMPTZ` | Row creation time |
