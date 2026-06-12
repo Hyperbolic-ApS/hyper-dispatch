@@ -165,7 +165,14 @@ gh pr create \
 Co-Authored-By: Oz <oz-agent@warp.dev>"
 ```
 
-Create a normal pull request (non-draft). Do not pass `--draft`.
+Create a normal pull request (non-draft) — do not pass `--draft`. The Oz harness may still open the PR as a draft, so immediately convert it to ready-for-review after creation and confirm the result:
+
+```sh
+gh pr ready
+gh pr view --json isDraft --jq '.isDraft'   # expect: false
+```
+
+`gh pr ready` acts on the PR for the current branch (or pass the URL/number printed by `gh pr create`). It is a no-op when the PR is already ready, so it is always safe to run. If `isDraft` is still `true`, retry `gh pr ready` before continuing.
 
 The PR body must include a link to the Jira ticket. Use the Jira base URL from the environment variable `JIRA_BASE_URL` if available, otherwise use the URL from the prompt context.
 For UI-touching tickets, also include:
@@ -207,7 +214,7 @@ Call `report_pr` with the PR URL and branch name. This is how HyperDispatch know
 
 - **Branch name must be `agent/{ticket-key}`** — this is non-negotiable.
 - **A PR must be created** — HyperDispatch marks the run as failed if no PR artifact is found.
-- **PRs must not be drafts** — always create a normal, ready-for-review pull request. Never pass `--draft` to `gh pr create`.
+- **PRs must not be drafts** — always create a normal, ready-for-review pull request. Never pass `--draft` to `gh pr create`, and run `gh pr ready` immediately after creation to force the PR out of draft state (verify with `gh pr view --json isDraft`).
 - **Do not modify files outside the ticket's scope** — parallel agents are working on other tickets simultaneously.
 - **Do not force-push or rewrite history** — other processes may be watching the branch.
 - **UI verification must run headlessly** — the workflow must work in CI with no display server or visible browser window.
