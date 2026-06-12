@@ -44,6 +44,9 @@ Receives GitHub webhook payloads for pull request state updates.
     - otherwise → `closed`
   - Persists `pr_display_state` for all matching runs.
   - If no runs are found, returns `200` ignored.
+- Webhook updates are complemented by the monitor loop fallback:
+  - Every monitor cycle (30s), succeeded runs with a persisted `pr_url` refresh GitHub PR metadata.
+  - The monitor persists both `pr_has_conflicts` and `pr_display_state`, which backfills historical succeeded runs and reconciles missed webhook deliveries/drift.
 
 **Response:** `200 OK` for accepted/ignored GitHub events.
 
