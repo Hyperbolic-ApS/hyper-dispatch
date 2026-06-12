@@ -18,11 +18,11 @@ Jira Automation (webhook) → HyperDispatch → Oz Cloud Agents → PRs
 
 | Component | Responsibility |
 |---|---|
-| Webhook Receiver | Ingests Jira transition events, filters by configured projects |
+| Webhook Receiver | Ingests Jira transition events and signed GitHub pull-request events, then applies configured automation |
 | Dependency Resolver | Checks `issuelinks` for blocking relationships, detects cycles |
 | Scheduler | Enforces concurrency cap, priority ordering, non-overlapping cycles, and atomic dispatch claims |
 | Agent Spawner | Constructs prompt, selects model/skill/environment, calls Oz SDK |
-| Run Monitor | Polls Oz run status, updates state store, transitions Jira tickets |
+| Run Monitor | Polls Oz run status, updates state store, transitions Jira tickets, and backfills merged-PR Done transitions |
 | State Store | PostgreSQL — `project_configs` and `dispatch_runs` tables |
 | Dashboard | Server-rendered HTML status page at `/dashboard` |
 | Config UI | Server-rendered HTML for managing project configurations at `/config` |

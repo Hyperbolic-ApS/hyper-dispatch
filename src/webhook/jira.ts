@@ -13,6 +13,7 @@ import {
   jiraNamesEqual,
 } from "../jira/columns.js";
 import { syncTicketInToDo } from "../orchestration/ticket-sync.js";
+import { transitionMergedPrToDone } from "../orchestration/pr-merge.js";
 import { env } from "../config/env.js";
 export { priorityNameToNumber } from "../orchestration/ticket-sync.js";
 
@@ -125,9 +126,11 @@ webhookRouter.post("/github", async (c) => {
   }
 
   let payload: {
+    action?: string;
     pull_request?: {
       html_url?: string;
       merged_at?: string | null;
+      merged?: boolean;
       state?: string;
       draft?: boolean;
     };
@@ -161,6 +164,16 @@ webhookRouter.post("/github", async (c) => {
   await Promise.all(
     runs.map((run) => updateRunStatus(run.ticket_key, { pr_display_state: prDisplayState }))
   );
+
+  if (payload.action === "closed" && payload.pull_request?.merged === true) {
+    await Promise.all(
+      runs.map((run) =>
+        transitionMergedPrToDone(run, {
+          logPrefix: "[webhook]",
+        })
+      )
+    );
+  }
 
   return c.json({
     action: "updated",

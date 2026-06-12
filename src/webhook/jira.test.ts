@@ -8,6 +8,9 @@ const getRunsByPrUrlMock = vi.fn();
 const removeBlockerMock = vi.fn();
 const updateRunStatusMock = vi.fn();
 const syncTicketInToDoMock = vi.fn();
+const jiraGetIssueMock = vi.fn();
+const jiraGetTransitionsMock = vi.fn();
+const jiraTransitionIssueMock = vi.fn();
 let githubWebhookSecret: string | undefined = "test-secret";
 
 vi.mock("../db/queries.js", () => ({
@@ -20,6 +23,11 @@ vi.mock("../db/queries.js", () => ({
 
 vi.mock("../orchestration/ticket-sync.js", () => ({
   syncTicketInToDo: syncTicketInToDoMock,
+}));
+vi.mock("../jira/client.js", () => ({
+  getIssue: jiraGetIssueMock,
+  getTransitions: jiraGetTransitionsMock,
+  transitionIssue: jiraTransitionIssueMock,
 }));
 
 vi.mock("../config/env.js", () => ({
@@ -43,6 +51,9 @@ describe("webhookRouter", () => {
     removeBlockerMock.mockReset();
     syncTicketInToDoMock.mockReset();
     updateRunStatusMock.mockReset();
+    jiraGetIssueMock.mockReset();
+    jiraGetTransitionsMock.mockReset();
+    jiraTransitionIssueMock.mockReset();
   });
   it("returns 400 for invalid JSON", async () => {
     const { webhookRouter } = await import("./jira.js");
@@ -319,5 +330,55 @@ describe("webhookRouter", () => {
     expect(res.status).toBe(200);
     expect(updateRunStatusMock).not.toHaveBeenCalled();
     expect(await res.json()).toEqual({ action: "ignored", reason: "pr not tracked" });
+  });
+
+  it("transitions tracked Jira issues to Done and unblocks dependents on closed+merged PR events", async () => {
+    const prUrl = "https://github.com/org/repo/pull/222";
+    getRunsByPrUrlMock.mockResolvedValue([
+      makeDispatchRun({
+        ticket_key: "HYDI-65",
+        project_key: "HYDI",
+        pr_url: prUrl,
+      }),
+    ]);
+    getProjectConfigMock.mockResolvedValue(makeProjectConfig());
+    jiraGetIssueMock.mockResolvedValue({
+      fields: { status: { statusCategory: { key: "in-progress" } } },
+    });
+    jiraGetTransitionsMock.mockResolvedValue({
+      transitions: [{ id: "300", name: "Done" }],
+    });
+    getRunsBlockedByMock.mockResolvedValue([
+      makeDispatchRun({ ticket_key: "HYDI-66", blocked_by: ["HYDI-65"] }),
+    ]);
+    removeBlockerMock.mockResolvedValue(makeDispatchRun({ ticket_key: "HYDI-66" }));
+
+    const body = JSON.stringify({
+      action: "closed",
+      pull_request: {
+        html_url: prUrl,
+        state: "closed",
+        draft: false,
+        merged: true,
+        merged_at: "2026-06-12T00:00:00.000Z",
+      },
+    });
+    const { webhookRouter } = await import("./jira.js");
+
+    const res = await webhookRouter.request("http://localhost/github", {
+      method: "POST",
+      body,
+      headers: {
+        "x-github-event": "pull_request",
+        "x-hub-signature-256": makeGithubSignature(body),
+      },
+    });
+
+    expect(res.status).toBe(200);
+    expect(updateRunStatusMock).toHaveBeenCalledWith("HYDI-65", {
+      pr_display_state: "merged",
+    });
+    expect(jiraTransitionIssueMock).toHaveBeenCalledWith("HYDI-65", "300");
+    expect(removeBlockerMock).toHaveBeenCalledWith("HYDI-66", "HYDI-65");
   });
 });
