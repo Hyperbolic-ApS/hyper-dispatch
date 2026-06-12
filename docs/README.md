@@ -12,6 +12,7 @@ This folder contains the living documentation for HyperDispatch. It is the canon
 - **[deployment.md](./deployment.md)** — Dockerfile, Coolify setup, and environment provisioning.
 - **[jira-integration.md](./jira-integration.md)** — Jira REST API usage, webhook format, board validation, dependency resolution.
 - **[dashboard.md](./dashboard.md)** — Dashboard and config UI routes, data sources, and rendering approach.
+- **[verification-hydi-69.md](./verification-hydi-69.md)** — Production verification checklist for PR state webhook propagation and GitHub rate-limit relief.
 - **[testing.md](./testing.md)** — Test harness, layering, mocking/fixture conventions, and coverage expectations.
 
 ## Keeping Docs Up to Date
