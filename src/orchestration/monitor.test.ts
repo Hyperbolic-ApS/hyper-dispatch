@@ -622,7 +622,7 @@ describe("checkRuns", () => {
     expect(githubPullGetMock).not.toHaveBeenCalled();
   });
 
-  it("skips merged-PR checks when Jira issue is already done", async () => {
+  it("reconciles PR display state when Jira issue is already done without transitioning", async () => {
     getRunsByStatusMock
       .mockResolvedValueOnce([])
       .mockResolvedValueOnce([
@@ -635,11 +635,27 @@ describe("checkRuns", () => {
     jiraGetIssueMock.mockResolvedValue({
       fields: { status: { statusCategory: { key: "done" } } },
     });
+    githubPullGetMock.mockResolvedValue({
+      data: {
+        merged_at: "2026-05-01T00:00:00.000Z",
+        mergeable_state: "clean",
+        mergeable: true,
+        state: "closed",
+        draft: false,
+      },
+    });
 
     const { checkRuns } = await importMonitor();
     await checkRuns();
 
-    expect(githubPullGetMock).not.toHaveBeenCalled();
+    // Backfill/reconcile still runs even when the Jira issue is already done.
+    expect(githubPullGetMock).toHaveBeenCalled();
+    expect(updateRunStatusMock).toHaveBeenCalledWith("HYDI-14", {
+      pr_has_conflicts: false,
+      pr_display_state: "merged",
+    });
+    // ...but the Jira transition is gated on the Done check.
+    expect(jiraTransitionIssueMock).not.toHaveBeenCalled();
   });
 
   it("warns and skips when succeeded run has unparsable PR URL", async () => {
@@ -694,6 +710,39 @@ describe("checkRuns", () => {
     expect(updateRunStatusMock).toHaveBeenCalledWith("HYDI-16", {
       pr_has_conflicts: true,
       pr_display_state: "open",
+    });
+    expect(jiraTransitionIssueMock).not.toHaveBeenCalled();
+  });
+
+  it("reconciles pr_display_state as closed for a closed, unmerged PR", async () => {
+    getRunsByStatusMock
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([
+        makeDispatchRun({
+          ticket_key: "HYDI-22",
+          status: "succeeded",
+          pr_url: "https://github.com/org/repo/pull/22",
+        }),
+      ]);
+    jiraGetIssueMock.mockResolvedValue({
+      fields: { status: { statusCategory: { key: "in-progress" } } },
+    });
+    githubPullGetMock.mockResolvedValue({
+      data: {
+        merged_at: null,
+        mergeable_state: "clean",
+        mergeable: true,
+        state: "closed",
+        draft: false,
+      },
+    });
+
+    const { checkRuns } = await importMonitor();
+    await checkRuns();
+
+    expect(updateRunStatusMock).toHaveBeenCalledWith("HYDI-22", {
+      pr_has_conflicts: false,
+      pr_display_state: "closed",
     });
     expect(jiraTransitionIssueMock).not.toHaveBeenCalled();
   });
