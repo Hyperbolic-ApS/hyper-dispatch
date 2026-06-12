@@ -14,6 +14,7 @@ export async function runMigrations(): Promise<void> {
   await sql.unsafe(`
     ALTER TABLE project_configs
       ADD COLUMN IF NOT EXISTS oz_agent_identity_uid TEXT,
+      ADD COLUMN IF NOT EXISTS oz_api_key TEXT,
       ADD COLUMN IF NOT EXISTS github_pat TEXT,
       ADD COLUMN IF NOT EXISTS jira_api_token TEXT,
       ADD COLUMN IF NOT EXISTS mcp_servers JSONB,
@@ -25,7 +26,8 @@ export async function runMigrations(): Promise<void> {
   `);
   await sql.unsafe(`
     ALTER TABLE dispatch_runs
-      ADD COLUMN IF NOT EXISTS pr_has_conflicts BOOLEAN;
+      ADD COLUMN IF NOT EXISTS pr_has_conflicts BOOLEAN,
+      ADD COLUMN IF NOT EXISTS pr_display_state TEXT CHECK (pr_display_state IN ('open', 'draft', 'merged', 'closed'));
   `);
 
   console.log("Database migrations applied successfully");

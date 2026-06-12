@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import { Octokit } from "@octokit/rest";
 import { getAllDispatchRuns, listProjectConfigs } from "../db/config-queries.js";
 import { deleteRun } from "../db/queries.js";
 import { env } from "../config/env.js";
@@ -105,6 +106,40 @@ function prConflictBadge(hasConflicts: boolean | null, hasPr: boolean): string {
   }
   return '<span style="padding:2px 8px;border-radius:4px;font-size:0.75rem;font-weight:600;background:#e5e7eb;color:#111">Unknown</span>';
 }
+type PrActionState = {
+  reviewRunning: boolean;
+  revisionRunning: boolean;
+};
+
+const REVIEW_WORKFLOW_NAME = "Oz PR Review Commenting";
+const REVISION_WORKFLOW_NAME = "Agent Revision on Review Feedback";
+const IN_FLIGHT_WORKFLOW_STATUSES = new Set([
+  "queued",
+  "in_progress",
+  "pending",
+  "waiting",
+  "requested",
+  "action_required",
+]);
+
+function prStatusBadge(
+  hasConflicts: boolean | null,
+  hasPr: boolean,
+  actionState: PrActionState | null
+): string {
+  if (!hasPr) return "-";
+  if (actionState?.reviewRunning && actionState?.revisionRunning) {
+    return '<span style="padding:2px 8px;border-radius:4px;font-size:0.75rem;font-weight:600;background:#7c3aed;color:#fff">Review + revision running</span>';
+  }
+  if (actionState?.reviewRunning) {
+    return '<span style="padding:2px 8px;border-radius:4px;font-size:0.75rem;font-weight:600;background:#2563eb;color:#fff">Review running</span>';
+  }
+  if (actionState?.revisionRunning) {
+    return '<span style="padding:2px 8px;border-radius:4px;font-size:0.75rem;font-weight:600;background:#ea580c;color:#fff">Revision running</span>';
+  }
+  return prConflictBadge(hasConflicts, hasPr);
+}
+
 function prodDeploymentBadge(deployedToProd: boolean | null): string {
   if (deployedToProd === true) {
     return '<span style="padding:2px 8px;border-radius:4px;font-size:0.75rem;font-weight:600;background:#22c55e;color:#fff">Deployed</span>';
@@ -115,6 +150,7 @@ function prodDeploymentBadge(deployedToProd: boolean | null): string {
   return '<span style="padding:2px 8px;border-radius:4px;font-size:0.75rem;font-weight:600;background:#e5e7eb;color:#111">Unknown</span>';
 }
 
+const showProdDeploymentColumn = false;
 
 function buildDashboardRedirect(
   filters: { project?: string | null; hideDone?: string | null; status?: string | null },
@@ -324,6 +360,79 @@ dashboardRouter.get("/", async (c) => {
         return allowedStatuses ? allowedStatuses.has(run.status) : true;
       })
     : visibleRuns;
+  const configByProjectKey = new Map(configs.map((config) => [config.project_key, config]));
+  const githubClientByToken = new Map<string, Octokit>();
+  const actionStateByPr = new Map<string, PrActionState>();
+
+  // Group PRs by repo + token so each configured credential boundary is respected.
+  const repoGroups = new Map<
+    string,
+    { owner: string; repo: string; token: string; prs: { prKey: string; pullNumber: number; branchName: string }[] }
+  >();
+  for (const run of statusFilteredRuns) {
+    if (!run.pr_url) continue;
+    const parsedPr = parseGithubPullRequestUrl(run.pr_url);
+    if (!parsedPr) continue;
+    const prKey = `${parsedPr.owner}/${parsedPr.repo}#${parsedPr.pullNumber}`;
+    const config = configByProjectKey.get(run.project_key);
+    const githubToken = config ? resolveProjectTokens(config).githubToken : env.GITHUB_TOKEN;
+    const repoKey = `${parsedPr.owner}/${parsedPr.repo}::${githubToken}`;
+    let group = repoGroups.get(repoKey);
+    if (!group) {
+      group = { owner: parsedPr.owner, repo: parsedPr.repo, token: githubToken, prs: [] };
+      repoGroups.set(repoKey, group);
+    }
+    if (!group.prs.some((p) => p.prKey === prKey)) {
+      group.prs.push({ prKey, pullNumber: parsedPr.pullNumber, branchName: `agent/${run.ticket_key}` });
+    }
+  }
+
+  await Promise.all(
+    Array.from(repoGroups.values()).map(async ({ owner, repo, token, prs }) => {
+      let githubClient = githubClientByToken.get(token);
+      if (!githubClient) {
+        githubClient = new Octokit({ auth: token });
+        githubClientByToken.set(token, githubClient);
+      }
+      try {
+        const workflowRuns: Array<{
+          name?: string | null;
+          status?: string | null;
+          head_branch?: string | null;
+          pull_requests?: Array<{ number?: number }> | null;
+        }> = [];
+        for (let page = 1; ; page += 1) {
+          const { data } = await githubClient.actions.listWorkflowRunsForRepo({
+            owner,
+            repo,
+            per_page: 100,
+            page,
+          });
+          workflowRuns.push(...(data.workflow_runs ?? []));
+          if ((data.workflow_runs ?? []).length < 100) break;
+        }
+        for (const pr of prs) {
+          const reviewRunning = workflowRuns.some(
+            (wfRun) =>
+              wfRun.name === REVIEW_WORKFLOW_NAME &&
+              IN_FLIGHT_WORKFLOW_STATUSES.has(wfRun.status ?? "") &&
+              ((wfRun.pull_requests ?? []).some((p) => p.number === pr.pullNumber) ||
+                wfRun.head_branch === pr.branchName)
+          );
+          const revisionRunning = workflowRuns.some(
+            (wfRun) =>
+              wfRun.name === REVISION_WORKFLOW_NAME &&
+              IN_FLIGHT_WORKFLOW_STATUSES.has(wfRun.status ?? "") &&
+              ((wfRun.pull_requests ?? []).some((p) => p.number === pr.pullNumber) ||
+                wfRun.head_branch === pr.branchName)
+          );
+          actionStateByPr.set(pr.prKey, { reviewRunning, revisionRunning });
+        }
+      } catch {
+        // Best effort only — dashboard should still render if GitHub is unavailable.
+      }
+    })
+  );
 
   const counts: Record<string, number> = {
     running: 0,
@@ -396,6 +505,8 @@ dashboardRouter.get("/", async (c) => {
               return `<a href="${run.pr_url}" target="_blank">${prLabel}${prSuffix}</a>`;
             })()
           : "-";
+    const parsedPr = run.pr_url ? parseGithubPullRequestUrl(run.pr_url) : null;
+    const prKey = parsedPr ? `${parsedPr.owner}/${parsedPr.repo}#${parsedPr.pullNumber}` : null;
     const showForceDelete = run.ticket_key === deleteFailedKey;
     const rowActions = `<div class="row-menu" data-row-menu>
       <button class="row-menu-btn" type="button" data-row-menu-button aria-label="Open actions for ${run.ticket_key}" aria-expanded="false">⋮</button>
@@ -424,12 +535,16 @@ dashboardRouter.get("/", async (c) => {
       <td>
         <span class="branch-cell">
           <code>${branchName}</code>
-          <button class="copy-branch-btn" type="button" data-copy-branch="${branchName}" aria-label="Copy ${branchName} to clipboard"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="2" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button>
+          <button class="copy-branch-btn" type="button" data-copy-branch="${branchName}" aria-label="Copy ${branchName} to clipboard"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="7" width="12" height="15" rx="2" ry="2"/><path d="M9 7V4a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v11a2 2 0 0 1-2 2h-4"/></svg></button>
         </span>
       </td>
       <td>${ozTaskLink}</td>
-      <td>${prConflictBadge(run.pr_has_conflicts, Boolean(run.pr_url))}</td>
-      <td>${prodDeploymentBadge(run.deployed_to_prod)}</td>
+      <td>${prStatusBadge(
+        run.pr_has_conflicts,
+        Boolean(run.pr_url),
+        prKey ? actionStateByPr.get(prKey) ?? null : null
+      )}</td>
+      ${showProdDeploymentColumn ? `<td>${prodDeploymentBadge(run.deployed_to_prod)}</td>` : ""}
       <td>${actionLink}${blockedByHtml}</td>
       <td class="row-actions-cell">${rowActions}</td>
     </tr>`;
@@ -479,8 +594,8 @@ dashboardRouter.get("/", async (c) => {
         <th>Runtime</th>
         <th>Branch</th>
         <th>Oz Task</th>
-        <th>PR Mergeability</th>
-        <th>Prod Deployment (Coolify)</th>
+        <th>PR Status</th>
+        ${showProdDeploymentColumn ? "<th>Prod Deployment (Coolify)</th>" : ""}
         <th>Links</th>
         <th></th>
       </tr>
@@ -488,7 +603,7 @@ dashboardRouter.get("/", async (c) => {
     <tbody>
       ${
         statusFilteredRuns.length === 0
-          ? `<tr><td colspan="13" style="text-align:center;color:#6b7280">${
+          ? `<tr><td colspan="${showProdDeploymentColumn ? 13 : 12}" style="text-align:center;color:#6b7280">${
               selectedStatus
                 ? `no ${selectedStatus} tasks available`
                 : "No runs found for the current filter"
@@ -507,7 +622,7 @@ dashboardRouter.get("/", async (c) => {
       window.location.reload();
     });
     document.addEventListener("click", async (event) => {
-      const button = event.target instanceof HTMLElement ? event.target.closest("[data-copy-branch]") : null;
+      const button = event.target instanceof Element ? event.target.closest("[data-copy-branch]") : null;
       if (!(button instanceof HTMLButtonElement)) return;
       const branch = button.dataset.copyBranch;
       if (!branch) return;
@@ -528,7 +643,7 @@ dashboardRouter.get("/", async (c) => {
       button.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>';
       setTimeout(() => {
         button.classList.remove("copied");
-        button.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="2" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>';
+        button.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="7" width="12" height="15" rx="2" ry="2"/><path d="M9 7V4a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v11a2 2 0 0 1-2 2h-4"/></svg>';
       }, 1200);
     });
     document.addEventListener("click", (event) => {

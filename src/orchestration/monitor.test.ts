@@ -17,6 +17,7 @@ const {
   jiraGetIssueMock,
   ozRetrieveMock,
   ozCancelMock,
+  ozApiConstructorMock,
   githubPullGetMock,
 } = vi.hoisted(() => ({
   getRunsByStatusMock: vi.fn(),
@@ -29,6 +30,7 @@ const {
   jiraGetIssueMock: vi.fn(),
   ozRetrieveMock: vi.fn(),
   ozCancelMock: vi.fn(),
+  ozApiConstructorMock: vi.fn(),
   githubPullGetMock: vi.fn(),
 }));
 
@@ -38,6 +40,11 @@ vi.mock("../config/env.js", () => ({
     GITHUB_TOKEN: "gh-token",
     MAX_RUN_DURATION_HOURS: 2,
   },
+  resolveProjectTokens: (config: { github_pat?: string | null; jira_api_token?: string | null; oz_api_key?: string | null }) => ({
+    githubToken: config.github_pat ?? "gh-token",
+    jiraApiToken: config.jira_api_token ?? "test-key",
+    ozApiKey: config.oz_api_key ?? "test-key",
+  }),
 }));
 
 vi.mock("../db/queries.js", () => ({
@@ -56,6 +63,9 @@ vi.mock("../jira/client.js", () => ({
 
 vi.mock("oz-agent-sdk", () => ({
   default: class MockOzApi {
+    constructor(options: unknown) {
+      ozApiConstructorMock(options);
+    }
     agent = {
       runs: {
         retrieve: ozRetrieveMock,
@@ -98,6 +108,7 @@ beforeEach(() => {
   jiraGetIssueMock.mockReset();
   ozRetrieveMock.mockReset();
   ozCancelMock.mockReset();
+  ozApiConstructorMock.mockReset();
   githubPullGetMock.mockReset();
 });
 
@@ -306,6 +317,28 @@ describe("checkRuns", () => {
         status: "failed",
       })
     );
+  });
+
+  it("constructs Oz client with project oz_api_key for running run checks", async () => {
+    getRunsByStatusMock
+      .mockResolvedValueOnce([
+        makeDispatchRun({
+          ticket_key: "HYDI-KEY",
+          status: "running",
+          run_id: "run_key",
+          project_key: "HYDI",
+        }),
+      ])
+      .mockResolvedValueOnce([]);
+    getProjectConfigMock.mockResolvedValue(
+      makeProjectConfig({ oz_api_key: "project-oz-key" })
+    );
+    ozRetrieveMock.mockResolvedValue(makeOzRun({ state: "BLOCKED" }));
+
+    const { checkRuns } = await importMonitor();
+    await checkRuns();
+
+    expect(ozApiConstructorMock).toHaveBeenCalledWith({ apiKey: "project-oz-key" });
   });
 
   it("marks SUCCEEDED runs and swallows In Review transition errors", async () => {

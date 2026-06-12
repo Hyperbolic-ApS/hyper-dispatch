@@ -29,6 +29,7 @@ export const env = {
 
   // GitHub
   GITHUB_TOKEN: requireEnv("GITHUB_TOKEN"),
+  GITHUB_WEBHOOK_SECRET: optionalEnvUndefined("GITHUB_WEBHOOK_SECRET"),
 
   // Coolify (optional; used for prod deployment status checks)
   COOLIFY_BASE_URL: optionalEnvUndefined("COOLIFY_BASE_URL"),
@@ -56,9 +57,11 @@ import type { ProjectConfig } from "../db/config-queries.js";
 export function resolveProjectTokens(config: ProjectConfig): {
   githubToken: string;
   jiraApiToken: string;
+  ozApiKey: string;
 } {
   return {
     githubToken: config.github_pat ?? env.GITHUB_TOKEN,
     jiraApiToken: config.jira_api_token ?? env.JIRA_API_TOKEN,
+    ozApiKey: config.oz_api_key ?? env.WARP_API_KEY,
   };
 }
