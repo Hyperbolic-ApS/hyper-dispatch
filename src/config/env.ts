@@ -29,6 +29,7 @@ export const env = {
 
   // GitHub
   GITHUB_TOKEN: requireEnv("GITHUB_TOKEN"),
+  GITHUB_WEBHOOK_SECRET: optionalEnvUndefined("GITHUB_WEBHOOK_SECRET"),
 
   // Coolify (optional; used for prod deployment status checks)
   COOLIFY_BASE_URL: optionalEnvUndefined("COOLIFY_BASE_URL"),

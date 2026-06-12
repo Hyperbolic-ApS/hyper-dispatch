@@ -12,6 +12,7 @@ These are set once for the HyperDispatch instance (not per-project).
 | `WARP_API_KEY` | Yes | — | Oz API key for spawning agents |
 | `DATABASE_URL` | Yes | — | PostgreSQL connection string |
 | `GITHUB_TOKEN` | Yes | — | GitHub token for skill discovery and repo access |
+| `GITHUB_WEBHOOK_SECRET` | No | — | Shared secret used to verify inbound `POST /webhook/github` signatures (`X-Hub-Signature-256`) |
 | `COOLIFY_BASE_URL` | No | — | Coolify base URL (for example `https://coolify.example.com`) used to check prod deployment status |
 | `COOLIFY_API_TOKEN` | No | — | Coolify API bearer token used for deployment lookups |
 | `COOLIFY_PRODUCTION_APP_UUID` | No | — | Coolify application UUID for the production HyperDispatch deployment target |
