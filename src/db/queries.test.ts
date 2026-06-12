@@ -4,6 +4,7 @@ import { sql } from "./connection.js";
 import {
   getActiveRunCount,
   getProjectConfig,
+  getRunsByPrUrl,
   removeBlocker,
   updateRunStatus,
   upsertDispatchRun,
@@ -42,10 +43,55 @@ if (shouldRunDbTests) {
       const updated = await updateRunStatus("HYDI-1", {
         status: "running",
         run_id: "run_1",
+        pr_display_state: "open",
       });
 
       expect(updated?.status).toBe("running");
       expect(updated?.run_id).toBe("run_1");
+      expect(updated?.pr_display_state).toBe("open");
+
+      const preserved = await updateRunStatus("HYDI-1", {
+        status: "succeeded",
+      });
+      expect(preserved?.status).toBe("succeeded");
+      expect(preserved?.pr_display_state).toBe("open");
+    });
+
+    it("returns runs by PR URL", async () => {
+      const prUrl = "https://github.com/org/repo/pull/101";
+
+      await upsertDispatchRun({
+        ticketKey: "HYDI-5",
+        projectKey: "HYDI",
+        status: "queued",
+      });
+      await updateRunStatus("HYDI-5", {
+        pr_url: prUrl,
+        pr_display_state: "draft",
+      });
+
+      await upsertDispatchRun({
+        ticketKey: "HYDI-6",
+        projectKey: "HYDI",
+        status: "queued",
+      });
+      await updateRunStatus("HYDI-6", {
+        pr_url: prUrl,
+        pr_display_state: "open",
+      });
+
+      await upsertDispatchRun({
+        ticketKey: "HYDI-7",
+        projectKey: "HYDI",
+        status: "queued",
+      });
+      await updateRunStatus("HYDI-7", {
+        pr_url: "https://github.com/org/repo/pull/102",
+      });
+
+      const matches = await getRunsByPrUrl(prUrl);
+      expect(matches.map((run) => run.ticket_key)).toEqual(["HYDI-6", "HYDI-5"]);
+      expect(matches.map((run) => run.pr_display_state)).toEqual(["open", "draft"]);
     });
 
     it("removes blockers and auto-queues when no blockers remain", async () => {

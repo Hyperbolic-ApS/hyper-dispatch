@@ -2,11 +2,13 @@ import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
 import { makeJiraIssue, makeProjectConfig } from "../test/fixtures.js";
 const {
   runMock,
+  ozApiConstructorMock,
   getTransitionsMock,
   transitionIssueMock,
   updateRunStatusMock,
 } = vi.hoisted(() => ({
   runMock: vi.fn(async () => ({ run_id: "run_hydi_32" })),
+  ozApiConstructorMock: vi.fn(),
   getTransitionsMock: vi.fn(),
   transitionIssueMock: vi.fn(),
   updateRunStatusMock: vi.fn(),
@@ -15,6 +17,9 @@ const {
 vi.mock("oz-agent-sdk", () => {
   return {
     default: class MockOzApi {
+      constructor(options: unknown) {
+        ozApiConstructorMock(options);
+      }
       agent = { run: runMock };
     },
   };
@@ -24,6 +29,11 @@ vi.mock("../config/env.js", () => ({
   env: {
     WARP_API_KEY: "test-key",
   },
+  resolveProjectTokens: (config: { github_pat?: string | null; jira_api_token?: string | null; oz_api_key?: string | null }) => ({
+    githubToken: config.github_pat ?? "gh-test-key",
+    jiraApiToken: config.jira_api_token ?? "jira-test-key",
+    ozApiKey: config.oz_api_key ?? "test-key",
+  }),
 }));
 
 vi.mock("../jira/client.js", () => ({
@@ -265,6 +275,7 @@ describe("spawnAgent", () => {
   beforeEach(() => {
     fetchSpy = vi.spyOn(globalThis, "fetch");
     runMock.mockClear();
+    ozApiConstructorMock.mockClear();
     getTransitionsMock.mockReset();
     transitionIssueMock.mockReset();
     updateRunStatusMock.mockReset();
@@ -343,5 +354,41 @@ describe("spawnAgent", () => {
     expect(updateRunStatusMock).toHaveBeenCalledTimes(1);
     expect(warnSpy).toHaveBeenCalled();
     warnSpy.mockRestore();
+  });
+
+  it("passes agent_identity_uid at the top level when configured", async () => {
+    getTransitionsMock.mockResolvedValue({ transitions: [] });
+    const issue = makeJiraIssue();
+    const config = makeProjectConfig({
+      oz_agent_identity_uid: "agent_identity_123",
+    });
+
+    await spawnAgent("HYDI-32", config, issue);
+
+    expect(runMock).toHaveBeenCalledWith(
+      expect.objectContaining({ agent_identity_uid: "agent_identity_123" })
+    );
+  });
+
+  it("omits agent_identity_uid when not configured", async () => {
+    getTransitionsMock.mockResolvedValue({ transitions: [] });
+    const issue = makeJiraIssue();
+    const config = makeProjectConfig({ oz_agent_identity_uid: null });
+
+    await spawnAgent("HYDI-32", config, issue);
+
+    expect(runMock).toHaveBeenCalledWith(
+      expect.not.objectContaining({ agent_identity_uid: expect.anything() })
+    );
+  });
+
+  it("constructs Oz client with per-project oz_api_key when provided", async () => {
+    getTransitionsMock.mockResolvedValue({ transitions: [] });
+    const issue = makeJiraIssue();
+    const config = makeProjectConfig({ oz_api_key: "project-oz-key" });
+
+    await spawnAgent("HYDI-32", config, issue);
+
+    expect(ozApiConstructorMock).toHaveBeenCalledWith({ apiKey: "project-oz-key" });
   });
 });

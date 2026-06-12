@@ -1,21 +1,11 @@
-import OzAPI from "oz-agent-sdk";
-import { env } from "../config/env.js";
+import { resolveProjectTokens } from "../config/env.js";
 import * as jira from "../jira/client.js";
 import { updateRunStatus } from "../db/queries.js";
 import type { ProjectConfig } from "../db/queries.js";
 import type { JiraIssue } from "../jira/types.js";
 import type { McpServerConfig } from "oz-agent-sdk/resources/agent/agent";
 import { resolveJiraColumnMappings } from "../jira/columns.js";
-
-// Lazy singleton — avoids constructing the client at module load time
-let _ozClient: OzAPI | null = null;
-
-function getOzClient(): OzAPI {
-  if (!_ozClient) {
-    _ozClient = new OzAPI({ apiKey: env.WARP_API_KEY });
-  }
-  return _ozClient;
-}
+import { getOzClient } from "./oz-client.js";
 
 // ─── ADF helpers ───────────────────────────────────────────────────────────
 
@@ -100,7 +90,8 @@ export async function spawnAgent(
   config: ProjectConfig,
   issue: JiraIssue
 ): Promise<void> {
-  const client = getOzClient();
+  const { ozApiKey } = resolveProjectTokens(config);
+  const client = getOzClient(ozApiKey);
 
   const model = resolveModel(issue, config);
   const prompt = buildPrompt(ticketKey, issue);
@@ -109,8 +100,16 @@ export async function spawnAgent(
   // First skill in the array is the run skill (oz-agent-sdk accepts one skill)
   const skillSpec = config.skills.length > 0 ? config.skills[0] : undefined;
 
+  // Optional per-project Oz agent identity, used as the run's execution
+  // principal so all of a project's runs are attributed to the same agent.
+  // Only valid for team-owned runs (the default for single-team API keys).
+  const agentIdentityUid = config.oz_agent_identity_uid?.trim()
+    ? config.oz_agent_identity_uid.trim()
+    : undefined;
+
   const runResponse = await client.agent.run({
     prompt,
+    ...(agentIdentityUid ? { agent_identity_uid: agentIdentityUid } : {}),
     config: {
       name: ticketKey,
       environment_id: config.oz_env_id,

@@ -279,6 +279,16 @@ document.addEventListener('DOMContentLoaded', () => {
       <div class="hint">Run <code>oz environment list</code> in your terminal, or find it in Warp &rarr; Settings &rarr; Environments</div>
     </div>
     <div class="field">
+      <label for="oz_api_key">Oz API Key <span style="font-weight:400;color:#6b7280">(per-project override)</span></label>
+      <input type="password" id="oz_api_key" name="oz_api_key" autocomplete="new-password" ${config?.oz_api_key ? 'placeholder="\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022"' : ""}>
+      <div class="hint">Input an Oz Cloud API Key here. If an Agent ID is provided, the key should be created specifically for that agent.</div>
+    </div>
+    <div class="field">
+      <label for="oz_agent_identity_uid">Oz Agent ID</label>
+      <input type="text" id="oz_agent_identity_uid" name="oz_agent_identity_uid" value="${v.oz_agent_identity_uid ?? ""}">
+      <div class="hint">Optional. Oz agent identity UID used as the execution principal for this project\'s runs, so all of its work is tracked under one agent. Leave blank to use the API key\'s default principal.</div>
+    </div>
+    <div class="field">
       <label for="github_repo">GitHub Repo</label>
       <input type="text" id="github_repo" name="github_repo" value="${v.github_repo ?? ""}" required>
       <div class="hint">Format: owner/repo</div>
@@ -516,6 +526,8 @@ ${projectForm("/config")}`;
     jira_cloud_id: String(form.jira_cloud_id),
     board_id: parseInt(String(form.board_id), 10),
     oz_env_id: String(form.oz_env_id),
+    oz_api_key: form.oz_api_key ? String(form.oz_api_key) : null,
+    oz_agent_identity_uid: String(form.oz_agent_identity_uid ?? "").trim() || null,
     github_repo: String(form.github_repo),
     default_model: form.default_model ? String(form.default_model) : null,
     backlog_column_name: formColumnName(
@@ -599,7 +611,12 @@ configRouter.post("/:projectKey", async (c) => {
   }
 
   // Only update tokens if a new value was submitted — empty field means "keep existing"
-  const tokenUpdates: { github_pat?: string | null; jira_api_token?: string | null } = {};
+  const tokenUpdates: {
+    oz_api_key?: string | null;
+    github_pat?: string | null;
+    jira_api_token?: string | null;
+  } = {};
+  if (form.oz_api_key) tokenUpdates.oz_api_key = String(form.oz_api_key);
   if (form.github_pat) tokenUpdates.github_pat = String(form.github_pat);
   if (form.jira_api_token) tokenUpdates.jira_api_token = String(form.jira_api_token);
 
@@ -607,6 +624,7 @@ configRouter.post("/:projectKey", async (c) => {
     jira_cloud_id: String(form.jira_cloud_id),
     board_id: parseInt(String(form.board_id), 10),
     oz_env_id: String(form.oz_env_id),
+    oz_agent_identity_uid: String(form.oz_agent_identity_uid ?? "").trim() || null,
     github_repo: String(form.github_repo),
     default_model: form.default_model ? String(form.default_model) : null,
     model_field_id: form.model_field_id ? String(form.model_field_id) : null,

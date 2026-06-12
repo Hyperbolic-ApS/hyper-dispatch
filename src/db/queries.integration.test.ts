@@ -136,6 +136,52 @@ describe.skipIf(!process.env.RUN_DB_TESTS)("queries integration", () => {
     await connection.sql.unsafe(schemaSql);
   });
 
+  it("integration: getRunsByPrUrl returns runs matching the PR URL", async () => {
+    const prUrl = "https://github.com/hyperbolic-co/hyper-dispatch/pull/201";
+
+    await queries.upsertDispatchRun({
+      ticketKey: "HYDI-201",
+      projectKey: "HYDI",
+      status: "queued",
+    });
+    await queries.updateRunStatus("HYDI-201", {
+      pr_url: prUrl,
+      pr_display_state: "draft",
+    });
+
+    await queries.upsertDispatchRun({
+      ticketKey: "HYDI-202",
+      projectKey: "HYDI",
+      status: "queued",
+    });
+    await queries.updateRunStatus("HYDI-202", {
+      pr_url: prUrl,
+      pr_display_state: "open",
+    });
+
+    const matched = await queries.getRunsByPrUrl(prUrl);
+    expect(matched.map((run) => run.ticket_key)).toEqual(["HYDI-202", "HYDI-201"]);
+    expect(matched.map((run) => run.pr_display_state)).toEqual(["open", "draft"]);
+  });
+
+  it("integration: pr_display_state check constraint rejects invalid values", async () => {
+    await expect(
+      connection.sql.unsafe(`
+        INSERT INTO dispatch_runs (ticket_key, project_key, status, pr_display_state)
+        VALUES ('HYDI-203', 'HYDI', 'queued', 'invalid_state');
+      `)
+    ).rejects.toThrow();
+
+    await connection.sql.unsafe(`
+      INSERT INTO dispatch_runs (ticket_key, project_key, status, pr_display_state)
+      VALUES ('HYDI-204', 'HYDI', 'queued', 'open');
+    `);
+    await connection.sql.unsafe(`
+      INSERT INTO dispatch_runs (ticket_key, project_key, status, pr_display_state)
+      VALUES ('HYDI-205', 'HYDI', 'queued', NULL);
+    `);
+  });
+
   beforeEach(async () => {
     await resetTables();
   });
@@ -285,7 +331,8 @@ describe.skipIf(!process.env.RUN_DB_TESTS)("queries integration", () => {
       SET
         run_id = 'run-70',
         model = 'sonnet',
-        pr_url = 'https://github.com/hyperbolic-co/hyper-dispatch/pull/70'
+        pr_url = 'https://github.com/hyperbolic-co/hyper-dispatch/pull/70',
+        pr_display_state = 'open'
       WHERE ticket_key = 'HYDI-70';
     `);
 
@@ -296,6 +343,7 @@ describe.skipIf(!process.env.RUN_DB_TESTS)("queries integration", () => {
     expect(partiallyUpdated?.run_id).toBe("run-70");
     expect(partiallyUpdated?.model).toBe("sonnet");
     expect(partiallyUpdated?.pr_url).toBe("https://github.com/hyperbolic-co/hyper-dispatch/pull/70");
+    expect(partiallyUpdated?.pr_display_state).toBe("open");
     expect(partiallyUpdated?.blocked_by).toEqual(["HYDI-71"]);
 
     const clearedBlockedBy = await queries.updateRunStatus("HYDI-70", {
@@ -307,6 +355,16 @@ describe.skipIf(!process.env.RUN_DB_TESTS)("queries integration", () => {
       pr_url: null,
     });
     expect(nullPrUrlAttempt?.pr_url).toBe("https://github.com/hyperbolic-co/hyper-dispatch/pull/70");
+
+    const updatedPrDisplayState = await queries.updateRunStatus("HYDI-70", {
+      pr_display_state: "merged",
+    });
+    expect(updatedPrDisplayState?.pr_display_state).toBe("merged");
+
+    const preservePrDisplayState = await queries.updateRunStatus("HYDI-70", {
+      status: "succeeded",
+    });
+    expect(preservePrDisplayState?.pr_display_state).toBe("merged");
   });
 
   it("integration: getRunsBlockedBy returns only runs containing the blocker key", async () => {

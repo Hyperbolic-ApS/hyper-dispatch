@@ -12,6 +12,9 @@ These are set once for the HyperDispatch instance (not per-project).
 | `WARP_API_KEY` | Yes | — | Oz API key for spawning agents |
 | `DATABASE_URL` | Yes | — | PostgreSQL connection string |
 | `GITHUB_TOKEN` | Yes | — | GitHub token for skill discovery and repo access |
+| `COOLIFY_BASE_URL` | No | — | Coolify base URL (for example `https://coolify.example.com`) used to check prod deployment status |
+| `COOLIFY_API_TOKEN` | No | — | Coolify API bearer token used for deployment lookups |
+| `COOLIFY_PRODUCTION_APP_UUID` | No | — | Coolify application UUID for the production HyperDispatch deployment target |
 | `MAX_CONCURRENT_AGENTS` | No | `4` | Maximum parallel agent runs |
 | `MAX_RUN_DURATION_HOURS` | No | `2` | Stale run threshold (hours) |
 | `PORT` | No | `3000` | HTTP server port |
@@ -22,6 +25,8 @@ All per-project settings are stored in the `project_configs` database table and 
 
 Key fields:
 - **Oz environment ID** — one per Jira project (mono-repo checked out in each).
+- **Oz API key** — optional per-project Oz Cloud API key override used for all Oz SDK calls for that project (spawning and run monitoring). Leave blank to use global `WARP_API_KEY`.
+- **Oz agent ID** — optional Oz agent identity UID used as the execution principal for the project's worker runs, so all of its work is attributed to a single Oz agent. Leave blank to use the API key's default principal. Runs must be team-owned (the default for single-team API keys).
 - **Default model** — LLM model for agent runs. Can be overridden per-ticket via a Jira custom field.
 - **Model override field** — Jira custom field ID (e.g., `customfield_10050`). If a ticket has a value in this field, it overrides the project default.
 - **Jira column name mappings** — per-project names for Backlog, To Do, In Progress, In Review, and Done. Defaults match Jira defaults, but can be customized for projects that renamed workflow columns/statuses.

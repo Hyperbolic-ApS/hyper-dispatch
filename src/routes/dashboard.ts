@@ -6,13 +6,18 @@ import { env } from "../config/env.js";
 import { resolveProjectTokens } from "../config/env.js";
 import { brandIconSvg, faviconDataUri } from "./branding.js";
 import * as jira from "../jira/client.js";
-import { getPullRequestState, parseGithubPullRequestUrl } from "../github/pull-requests.js";
+import { annotateRunsWithProdDeploymentStatus } from "../coolify/prod-deployment.js";
+import {
+  getPullRequestDisplayState,
+  getPullRequestState,
+  parseGithubPullRequestUrl,
+} from "../github/pull-requests.js";
 
 export const dashboardRouter = new Hono();
-const dashboardDateTimeFormatter = new Intl.DateTimeFormat(undefined, {
-  year: "numeric",
-  month: "short",
-  day: "numeric",
+const spawnedAtDateTimeFormatter = new Intl.DateTimeFormat("en-GB", {
+  year: "2-digit",
+  month: "2-digit",
+  day: "2-digit",
   hour: "2-digit",
   minute: "2-digit",
   hour12: false,
@@ -30,9 +35,11 @@ function formatDuration(start: Date | null, end: Date | null): string {
   return `${hours}h ${minutes % 60}m`;
 }
 
-function formatDate(d: Date | null): string {
+function formatSpawnedAtDate(d: Date | null): string {
   if (!d) return "-";
-  return dashboardDateTimeFormatter.format(d);
+  const parts = spawnedAtDateTimeFormatter.formatToParts(d);
+  const values = new Map(parts.map((part) => [part.type, part.value]));
+  return `${values.get("day")}/${values.get("month")}/${values.get("year")} ${values.get("hour")}:${values.get("minute")}`;
 }
 
 function escapeHtml(value: string): string {
@@ -133,10 +140,22 @@ function prStatusBadge(
   return prConflictBadge(hasConflicts, hasPr);
 }
 
+function prodDeploymentBadge(deployedToProd: boolean | null): string {
+  if (deployedToProd === true) {
+    return '<span style="padding:2px 8px;border-radius:4px;font-size:0.75rem;font-weight:600;background:#22c55e;color:#fff">Deployed</span>';
+  }
+  if (deployedToProd === false) {
+    return '<span style="padding:2px 8px;border-radius:4px;font-size:0.75rem;font-weight:600;background:#f97316;color:#fff">Not deployed</span>';
+  }
+  return '<span style="padding:2px 8px;border-radius:4px;font-size:0.75rem;font-weight:600;background:#e5e7eb;color:#111">Unknown</span>';
+}
+
+const showProdDeploymentColumn = false;
 
 function buildDashboardRedirect(
   filters: { project?: string | null; hideDone?: string | null; status?: string | null },
-  notice: { type: "success" | "error"; message: string }
+  notice: { type: "success" | "error"; message: string },
+  options?: { deleteFailed?: string | null }
 ): string {
   const params = new URLSearchParams();
   if (filters.project) params.set("project", filters.project);
@@ -144,6 +163,9 @@ function buildDashboardRedirect(
   if (filters.status) params.set("status", filters.status);
   params.set("noticeType", notice.type);
   params.set("notice", notice.message);
+  // Marks which run's normal delete was just declined, so the dashboard can
+  // surface a Force delete affordance for that row only.
+  if (options?.deleteFailed) params.set("deleteFailed", options.deleteFailed);
   return `/dashboard?${params.toString()}`;
 }
 
@@ -166,7 +188,7 @@ const CSS = `
   .stat-link { border: none; text-decoration: none; display: inline-flex; align-items: center; }
   .stat-link:hover { text-decoration: none; filter: brightness(0.95); }
   .stat-selected { box-shadow: inset 0 0 0 2px #fff; outline: 2px solid #111827; outline-offset: 2px; }
-  table { width: 100%; border-collapse: collapse; background: #fff; border-radius: 8px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+  table { width: 100%; border-collapse: collapse; background: #fff; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
   th { background: #f3f4f6; text-align: left; padding: 10px 12px; font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.05em; border-bottom: 1px solid #e5e7eb; }
   td { padding: 10px 12px; border-bottom: 1px solid #f3f4f6; font-size: 0.875rem; vertical-align: top; }
   tr:last-child td { border-bottom: none; }
@@ -186,7 +208,7 @@ const CSS = `
   .row-menu-btn:hover { background: #f9fafb; }
   .row-menu-list { display: none; position: absolute; right: 0; top: calc(100% + 4px); min-width: 90px; background: #fff; border: 1px solid #d1d5db; border-radius: 6px; box-shadow: 0 8px 20px rgba(0,0,0,0.08); z-index: 20; padding: 4px; }
   .row-menu.open .row-menu-list { display: block; }
-  .row-menu-delete { width: 100%; border: none; background: transparent; color: #b91c1c; text-align: left; border-radius: 4px; font-size: 0.8rem; padding: 6px 8px; cursor: pointer; }
+  .row-menu-delete { display: block; width: 100%; border: none; background: transparent; color: #b91c1c; text-align: left; border-radius: 4px; font-size: 0.8rem; padding: 6px 8px; cursor: pointer; }
   .row-menu-delete:hover { background: #fee2e2; }
 `;
 
@@ -198,6 +220,7 @@ dashboardRouter.post("/:ticketKey/delete", async (c) => {
     hideDone: typeof body.hideDone === "string" ? body.hideDone : null,
     status: typeof body.status === "string" ? body.status : null,
   };
+  const force = body.force === "1";
   const [runs, configs] = await Promise.all([getAllDispatchRuns(), listProjectConfigs()]);
   const run = runs.find((item) => item.ticket_key === ticketKey);
 
@@ -210,14 +233,18 @@ dashboardRouter.post("/:ticketKey/delete", async (c) => {
     );
   }
 
-  if (run.pr_url) {
+  if (!force && run.pr_url) {
     const parsedPr = parseGithubPullRequestUrl(run.pr_url);
     if (!parsedPr) {
       return c.redirect(
-        buildDashboardRedirect(filters, {
-          type: "error",
-          message: `Cannot delete ${ticketKey} while PR URL is invalid. Close the PR first.`,
-        })
+        buildDashboardRedirect(
+          filters,
+          {
+            type: "error",
+            message: `Cannot delete ${ticketKey} while PR URL is invalid. Use Force delete to remove it anyway.`,
+          },
+          { deleteFailed: ticketKey }
+        )
       );
     }
 
@@ -227,18 +254,30 @@ dashboardRouter.post("/:ticketKey/delete", async (c) => {
       const prState = await getPullRequestState(run.pr_url, githubToken);
       if (prState === "open") {
         return c.redirect(
-          buildDashboardRedirect(filters, {
-            type: "error",
-            message: `Cannot delete ${ticketKey} while PR #${parsedPr.pullNumber} is open. Close it first.`,
-          })
+          buildDashboardRedirect(
+            filters,
+            {
+              type: "error",
+              message: `Cannot delete ${ticketKey} while PR #${parsedPr.pullNumber} is open. Close it first, or use Force delete.`,
+            },
+            { deleteFailed: ticketKey }
+          )
         );
       }
-    } catch {
+    } catch (err) {
+      console.warn(
+        `[dashboard] Could not verify PR status for ${ticketKey} before delete:`,
+        err
+      );
       return c.redirect(
-        buildDashboardRedirect(filters, {
-          type: "error",
-          message: `Cannot verify PR status for ${ticketKey}. Close the PR first, then retry.`,
-        })
+        buildDashboardRedirect(
+          filters,
+          {
+            type: "error",
+            message: `Could not verify the PR status for ${ticketKey} (GitHub API error, possibly rate-limited). Use Force delete to remove it anyway.`,
+          },
+          { deleteFailed: ticketKey }
+        )
       );
     }
   }
@@ -258,6 +297,7 @@ dashboardRouter.get("/", async (c) => {
   const selectedStatusQuery = c.req.query("status") ?? "";
   const notice = c.req.query("notice") ?? "";
   const noticeType = c.req.query("noticeType") === "error" ? "error" : "success";
+  const deleteFailedKey = c.req.query("deleteFailed") ?? "";
   const escapedSelectedProject = escapeHtml(selectedProject);
   const escapedSelectedStatus = escapeHtml(selectedStatusQuery);
   const escapedNotice = escapeHtml(notice);
@@ -265,6 +305,8 @@ dashboardRouter.get("/", async (c) => {
     ? (selectedStatusQuery as DashboardStatusFilterKey)
     : "";
   const [runs, configs] = await Promise.all([getAllDispatchRuns(), listProjectConfigs()]);
+  const runsWithProdDeployment = await annotateRunsWithProdDeploymentStatus(runs);
+  const prDisplayStateByKey = new Map<string, "open" | "draft" | "merged" | "closed">();
   const projects = Array.from(
     new Set([
       ...configs.filter((c) => c.active).map((c) => c.project_key),
@@ -273,7 +315,7 @@ dashboardRouter.get("/", async (c) => {
   ).sort((a, b) => a.localeCompare(b));
   const ticketStatusByKey = new Map<string, { name: string; categoryKey: string }>();
   await Promise.all(
-    runs.map(async (run) => {
+    runsWithProdDeployment.map(async (run) => {
       try {
         const issue = await jira.getIssue(run.ticket_key, ["status"]);
         const status = issue.fields.status;
@@ -283,14 +325,30 @@ dashboardRouter.get("/", async (c) => {
             categoryKey: status.statusCategory.key,
           });
         }
-      } catch {
+      } catch (err) {
         // Best effort only — dashboard should still render if Jira is unavailable.
+        console.warn(`[dashboard] Failed to load Jira status for ${run.ticket_key}:`, err);
+      }
+    })
+  );
+  await Promise.all(
+    runsWithProdDeployment.map(async (run) => {
+      if (!run.pr_url) return;
+      if (!parseGithubPullRequestUrl(run.pr_url)) return;
+      try {
+        const config = configs.find((item) => item.project_key === run.project_key);
+        const githubToken = config ? resolveProjectTokens(config).githubToken : env.GITHUB_TOKEN;
+        const prDisplayState = await getPullRequestDisplayState(run.pr_url, githubToken);
+        prDisplayStateByKey.set(run.ticket_key, prDisplayState);
+      } catch (err) {
+        // Best effort only — dashboard should still render if GitHub is unavailable.
+        console.warn(`[dashboard] Failed to load PR status for ${run.ticket_key}:`, err);
       }
     })
   );
   const projectFilteredRuns = selectedProject
-    ? runs.filter((run) => run.project_key === selectedProject)
-    : runs;
+    ? runsWithProdDeployment.filter((run) => run.project_key === selectedProject)
+    : runsWithProdDeployment;
   const visibleRuns = hideDone
     ? projectFilteredRuns.filter(
         (run) => ticketStatusByKey.get(run.ticket_key)?.categoryKey !== "done"
@@ -411,7 +469,7 @@ dashboardRouter.get("/", async (c) => {
     const branchName = `agent/${run.ticket_key}`;
     const runtime = formatDuration(run.spawned_at, run.completed_at);
     const ozTaskLink = run.session_link
-      ? `<a href="${run.session_link}" target="_blank">Open task</a>`
+      ? `<a href="${run.session_link}" target="_blank">Open</a>`
       : "-";
     const blockedByHtml =
       run.blocked_by && run.blocked_by.length > 0
@@ -421,10 +479,24 @@ dashboardRouter.get("/", async (c) => {
       run.status === "running" && run.session_link
         ? `<a href="${run.session_link}" target="_blank">Session</a>`
         : run.status === "succeeded" && run.pr_url
-          ? `<a href="${run.pr_url}" target="_blank">PR</a>`
+          ? (() => {
+              const parsedPr = parseGithubPullRequestUrl(run.pr_url ?? "");
+              const prLabel = parsedPr ? `PR #${parsedPr.pullNumber}` : "PR";
+              const prDisplayState = prDisplayStateByKey.get(run.ticket_key);
+              const prSuffix =
+                prDisplayState === "merged"
+                  ? " (Merged)"
+                  : prDisplayState === "draft"
+                    ? " (Draft)"
+                    : prDisplayState === "closed"
+                      ? " (Closed)"
+                      : "";
+              return `<a href="${run.pr_url}" target="_blank">${prLabel}${prSuffix}</a>`;
+            })()
           : "-";
     const parsedPr = run.pr_url ? parseGithubPullRequestUrl(run.pr_url) : null;
     const prKey = parsedPr ? `${parsedPr.owner}/${parsedPr.repo}#${parsedPr.pullNumber}` : null;
+    const showForceDelete = run.ticket_key === deleteFailedKey;
     const rowActions = `<div class="row-menu" data-row-menu>
       <button class="row-menu-btn" type="button" data-row-menu-button aria-label="Open actions for ${run.ticket_key}" aria-expanded="false">⋮</button>
       <div class="row-menu-list" role="menu">
@@ -433,6 +505,7 @@ dashboardRouter.get("/", async (c) => {
           ${hideDone ? '<input type="hidden" name="hideDone" value="1">' : ""}
           ${selectedStatus ? `<input type="hidden" name="status" value="${escapeHtml(selectedStatus)}">` : ""}
           <button class="row-menu-delete" type="submit" role="menuitem">Delete</button>
+          ${showForceDelete ? `<button class="row-menu-delete" type="submit" name="force" value="1" role="menuitem" onclick="return confirm('Force delete ${run.ticket_key}? This skips the open-PR safety check and only removes the run from the dashboard.')">Force delete</button>` : ""}
         </form>
       </div>
     </div>`;
@@ -446,7 +519,7 @@ dashboardRouter.get("/", async (c) => {
         ticketStatusByKey.get(run.ticket_key)?.categoryKey ?? null
       )}</td>
       <td>${statusBadge(run.status)}</td>
-      <td>${formatDate(run.spawned_at)}</td>
+      <td>${formatSpawnedAtDate(run.spawned_at)}</td>
       <td>${runtime}</td>
       <td>
         <span class="branch-cell">
@@ -460,6 +533,7 @@ dashboardRouter.get("/", async (c) => {
         Boolean(run.pr_url),
         prKey ? actionStateByPr.get(prKey) ?? null : null
       )}</td>
+      ${showProdDeploymentColumn ? `<td>${prodDeploymentBadge(run.deployed_to_prod)}</td>` : ""}
       <td>${actionLink}${blockedByHtml}</td>
       <td class="row-actions-cell">${rowActions}</td>
     </tr>`;
@@ -504,12 +578,13 @@ dashboardRouter.get("/", async (c) => {
         <th>Project</th>
         <th>Summary</th>
         <th>Ticket Status</th>
-        <th>Status</th>
+        <th>Agent Status</th>
         <th>Spawned At</th>
         <th>Runtime</th>
         <th>Branch</th>
         <th>Oz Task</th>
         <th>PR Status</th>
+        ${showProdDeploymentColumn ? "<th>Prod Deployment (Coolify)</th>" : ""}
         <th>Links</th>
         <th></th>
       </tr>
@@ -517,7 +592,7 @@ dashboardRouter.get("/", async (c) => {
     <tbody>
       ${
         statusFilteredRuns.length === 0
-          ? `<tr><td colspan="12" style="text-align:center;color:#6b7280">${
+          ? `<tr><td colspan="${showProdDeploymentColumn ? 13 : 12}" style="text-align:center;color:#6b7280">${
               selectedStatus
                 ? `no ${selectedStatus} tasks available`
                 : "No runs found for the current filter"
