@@ -189,6 +189,21 @@ export async function checkRuns(): Promise<void> {
         const ozRun = await client.agent.runs.retrieve(run.run_id);
         const state = ozRun.state;
 
+        // The session link is usually not yet available at spawn time (the
+        // shared session is created once the run bootstraps on a worker), so
+        // backfill it for in-flight runs as soon as Oz exposes it. Terminal
+        // branches below persist the link as part of their own updates.
+        const isTerminalState =
+          state === "SUCCEEDED" ||
+          state === "FAILED" ||
+          state === "ERROR" ||
+          state === "CANCELLED";
+        if (!isTerminalState && !run.session_link && ozRun.session_link) {
+          await updateRunStatus(run.ticket_key, {
+            session_link: ozRun.session_link,
+          });
+        }
+
         if (state === "SUCCEEDED") {
           const prUrl = extractPrUrl(ozRun.artifacts, ozRun.status_message?.message);
           const sessionLink = ozRun.session_link ?? null;
