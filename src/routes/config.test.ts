@@ -224,6 +224,7 @@ describe("configRouter", () => {
   });
 
   it("POST /:projectKey/delete removes the project and redirects to config overview", async () => {
+    getProjectConfigMock.mockResolvedValue(makeProjectConfig({ project_key: "HYDI" }));
     const client = await getClient();
     const res = await client[":projectKey"].delete.$post({
       param: { projectKey: "HYDI" },
@@ -231,6 +232,29 @@ describe("configRouter", () => {
 
     expect(res.status).toBe(302);
     expect(res.headers.get("location")).toBe("/config");
+    expect(deleteProjectConfigMock).toHaveBeenCalledWith("HYDI");
+  });
+
+  it("POST /:projectKey/delete returns 404 and skips deletion for an unknown project", async () => {
+    getProjectConfigMock.mockResolvedValue(null);
+    const client = await getClient();
+    const res = await client[":projectKey"].delete.$post({
+      param: { projectKey: "MISSING" },
+    });
+
+    expect(res.status).toBe(404);
+    expect(deleteProjectConfigMock).not.toHaveBeenCalled();
+  });
+
+  it("POST /:projectKey/delete returns 500 when the delete query throws", async () => {
+    getProjectConfigMock.mockResolvedValue(makeProjectConfig({ project_key: "HYDI" }));
+    deleteProjectConfigMock.mockRejectedValue(new Error("DB failure"));
+    const client = await getClient();
+    const res = await client[":projectKey"].delete.$post({
+      param: { projectKey: "HYDI" },
+    });
+
+    expect(res.status).toBe(500);
     expect(deleteProjectConfigMock).toHaveBeenCalledWith("HYDI");
   });
 

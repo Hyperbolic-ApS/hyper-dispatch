@@ -4,13 +4,13 @@ import {
   getProjectConfig,
   createProjectConfig,
   updateProjectConfig,
+  deleteProjectConfig,
   type ProjectConfig,
 } from "../db/config-queries.js";
 import { discoverSkills } from "../github/skills.js";
 import { validateJiraProject } from "../validator/jira.js";
 import { DEFAULT_JIRA_COLUMN_MAPPINGS } from "../jira/columns.js";
 import { brandIconSvg, faviconDataUri } from "./branding.js";
-import { handleProjectDeletePost, projectDeleteSection } from "./config-project-delete.js";
 
 export const configRouter = new Hono();
 
@@ -363,6 +363,14 @@ document.addEventListener('DOMContentLoaded', () => {
 ${skillsPickerScript}`;
 }
 
+function projectDeleteSection(projectKey: string): string {
+  return `<div style="margin-top:16px">
+  <form method="POST" action="/config/${projectKey}/delete" onsubmit="return confirm('Delete this project and its dispatch history?')">
+    <button type="submit" class="btn btn-danger">Delete project</button>
+  </form>
+</div>`;
+}
+
 async function handleSkillDiscoveryPost(c: Context): Promise<Response> {
   let payload:
     | { repo?: unknown; projectKey?: unknown; githubPat?: unknown }
@@ -661,7 +669,20 @@ configRouter.post("/:projectKey", async (c) => {
 // ─── POST /:projectKey/delete — Delete project ────────────────────────────────
 
 configRouter.post("/:projectKey/delete", async (c) => {
-  return handleProjectDeletePost(c);
+  const { projectKey } = c.req.param();
+  const existing = await getProjectConfig(projectKey);
+  if (!existing) {
+    return c.html(
+      layout(
+        "Not Found",
+        `<p>Project <strong>${projectKey}</strong> not found. <a href="/config">Back</a></p>`
+      ),
+      404
+    );
+  }
+
+  await deleteProjectConfig(projectKey);
+  return c.redirect("/config");
 });
 
 // ─── GET /:projectKey/skills — Discover skills from GitHub repo ────────────────

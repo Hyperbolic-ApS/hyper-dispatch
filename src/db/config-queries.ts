@@ -158,14 +158,19 @@ export async function updateProjectConfig(
 export async function deleteProjectConfig(
   projectKey: string
 ): Promise<void> {
-  await sql`
-    DELETE FROM dispatch_runs
-    WHERE project_key = ${projectKey}
-  `;
-  await sql`
-    DELETE FROM project_configs
-    WHERE project_key = ${projectKey}
-  `;
+  // Run both deletes in a single transaction so a failure on the second
+  // statement rolls back the first — otherwise a partial failure would wipe a
+  // project's run history while leaving its config row intact.
+  await sql.begin(async (tx) => {
+    await tx`
+      DELETE FROM dispatch_runs
+      WHERE project_key = ${projectKey}
+    `;
+    await tx`
+      DELETE FROM project_configs
+      WHERE project_key = ${projectKey}
+    `;
+  });
 }
 
 export async function getAllDispatchRuns(): Promise<DispatchRun[]> {
