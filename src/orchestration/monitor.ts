@@ -32,6 +32,19 @@ function getGithubClient(): Octokit {
   return _githubClient;
 }
 
+function getAddCommentToIssue():
+  | ((issueKey: string, comment: string) => Promise<void>)
+  | undefined {
+  try {
+    const jiraClient = jira as unknown as {
+      addCommentToIssue?: (issueKey: string, comment: string) => Promise<void>;
+    };
+    return jiraClient.addCommentToIssue;
+  } catch {
+    return undefined;
+  }
+}
+
 /**
  * Extract a GitHub pull-request URL from a run status message.
  */
@@ -199,6 +212,18 @@ export async function checkRuns(): Promise<void> {
             pr_url: prUrl,
             session_link: sessionLink,
           });
+
+          const addCommentToIssue = getAddCommentToIssue();
+          if (prUrl && addCommentToIssue) {
+            try {
+              await addCommentToIssue(run.ticket_key, `Opened pull request: ${prUrl}`);
+            } catch (err) {
+              console.warn(
+                `[monitor] Failed to add PR comment for ${run.ticket_key}:`,
+                err
+              );
+            }
+          }
 
           // Transition Jira to "In Review" (best-effort)
           try {
