@@ -22,6 +22,31 @@ Receives Jira Automation webhook payloads on issue transitions.
 
 **Response:** `200 OK` (acknowledgement, processing is async).
 
+### `POST /webhook/github`
+Receives GitHub webhook payloads for pull request state updates.
+
+**Headers:**
+- `X-GitHub-Event` (required): event type (`ping`, `pull_request`, etc.)
+- `X-Hub-Signature-256` (required): `sha256=<hex>` signature of the raw request body
+
+**Behavior:**
+- Requires `GITHUB_WEBHOOK_SECRET` to be configured; if missing, responds `503` (fail closed).
+- Verifies the `X-Hub-Signature-256` HMAC-SHA256 signature against the raw request body.
+- Invalid or missing signature returns `401`.
+- `ping` events return `200` with `{ "action": "pong" }`.
+- `pull_request` events:
+  - Reads `pull_request.html_url`
+  - Looks up matching runs via `pr_url`
+  - Derives `pr_display_state` as:
+    - `merged_at` present → `merged`
+    - `state === "open"` and `draft === true` → `draft`
+    - `state === "open"` → `open`
+    - otherwise → `closed`
+  - Persists `pr_display_state` for all matching runs.
+  - If no runs are found, returns `200` ignored.
+
+**Response:** `200 OK` for accepted/ignored GitHub events.
+
 ## Status API
 
 ### `GET /api/status`
