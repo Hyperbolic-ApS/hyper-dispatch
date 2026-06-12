@@ -19,12 +19,11 @@ export async function transitionMergedPrToDone(
   options: TransitionMergedPrToDoneOptions = {}
 ): Promise<void> {
   const logPrefix = options.logPrefix ?? "[monitor]";
+  let issueAlreadyDone = false;
 
   try {
     const issue = await jira.getIssue(run.ticket_key, ["status"]);
-    if (issue.fields.status.statusCategory.key === "done") {
-      return;
-    }
+    issueAlreadyDone = issue.fields.status.statusCategory.key === "done";
   } catch (err) {
     console.warn(
       `${logPrefix} Failed to load Jira status for ${run.ticket_key}:`,
@@ -43,18 +42,20 @@ export async function transitionMergedPrToDone(
       done: config?.done_column_name,
     });
 
-    const transitions = await jira.getTransitions(run.ticket_key);
-    const doneTransition = transitions.transitions.find(
-      (t) => t.name.trim().toLowerCase() === columnMappings.done.toLowerCase()
-    );
-    if (!doneTransition) {
-      console.warn(
-        `${logPrefix} No ${columnMappings.done} transition found for ${run.ticket_key}`
+    if (!issueAlreadyDone) {
+      const transitions = await jira.getTransitions(run.ticket_key);
+      const doneTransition = transitions.transitions.find(
+        (t) => t.name.trim().toLowerCase() === columnMappings.done.toLowerCase()
       );
-      return;
-    }
+      if (!doneTransition) {
+        console.warn(
+          `${logPrefix} No ${columnMappings.done} transition found for ${run.ticket_key}`
+        );
+        return;
+      }
 
-    await jira.transitionIssue(run.ticket_key, doneTransition.id);
+      await jira.transitionIssue(run.ticket_key, doneTransition.id);
+    }
 
     let unblockedCount = 0;
     try {
