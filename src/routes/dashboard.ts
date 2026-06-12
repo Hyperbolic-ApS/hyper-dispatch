@@ -8,7 +8,6 @@ import { brandIconSvg, faviconDataUri } from "./branding.js";
 import * as jira from "../jira/client.js";
 import { annotateRunsWithProdDeploymentStatus } from "../coolify/prod-deployment.js";
 import {
-  getPullRequestDisplayState,
   getPullRequestState,
   parseGithubPullRequestUrl,
 } from "../github/pull-requests.js";
@@ -306,7 +305,6 @@ dashboardRouter.get("/", async (c) => {
     : "";
   const [runs, configs] = await Promise.all([getAllDispatchRuns(), listProjectConfigs()]);
   const runsWithProdDeployment = await annotateRunsWithProdDeploymentStatus(runs);
-  const prDisplayStateByKey = new Map<string, "open" | "draft" | "merged" | "closed">();
   const projects = Array.from(
     new Set([
       ...configs.filter((c) => c.active).map((c) => c.project_key),
@@ -328,21 +326,6 @@ dashboardRouter.get("/", async (c) => {
       } catch (err) {
         // Best effort only — dashboard should still render if Jira is unavailable.
         console.warn(`[dashboard] Failed to load Jira status for ${run.ticket_key}:`, err);
-      }
-    })
-  );
-  await Promise.all(
-    runsWithProdDeployment.map(async (run) => {
-      if (!run.pr_url) return;
-      if (!parseGithubPullRequestUrl(run.pr_url)) return;
-      try {
-        const config = configs.find((item) => item.project_key === run.project_key);
-        const githubToken = config ? resolveProjectTokens(config).githubToken : env.GITHUB_TOKEN;
-        const prDisplayState = await getPullRequestDisplayState(run.pr_url, githubToken);
-        prDisplayStateByKey.set(run.ticket_key, prDisplayState);
-      } catch (err) {
-        // Best effort only — dashboard should still render if GitHub is unavailable.
-        console.warn(`[dashboard] Failed to load PR status for ${run.ticket_key}:`, err);
       }
     })
   );
@@ -493,7 +476,7 @@ dashboardRouter.get("/", async (c) => {
           ? (() => {
               const parsedPr = parseGithubPullRequestUrl(run.pr_url ?? "");
               const prLabel = parsedPr ? `PR #${parsedPr.pullNumber}` : "PR";
-              const prDisplayState = prDisplayStateByKey.get(run.ticket_key);
+              const prDisplayState = run.pr_display_state;
               const prSuffix =
                 prDisplayState === "merged"
                   ? " (Merged)"

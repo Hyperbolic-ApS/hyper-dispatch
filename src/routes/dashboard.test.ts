@@ -798,13 +798,13 @@ describe("dashboardRouter", () => {
         ticket_key: "HYDI-51",
         status: "succeeded",
         pr_url: "https://github.com/org/repo/pull/123",
+        pr_display_state: "open",
       }),
     ]);
     getIssueMock.mockResolvedValue({
       fields: { status: { name: "Done", statusCategory: { key: "done" } } },
     });
     parseGithubPullRequestUrlMock.mockReturnValue({ owner: "org", repo: "repo", pullNumber: 123 });
-    getPullRequestDisplayStateMock.mockResolvedValue("open");
 
     const { dashboardRouter } = await import("./dashboard.js");
     const res = await dashboardRouter.request("http://localhost/");
@@ -820,13 +820,13 @@ describe("dashboardRouter", () => {
         ticket_key: "HYDI-54",
         status: "succeeded",
         pr_url: "https://github.com/org/repo/pull/54",
+        pr_display_state: "merged",
       }),
     ]);
     getIssueMock.mockResolvedValue({
       fields: { status: { name: "Done", statusCategory: { key: "done" } } },
     });
     parseGithubPullRequestUrlMock.mockReturnValue({ owner: "org", repo: "repo", pullNumber: 54 });
-    getPullRequestDisplayStateMock.mockResolvedValue("merged");
 
     const { dashboardRouter } = await import("./dashboard.js");
     const res = await dashboardRouter.request("http://localhost/");
@@ -844,13 +844,13 @@ describe("dashboardRouter", () => {
         ticket_key: "HYDI-54",
         status: "succeeded",
         pr_url: "https://github.com/org/repo/pull/54",
+        pr_display_state: "draft",
       }),
     ]);
     getIssueMock.mockResolvedValue({
       fields: { status: { name: "In Review", statusCategory: { key: "in-flight" } } },
     });
     parseGithubPullRequestUrlMock.mockReturnValue({ owner: "org", repo: "repo", pullNumber: 54 });
-    getPullRequestDisplayStateMock.mockResolvedValue("draft");
 
     const { dashboardRouter } = await import("./dashboard.js");
     const res = await dashboardRouter.request("http://localhost/");
@@ -868,13 +868,13 @@ describe("dashboardRouter", () => {
         ticket_key: "HYDI-54",
         status: "succeeded",
         pr_url: "https://github.com/org/repo/pull/54",
+        pr_display_state: "closed",
       }),
     ]);
     getIssueMock.mockResolvedValue({
       fields: { status: { name: "In Review", statusCategory: { key: "in-flight" } } },
     });
     parseGithubPullRequestUrlMock.mockReturnValue({ owner: "org", repo: "repo", pullNumber: 54 });
-    getPullRequestDisplayStateMock.mockResolvedValue("closed");
 
     const { dashboardRouter } = await import("./dashboard.js");
     const res = await dashboardRouter.request("http://localhost/");
@@ -886,29 +886,27 @@ describe("dashboardRouter", () => {
     );
   });
 
-  it("logs a warning but still renders the row when the PR display-state lookup fails", async () => {
-    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+  it("does not call getPullRequestDisplayState while rendering dashboard rows", async () => {
     getAllDispatchRunsMock.mockResolvedValue([
       makeDispatchRun({
         ticket_key: "HYDI-60",
         status: "succeeded",
         pr_url: "https://github.com/org/repo/pull/60",
+        pr_display_state: "merged",
       }),
     ]);
     getIssueMock.mockResolvedValue({
       fields: { status: { name: "In Review", statusCategory: { key: "in-flight" } } },
     });
     parseGithubPullRequestUrlMock.mockReturnValue({ owner: "org", repo: "repo", pullNumber: 60 });
-    getPullRequestDisplayStateMock.mockRejectedValue(new Error("rate limited"));
 
     const { dashboardRouter } = await import("./dashboard.js");
     const res = await dashboardRouter.request("http://localhost/");
     const html = await res.text();
 
-    // The row still renders (no status suffix), and the swallowed failure is logged.
     expect(res.status).toBe(200);
-    expect(html).toContain('<a href="https://github.com/org/repo/pull/60" target="_blank">PR #60</a>');
-    expect(warnSpy).toHaveBeenCalled();
+    expect(html).toContain('<a href="https://github.com/org/repo/pull/60" target="_blank">PR #60 (Merged)</a>');
+    expect(getPullRequestDisplayStateMock).not.toHaveBeenCalled();
   });
 
   it("logs a warning but still renders the row when the Jira status lookup fails", async () => {
