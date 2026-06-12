@@ -207,6 +207,7 @@ Call `report_pr` with the PR URL and branch name. This is how HyperDispatch know
 
 - **Branch name must be `agent/{ticket-key}`** — this is non-negotiable.
 - **A PR must be created** — HyperDispatch marks the run as failed if no PR artifact is found.
+- **PRs must not be drafts** — always create a normal, ready-for-review pull request. Never pass `--draft` to `gh pr create`.
 - **Do not modify files outside the ticket's scope** — parallel agents are working on other tickets simultaneously.
 - **Do not force-push or rewrite history** — other processes may be watching the branch.
 - **UI verification must run headlessly** — the workflow must work in CI with no display server or visible browser window.
