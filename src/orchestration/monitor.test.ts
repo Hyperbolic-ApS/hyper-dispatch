@@ -502,6 +502,7 @@ describe("checkRuns", () => {
           status: "running",
           run_id: "run_8",
           spawned_at: freshSpawnedAt,
+          session_link: "https://warp.dev/run/run_8",
         }),
       ])
       .mockResolvedValueOnce([]);
@@ -511,6 +512,111 @@ describe("checkRuns", () => {
     await checkRuns();
 
     expect(ozCancelMock).not.toHaveBeenCalled();
+    expect(updateRunStatusMock).not.toHaveBeenCalled();
+  });
+
+  it("backfills session_link for INPROGRESS runs when missing", async () => {
+    const freshSpawnedAt = new Date(Date.now() - 30 * 60 * 1000);
+    getRunsByStatusMock
+      .mockResolvedValueOnce([
+        makeDispatchRun({
+          ticket_key: "HYDI-14",
+          status: "running",
+          run_id: "run_14",
+          spawned_at: freshSpawnedAt,
+          session_link: null,
+        }),
+      ])
+      .mockResolvedValueOnce([]);
+    ozRetrieveMock.mockResolvedValue(
+      makeOzRun({
+        state: "INPROGRESS",
+        session_link: "https://warp.dev/run/run_14",
+      })
+    );
+
+    const { checkRuns } = await importMonitor();
+    await checkRuns();
+
+    expect(updateRunStatusMock).toHaveBeenCalledTimes(1);
+    expect(updateRunStatusMock).toHaveBeenCalledWith("HYDI-14", {
+      session_link: "https://warp.dev/run/run_14",
+    });
+  });
+
+  it("backfills session_link for BLOCKED runs when missing", async () => {
+    getRunsByStatusMock
+      .mockResolvedValueOnce([
+        makeDispatchRun({
+          ticket_key: "HYDI-15",
+          status: "running",
+          run_id: "run_15",
+          session_link: null,
+        }),
+      ])
+      .mockResolvedValueOnce([]);
+    ozRetrieveMock.mockResolvedValue(
+      makeOzRun({
+        state: "BLOCKED",
+        session_link: "https://warp.dev/run/run_15",
+      })
+    );
+
+    const { checkRuns } = await importMonitor();
+    await checkRuns();
+
+    expect(updateRunStatusMock).toHaveBeenCalledTimes(1);
+    expect(updateRunStatusMock).toHaveBeenCalledWith("HYDI-15", {
+      session_link: "https://warp.dev/run/run_15",
+    });
+  });
+
+  it("does not backfill session_link when Oz has not exposed one yet", async () => {
+    const freshSpawnedAt = new Date(Date.now() - 30 * 60 * 1000);
+    getRunsByStatusMock
+      .mockResolvedValueOnce([
+        makeDispatchRun({
+          ticket_key: "HYDI-16",
+          status: "running",
+          run_id: "run_16",
+          spawned_at: freshSpawnedAt,
+          session_link: null,
+        }),
+      ])
+      .mockResolvedValueOnce([]);
+    ozRetrieveMock.mockResolvedValue(
+      makeOzRun({ state: "INPROGRESS", session_link: null })
+    );
+
+    const { checkRuns } = await importMonitor();
+    await checkRuns();
+
+    expect(updateRunStatusMock).not.toHaveBeenCalled();
+  });
+
+  it("does not re-write session_link when already stored", async () => {
+    const freshSpawnedAt = new Date(Date.now() - 30 * 60 * 1000);
+    getRunsByStatusMock
+      .mockResolvedValueOnce([
+        makeDispatchRun({
+          ticket_key: "HYDI-17",
+          status: "running",
+          run_id: "run_17",
+          spawned_at: freshSpawnedAt,
+          session_link: "https://warp.dev/run/run_17",
+        }),
+      ])
+      .mockResolvedValueOnce([]);
+    ozRetrieveMock.mockResolvedValue(
+      makeOzRun({
+        state: "INPROGRESS",
+        session_link: "https://warp.dev/run/run_17",
+      })
+    );
+
+    const { checkRuns } = await importMonitor();
+    await checkRuns();
+
     expect(updateRunStatusMock).not.toHaveBeenCalled();
   });
 
@@ -549,6 +655,7 @@ describe("checkRuns", () => {
           ticket_key: "HYDI-10",
           status: "running",
           run_id: "run_10",
+          session_link: "https://warp.dev/run/run_10",
         }),
       ])
       .mockResolvedValueOnce([]);
