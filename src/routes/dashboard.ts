@@ -535,7 +535,7 @@ dashboardRouter.get("/", async (c) => {
       <td>
         <span class="branch-cell">
           <code>${branchName}</code>
-          <button class="copy-branch-btn" type="button" data-copy-branch="${branchName}" aria-label="Copy ${branchName} to clipboard"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="2" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button>
+          <button class="copy-branch-btn" type="button" data-copy-branch="${branchName}" aria-label="Copy ${branchName} to clipboard"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="7" width="12" height="15" rx="2" ry="2"/><path d="M9 7V4a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v11a2 2 0 0 1-2 2h-4"/></svg></button>
         </span>
       </td>
       <td>${ozTaskLink}</td>
@@ -622,7 +622,7 @@ dashboardRouter.get("/", async (c) => {
       window.location.reload();
     });
     document.addEventListener("click", async (event) => {
-      const button = event.target instanceof HTMLElement ? event.target.closest("[data-copy-branch]") : null;
+      const button = event.target instanceof Element ? event.target.closest("[data-copy-branch]") : null;
       if (!(button instanceof HTMLButtonElement)) return;
       const branch = button.dataset.copyBranch;
       if (!branch) return;
@@ -643,7 +643,7 @@ dashboardRouter.get("/", async (c) => {
       button.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>';
       setTimeout(() => {
         button.classList.remove("copied");
-        button.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="2" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>';
+        button.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="7" width="12" height="15" rx="2" ry="2"/><path d="M9 7V4a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v11a2 2 0 0 1-2 2h-4"/></svg>';
       }, 1200);
     });
     document.addEventListener("click", (event) => {
