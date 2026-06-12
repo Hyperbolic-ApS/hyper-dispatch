@@ -39,6 +39,16 @@ export async function getPullRequestState(
 }
 
 export type PullRequestDisplayState = "open" | "draft" | "merged" | "closed";
+export function derivePullRequestDisplayState(pullRequest: {
+  merged_at: string | null;
+  state: "open" | "closed";
+  draft?: boolean;
+}): PullRequestDisplayState {
+  if (pullRequest.merged_at) return "merged";
+  if (pullRequest.state === "open" && pullRequest.draft) return "draft";
+  if (pullRequest.state === "open") return "open";
+  return "closed";
+}
 
 export async function getPullRequestDisplayState(
   prUrl: string,
@@ -55,9 +65,9 @@ export async function getPullRequestDisplayState(
     repo: parsed.repo,
     pull_number: parsed.pullNumber,
   });
-
-  if (pullRequest.merged_at) return "merged";
-  if (pullRequest.state === "open" && pullRequest.draft) return "draft";
-  if (pullRequest.state === "open") return "open";
-  return "closed";
+  return derivePullRequestDisplayState({
+    merged_at: pullRequest.merged_at,
+    state: pullRequest.state,
+    draft: pullRequest.draft,
+  });
 }

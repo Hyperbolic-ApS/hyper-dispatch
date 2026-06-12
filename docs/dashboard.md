@@ -21,7 +21,8 @@ Displays all tracked dispatch runs in a table with:
 - Production deployment badge from Coolify (`Deployed`, `Not deployed`, or `Unknown`) is currently hidden from the dashboard table while feature wiring is retained in code for quick re-enablement
 - Session link (clickable, for live runs — opens Oz session)
 - PR link with PR number (for completed runs, e.g. `PR #123` when parseable)
-  - Non-open PRs include a status suffix in the link text: `(Merged)`, `(Draft)`, or `(Closed)`
+  - Non-open PRs include a status suffix in the link text: `(Merged)`, `(Draft)`, or `(Closed)` based on persisted `dispatch_runs.pr_display_state`
+  - Dashboard render does not poll GitHub for PR display state; it uses DB state captured by the monitor pipeline
 - Compact row action menu (`⋮`) on the right side with `Delete` (and a conditional `Force delete` action stacked beneath it)
   - The action popover is allowed to extend beyond table bounds so the actions remain fully visible on the last row, including at non-default browser zoom levels
   - `Delete` is blocked when the run has an open GitHub PR, with an inline error prompting to close the PR first or use `Force delete`
@@ -45,6 +46,7 @@ Auto-refreshes every 15 seconds, and also triggers an immediate refresh when the
 
 **Data source**: Primarily the `dispatch_runs` table (fast), enriched with live Jira issue status per ticket and Oz run data (runtime, session link) when available.
 PR action-state badges are resolved from GitHub workflow runs associated with each PR, using the configured project GitHub token when present (falling back to the global token).
+PR link display-state suffixes are read from `dispatch_runs.pr_display_state`, so dashboard auto-refreshes do not add per-row GitHub PR lookups.
 When Coolify env vars are configured, dashboard rows are further enriched by resolving the PR merge commit and checking whether that commit appears in successful production deployments in Coolify.
 
 ## Config UI

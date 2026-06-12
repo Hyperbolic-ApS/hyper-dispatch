@@ -10,6 +10,7 @@ import {
 import { resolveJiraColumnMappings } from "../jira/columns.js";
 import { getOzClient } from "./oz-client.js";
 import { transitionMergedPrToDone } from "./pr-merge.js";
+import { derivePullRequestDisplayState } from "../github/pull-requests.js";
 
 const MONITOR_INTERVAL_MS = 30_000;
 
@@ -97,20 +98,6 @@ async function transitionMergedPrsToDone(): Promise<void> {
   for (const run of succeededRuns) {
     if (!run.pr_url) continue;
 
-    // Avoid repeated transition attempts once issue is already done.
-    try {
-      const issue = await jira.getIssue(run.ticket_key, ["status"]);
-      if (issue.fields.status.statusCategory.key === "done") {
-        continue;
-      }
-    } catch (err) {
-      console.warn(
-        `[monitor] Failed to load Jira status for ${run.ticket_key}:`,
-        err
-      );
-      continue;
-    }
-
     const parsed = parseGithubPullRequestUrl(run.pr_url);
     if (!parsed) {
       console.warn(
@@ -127,11 +114,35 @@ async function transitionMergedPrsToDone(): Promise<void> {
       });
       const hasMergeConflicts =
         pullRequest.mergeable_state === "dirty" || pullRequest.mergeable === false;
+      const prDisplayState = derivePullRequestDisplayState({
+        merged_at: pullRequest.merged_at,
+        state: pullRequest.state,
+        draft: pullRequest.draft,
+      });
+      // Reconcile PR conflict/display-state metadata for every succeeded run,
+      // regardless of Jira status, so historical runs (including those already
+      // in Done) get backfilled.
       await updateRunStatus(run.ticket_key, {
         pr_has_conflicts: hasMergeConflicts,
+        pr_display_state: prDisplayState,
       });
 
       if (!pullRequest.merged_at) continue;
+
+      // Gate only the Jira transition on the Done check to avoid repeated
+      // transition attempts once the issue is already done.
+      try {
+        const issue = await jira.getIssue(run.ticket_key, ["status"]);
+        if (issue.fields.status.statusCategory.key === "done") {
+          continue;
+        }
+      } catch (err) {
+        console.warn(
+          `[monitor] Failed to load Jira status for ${run.ticket_key}:`,
+          err
+        );
+        continue;
+      }
 
       await transitionMergedPrToDone(run, { logPrefix: "[monitor]" });
     } catch (err) {
