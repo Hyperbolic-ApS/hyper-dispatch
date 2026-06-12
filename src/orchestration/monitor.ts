@@ -6,11 +6,10 @@ import {
   getRunsByStatus,
   updateRunStatus,
   getProjectConfig,
-  getRunsBlockedBy,
-  removeBlocker,
 } from "../db/queries.js";
 import { resolveJiraColumnMappings } from "../jira/columns.js";
 import { getOzClient } from "./oz-client.js";
+import { transitionMergedPrToDone } from "./pr-merge.js";
 
 const MONITOR_INTERVAL_MS = 30_000;
 
@@ -134,41 +133,7 @@ async function transitionMergedPrsToDone(): Promise<void> {
 
       if (!pullRequest.merged_at) continue;
 
-      const config = await getProjectConfig(run.project_key);
-      const columnMappings = resolveJiraColumnMappings({
-        backlog: config?.backlog_column_name,
-        toDo: config?.to_do_column_name,
-        inProgress: config?.in_progress_column_name,
-        inReview: config?.in_review_column_name,
-        done: config?.done_column_name,
-      });
-
-      const transitions = await jira.getTransitions(run.ticket_key);
-      const doneTransition = transitions.transitions.find(
-        (t) => t.name.trim().toLowerCase() === columnMappings.done.toLowerCase()
-      );
-      if (!doneTransition) {
-        console.warn(`[monitor] No ${columnMappings.done} transition found for ${run.ticket_key}`);
-        continue;
-      }
-
-      await jira.transitionIssue(run.ticket_key, doneTransition.id);
-      let unblockedCount = 0;
-      try {
-        const blockedRuns = await getRunsBlockedBy(run.ticket_key);
-        for (const blockedRun of blockedRuns) {
-          const updated = await removeBlocker(blockedRun.ticket_key, run.ticket_key);
-          if (updated) unblockedCount++;
-        }
-      } catch (err) {
-        console.warn(
-          `[monitor] Failed to unblock dependents for ${run.ticket_key}:`,
-          err
-        );
-      }
-      console.log(
-        `[monitor] ${run.ticket_key} moved to Done after PR merge: ${run.pr_url} (unblocked: ${unblockedCount})`
-      );
+      await transitionMergedPrToDone(run, { logPrefix: "[monitor]" });
     } catch (err) {
       console.warn(
         `[monitor] Failed to process merged PR for ${run.ticket_key}:`,
