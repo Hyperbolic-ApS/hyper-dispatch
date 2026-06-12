@@ -4,13 +4,13 @@ import {
   getProjectConfig,
   createProjectConfig,
   updateProjectConfig,
-  deactivateProjectConfig,
   type ProjectConfig,
 } from "../db/config-queries.js";
 import { discoverSkills } from "../github/skills.js";
 import { validateJiraProject } from "../validator/jira.js";
 import { DEFAULT_JIRA_COLUMN_MAPPINGS } from "../jira/columns.js";
 import { brandIconSvg, faviconDataUri } from "./branding.js";
+import { handleProjectDeletePost, projectDeleteSection } from "./config-project-delete.js";
 
 export const configRouter = new Hono();
 
@@ -578,11 +578,7 @@ configRouter.get("/:projectKey", async (c) => {
   const body = `
 <h1>Edit: ${config.project_key}</h1>
 ${projectForm(`/config/${config.project_key}`, config, config.project_key)}
-<div style="margin-top:16px">
-  <form method="POST" action="/config/${config.project_key}/delete" onsubmit="return confirm('Deactivate this project?')">
-    <button type="submit" class="btn btn-danger">Deactivate</button>
-  </form>
-</div>`;
+${projectDeleteSection(config.project_key)}`;
 
   return c.html(layout(`Edit ${projectKey}`, body));
 });
@@ -662,12 +658,10 @@ configRouter.post("/:projectKey", async (c) => {
   return c.redirect(`/config/${projectKey}`);
 });
 
-// ─── POST /:projectKey/delete — Deactivate project ────────────────────────────
+// ─── POST /:projectKey/delete — Delete project ────────────────────────────────
 
 configRouter.post("/:projectKey/delete", async (c) => {
-  const { projectKey } = c.req.param();
-  await deactivateProjectConfig(projectKey);
-  return c.redirect("/config");
+  return handleProjectDeletePost(c);
 });
 
 // ─── GET /:projectKey/skills — Discover skills from GitHub repo ────────────────

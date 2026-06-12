@@ -155,11 +155,15 @@ export async function updateProjectConfig(
   return rows[0] ?? null;
 }
 
-export async function deactivateProjectConfig(
+export async function deleteProjectConfig(
   projectKey: string
 ): Promise<void> {
   await sql`
-    UPDATE project_configs SET active = false, updated_at = NOW()
+    DELETE FROM dispatch_runs
+    WHERE project_key = ${projectKey}
+  `;
+  await sql`
+    DELETE FROM project_configs
     WHERE project_key = ${projectKey}
   `;
 }

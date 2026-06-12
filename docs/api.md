@@ -110,8 +110,8 @@ If required fields are missing (`project_key`, `jira_cloud_id`, `board_id`, `oz_
 ### `PUT /config/:projectKey`
 Update an existing project configuration.
 
-### `DELETE /config/:projectKey`
-Deactivate a project configuration.
+### `POST /config/:projectKey/delete`
+Delete a project configuration and associated dispatch run history.
 
 ### `GET /config/:projectKey/validate`
 Run Jira board validation for a project. Returns pass/fail per check.
