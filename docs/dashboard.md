@@ -16,7 +16,7 @@ Displays all tracked dispatch runs in a table with:
 - Spawned-at timestamp in the viewer's local timezone, rendered as `dd/MM/YY HH:MM`
 - Agent runtime (for running/completed entries)
 - Branch (`agent/{ticket-key}`) with an inline clipboard icon button that copies the branch name to clipboard (shows a checkmark on success)
-- Oz task link labeled `Open` (opens the run task/session in Oz when available)
+- Oz task link labeled `Open` (opens the run task/session in Oz as soon as the run is created, including while status is `running`)
 - PR status badge (`Review running`, `Revision running`, or `Review + revision running` when those actions are active; otherwise `Merge conflicts`, `No conflicts`, or `Unknown` once a PR exists)
 - Production deployment badge from Coolify (`Deployed`, `Not deployed`, or `Unknown`) is currently hidden from the dashboard table while feature wiring is retained in code for quick re-enablement
 - Session link (clickable, for live runs — opens Oz session)
