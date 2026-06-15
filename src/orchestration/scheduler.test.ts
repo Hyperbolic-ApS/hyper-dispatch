@@ -16,6 +16,7 @@ const {
   mockGetRunsByProject,
   mockDeleteRun,
   mockGetIssue,
+  mockGetIssuesByKeys,
   mockSearchIssuesInStatus,
   mockSpawnAgent,
   mockSyncTicketInToDo,
@@ -41,6 +42,7 @@ const {
     mockGetRunsByProject: vi.fn(),
     mockDeleteRun: vi.fn(),
     mockGetIssue: vi.fn(),
+    mockGetIssuesByKeys: vi.fn(),
     mockSearchIssuesInStatus: vi.fn(),
     mockSpawnAgent: vi.fn(),
     mockSyncTicketInToDo: vi.fn(),
@@ -65,6 +67,7 @@ vi.mock("../db/queries.js", () => ({
 
 vi.mock("../jira/client.js", () => ({
   getIssue: mockGetIssue,
+  getIssuesByKeys: mockGetIssuesByKeys,
   searchIssuesInStatus: mockSearchIssuesInStatus,
   JiraApiError: MockJiraApiError,
 }));
@@ -92,6 +95,7 @@ describe("processQueue", () => {
     mockGetRunsByProject.mockResolvedValue([]);
     mockDeleteRun.mockResolvedValue(undefined);
     mockGetIssue.mockResolvedValue(makeJiraIssue());
+    mockGetIssuesByKeys.mockResolvedValue([]);
     mockSearchIssuesInStatus.mockResolvedValue([]);
     mockSpawnAgent.mockResolvedValue(undefined);
     mockSyncTicketInToDo.mockResolvedValue({ action: "queued" });
@@ -349,8 +353,7 @@ describe("processQueue", () => {
     expect(mockSyncTicketInToDo).toHaveBeenCalledWith("HYDI-200", "HYDI");
   });
 
-  it("removes runs when Jira returns 404 during reconciliation", async () => {
-    const jira = await import("../jira/client.js");
+  it("removes runs that the batched Jira lookup no longer returns", async () => {
     const project = makeProjectConfig({ project_key: "HYDI" });
     mockListActiveProjectConfigs
       .mockResolvedValueOnce([project])
@@ -359,14 +362,61 @@ describe("processQueue", () => {
     mockGetRunsByProject.mockResolvedValue([
       makeDispatchRun({ ticket_key: "HYDI-404", project_key: "HYDI" }),
     ]);
-    mockGetIssue.mockRejectedValueOnce(
-      new jira.JiraApiError(404, "not found", "not found")
-    );
+    // bulkfetch omits the deleted ticket from its issues list.
+    mockGetIssuesByKeys.mockResolvedValue([]);
     mockGetActiveRunCount.mockResolvedValue(4);
 
     await processQueue();
 
+    expect(mockGetIssuesByKeys).toHaveBeenCalledWith(["HYDI-404"], ["status"]);
     expect(mockDeleteRun).toHaveBeenCalledWith("HYDI-404");
+  });
+
+  it("deletes only the runs missing from the batched Jira lookup", async () => {
+    const project = makeProjectConfig({ project_key: "HYDI" });
+    mockListActiveProjectConfigs
+      .mockResolvedValueOnce([project])
+      .mockResolvedValueOnce([]);
+    mockSearchIssuesInStatus.mockResolvedValue([]);
+    mockGetRunsByProject.mockResolvedValue([
+      makeDispatchRun({ ticket_key: "HYDI-1", project_key: "HYDI" }),
+      makeDispatchRun({ ticket_key: "HYDI-2", project_key: "HYDI" }),
+      makeDispatchRun({ ticket_key: "HYDI-3", project_key: "HYDI" }),
+    ]);
+    // Only HYDI-1 and HYDI-3 still exist in Jira; HYDI-2 was deleted.
+    mockGetIssuesByKeys.mockResolvedValue([
+      makeJiraIssue({ key: "HYDI-1" }),
+      makeJiraIssue({ key: "HYDI-3" }),
+    ]);
+    mockGetActiveRunCount.mockResolvedValue(4);
+
+    await processQueue();
+
+    expect(mockDeleteRun).toHaveBeenCalledTimes(1);
+    expect(mockDeleteRun).toHaveBeenCalledWith("HYDI-2");
+  });
+
+  it("does not delete any runs when the batched existence check fails", async () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const project = makeProjectConfig({ project_key: "HYDI" });
+    mockListActiveProjectConfigs
+      .mockResolvedValueOnce([project])
+      .mockResolvedValueOnce([]);
+    mockSearchIssuesInStatus.mockResolvedValue([]);
+    mockGetRunsByProject.mockResolvedValue([
+      makeDispatchRun({ ticket_key: "HYDI-1", project_key: "HYDI" }),
+    ]);
+    mockGetIssuesByKeys.mockRejectedValue(new Error("jira bulk fetch failed"));
+    mockGetActiveRunCount.mockResolvedValue(4);
+
+    await processQueue();
+
+    expect(mockDeleteRun).not.toHaveBeenCalled();
+    expect(warnSpy).toHaveBeenCalledWith(
+      "[scheduler] Could not verify Jira existence for project HYDI:",
+      expect.any(Error)
+    );
+    warnSpy.mockRestore();
   });
 
   it("logs reconciliation project failures and keeps going", async () => {
@@ -400,6 +450,7 @@ describe("startSchedulerLoop", () => {
     mockListActiveProjectConfigs.mockResolvedValue([]);
     mockGetRunsByProject.mockResolvedValue([]);
     mockGetIssue.mockResolvedValue(makeJiraIssue());
+    mockGetIssuesByKeys.mockResolvedValue([]);
     mockSearchIssuesInStatus.mockResolvedValue([]);
     mockSpawnAgent.mockResolvedValue(undefined);
     mockSyncTicketInToDo.mockResolvedValue({ action: "queued" });

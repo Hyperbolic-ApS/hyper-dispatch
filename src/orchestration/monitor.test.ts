@@ -765,6 +765,33 @@ describe("checkRuns", () => {
     expect(jiraTransitionIssueMock).not.toHaveBeenCalled();
   });
 
+  it("skips the GitHub PR lookup for succeeded runs already in a terminal PR display state", async () => {
+    getRunsByStatusMock
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([
+        makeDispatchRun({
+          ticket_key: "HYDI-30",
+          status: "succeeded",
+          pr_url: "https://github.com/org/repo/pull/30",
+          pr_display_state: "merged",
+        }),
+        makeDispatchRun({
+          ticket_key: "HYDI-31",
+          status: "succeeded",
+          pr_url: "https://github.com/org/repo/pull/31",
+          pr_display_state: "closed",
+        }),
+      ]);
+
+    const { checkRuns } = await importMonitor();
+    await checkRuns();
+
+    // Terminal-state PRs must not be re-fetched or re-written on every sweep.
+    expect(githubPullGetMock).not.toHaveBeenCalled();
+    expect(updateRunStatusMock).not.toHaveBeenCalled();
+    expect(jiraGetIssueMock).not.toHaveBeenCalled();
+  });
+
   it("warns and skips when succeeded run has unparsable PR URL", async () => {
     getRunsByStatusMock
       .mockResolvedValueOnce([])

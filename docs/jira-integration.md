@@ -11,6 +11,7 @@ Basic auth using a service account email + API token (`JIRA_EMAIL` + `JIRA_API_T
 ### Jira REST API v3
 
 - **Get issue**: `GET /rest/api/3/issue/{issueKey}?fields=issuelinks,status,summary,description,priority,{model_field_id}`
+- **Bulk fetch issues**: `POST /rest/api/3/issue/bulkfetch` (max 100 keys per request) — batches ticket-status reads for the dashboard and the scheduler's deleted-issue reconciliation, replacing one `GET /issue/{key}` per tracked run. Keys that no longer exist (or are not visible) are omitted from the response rather than failing it.
 - **Transition issue**: `POST /rest/api/3/issue/{issueKey}/transitions` — used to move tickets between columns (To Do → In Progress → In Review → Done).
 - **Get transitions**: `GET /rest/api/3/issue/{issueKey}/transitions` — to find the transition ID for a target status.
 - **List fields**: `GET /rest/api/3/field` — for validating that the model override custom field exists.
@@ -50,7 +51,7 @@ See [configuration.md](./configuration.md) for the Jira Automation rule setup. T
 
 In addition to webhook-triggered ingestion, the scheduler loop performs a Jira reconciliation poll each cycle:
 - It queries each active project's configured `to_do_column_name` and auto-ingests tickets that are in To Do but missing from `dispatch_runs` (same cycle/dependency checks as webhook ingestion).
-- It verifies tracked `dispatch_runs` tickets still exist in Jira and removes rows for issues that now return Jira `404` (deleted issues), so stale dashboard entries are cleaned up automatically.
+- It verifies tracked `dispatch_runs` tickets still exist in Jira using a single batched `bulkfetch` per project (max 100 keys per request) and removes rows whose keys are absent from the response (deleted/inaccessible issues), so stale dashboard entries are cleaned up automatically. If the batch request fails, deletions are skipped for that cycle so live runs are never removed on a transient error.
 - Scheduler cycles are serialized (the next cycle is scheduled only after the previous cycle completes), preventing overlapping queue reads.
 - Spawn dispatch uses an atomic queued-claim update in Postgres before agent creation, so overlapping triggers cannot dispatch the same ticket twice.
 - `upsertDispatchRun` conflict handling rejects stale `queued` replays when a row is already `running` or `succeeded`, which prevents webhook backslides from re-queueing active/completed tickets.
@@ -59,7 +60,7 @@ In addition to webhook-triggered ingestion, the scheduler loop performs a Jira r
 
 When a worker run completes successfully, HyperDispatch stores the PR URL artifact and moves the issue to `In Review`.
 When GitHub sends a signed `pull_request` webhook with `action: "closed"` and `pull_request.merged: true`, HyperDispatch immediately transitions the matching Jira issue to `Done` and unblocks dependent runs.
-The monitor still polls GitHub for `succeeded` runs with PR URLs as a backfill path and uses the same idempotent transition helper, so duplicate webhook/monitor observations remain safe.
+The monitor still polls GitHub for `succeeded` runs with PR URLs as a backfill path and uses the same idempotent transition helper, so duplicate webhook/monitor observations remain safe. To keep this sweep bounded as succeeded runs accumulate, the monitor skips the GitHub re-fetch for runs already in a terminal PR display state (`merged`/`closed`): their conflict/display metadata no longer changes and the Done transition was already attempted in the cycle that first observed the terminal state.
 
 ## Board Validation
 
