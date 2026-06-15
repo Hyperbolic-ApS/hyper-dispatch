@@ -338,6 +338,37 @@ describe("dashboardRouter", () => {
       per_page: 100,
       page: 1,
     });
+    // No `event` filter — adding one would silently hide non-PR-triggered runs.
+    expect(workflowRunListRequests[0]).not.toHaveProperty("event");
+  });
+
+  it("detects revision running via head_branch when pull_requests is empty", async () => {
+    getDispatchRunsPageMock.mockResolvedValue([
+      makeDispatchRun({
+        ticket_key: "HYDI-77",
+        status: "succeeded",
+        pr_url: "https://github.com/warp/hyper-dispatch/pull/77",
+        pr_has_conflicts: false,
+      }),
+    ]);
+    listWorkflowRunsForRepoMock.mockResolvedValue({
+      data: {
+        workflow_runs: [
+          {
+            name: "Agent Revision on Review Feedback",
+            status: "in_progress",
+            pull_requests: [],
+            head_branch: "agent/HYDI-77",
+          },
+        ],
+      },
+    });
+
+    const { dashboardRouter } = await import("./dashboard.js");
+    const res = await dashboardRouter.request("http://localhost/");
+    const html = await res.text();
+
+    expect(html).toContain("Revision running");
   });
 
   it("separates workflow-run fetches by token when two projects share the same repo", async () => {
@@ -524,6 +555,26 @@ describe("dashboardRouter", () => {
     expect(res.headers.get("location")).toContain("noticeType=error");
     expect(res.headers.get("location")).toContain("PR+%23123+is+open");
     expect(res.headers.get("location")).toContain("deleteFailed=HYDI-48");
+    expect(deleteRunMock).not.toHaveBeenCalled();
+  });
+
+  it("declines delete when linked PR URL is invalid", async () => {
+    getAllDispatchRunsMock.mockResolvedValue([
+      makeDispatchRun({ ticket_key: "HYDI-49", project_key: "HYDI", pr_url: "not-a-valid-pr-url" }),
+    ]);
+    parseGithubPullRequestUrlMock.mockReturnValue(null);
+
+    const { dashboardRouter } = await import("./dashboard.js");
+    const res = await dashboardRouter.request("http://localhost/HYDI-49/delete", {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      body: "project=HYDI",
+    });
+
+    expect(res.status).toBe(302);
+    expect(res.headers.get("location")).toContain("noticeType=error");
+    expect(res.headers.get("location")).toContain("PR+URL+is+invalid");
+    expect(res.headers.get("location")).toContain("deleteFailed=HYDI-49");
     expect(deleteRunMock).not.toHaveBeenCalled();
   });
 

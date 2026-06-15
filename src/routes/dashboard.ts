@@ -344,10 +344,16 @@ async function getRepoWorkflowRuns(
     runs.push(...(data.workflow_runs ?? []));
     if ((data.workflow_runs ?? []).length < 100) break;
   }
+  const now = Date.now();
   workflowRunsCache.set(cacheKey, {
-    expiresAt: Date.now() + WORKFLOW_RUNS_CACHE_TTL_MS,
+    expiresAt: now + WORKFLOW_RUNS_CACHE_TTL_MS,
     runs,
   });
+  // Prune expired entries so the cache stays bounded across token rotations and
+  // project churn over a long-lived server process.
+  for (const [key, entry] of workflowRunsCache) {
+    if (entry.expiresAt <= now) workflowRunsCache.delete(key);
+  }
   return runs;
 }
 
