@@ -44,10 +44,10 @@ Summary stats bar at the top: counts of running / queued / blocked / succeeded /
 
 Auto-refreshes every 15 seconds, and also triggers an immediate refresh when the browser tab becomes active again.
 
-**Data source**: Primarily the `dispatch_runs` table (fast), enriched with live Jira issue status per ticket and Oz run data (runtime, session link) when available.
+**Data source**: Primarily the `dispatch_runs` table (fast), enriched with live Jira issue status and Oz run data (runtime, session link) when available. Ticket statuses are fetched in batched Jira `bulkfetch` requests (max 100 keys each), not one request per row, so the 15s auto-refresh issues a small, near-constant number of Jira calls regardless of how many runs are tracked.
 PR action-state badges are resolved from GitHub workflow runs associated with each PR, using the configured project GitHub token when present (falling back to the global token).
 PR link display-state suffixes are read from `dispatch_runs.pr_display_state`, so dashboard auto-refreshes do not add per-row GitHub PR lookups.
-When Coolify env vars are configured, dashboard rows are further enriched by resolving the PR merge commit and checking whether that commit appears in successful production deployments in Coolify.
+When Coolify env vars are configured and the production-deployment column is enabled, dashboard rows are further enriched by resolving the PR merge commit and checking whether that commit appears in successful production deployments in Coolify. While that column is hidden (the current default), this enrichment is skipped entirely so the auto-refresh does not perform a per-row GitHub PR lookup whose result would not be displayed.
 
 ## Config UI
 

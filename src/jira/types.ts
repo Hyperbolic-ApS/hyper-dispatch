@@ -82,6 +82,26 @@ export interface JiraSearchResponse {
   nextPageToken?: string;
 }
 
+export interface JiraBulkFetchIssueError {
+  status?: number;
+  elementErrors?: {
+    errorMessages?: string[];
+    errors?: Record<string, string>;
+  };
+  failedElementNumber?: number;
+}
+
+/**
+ * Response shape for POST /rest/api/3/issue/bulkfetch.
+ * `issues` contains the issues that were found and are visible to the caller.
+ * Missing or inaccessible keys are omitted from `issues`; retriable problems are
+ * reported in `issueErrors`.
+ */
+export interface JiraBulkFetchResponse {
+  issues: JiraIssue[];
+  issueErrors?: JiraBulkFetchIssueError[];
+}
+
 export interface JiraTransition {
   id: string;
   name: string;

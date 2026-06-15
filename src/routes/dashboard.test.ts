@@ -4,6 +4,7 @@ import { makeDispatchRun } from "../test/fixtures.js";
 const getAllDispatchRunsMock = vi.fn();
 const listProjectConfigsMock = vi.fn();
 const getIssueMock = vi.fn();
+const getIssuesByKeysMock = vi.fn();
 const annotateRunsWithProdDeploymentStatusMock = vi.fn();
 const deleteRunMock = vi.fn();
 const parseGithubPullRequestUrlMock = vi.fn();
@@ -23,6 +24,7 @@ vi.mock("../db/queries.js", () => ({
 
 vi.mock("../jira/client.js", () => ({
   getIssue: getIssueMock,
+  getIssuesByKeys: getIssuesByKeysMock,
 }));
 vi.mock("../github/pull-requests.js", () => ({
   parseGithubPullRequestUrl: parseGithubPullRequestUrlMock,
@@ -61,6 +63,17 @@ describe("dashboardRouter", () => {
       const match = prUrl.match(/^https:\/\/github\.com\/([^/]+)\/([^/]+)\/pull\/(\d+)$/);
       if (!match) return null;
       return { owner: match[1], repo: match[2], pullNumber: Number.parseInt(match[3], 10) };
+    });
+    // The dashboard now resolves ticket statuses via the batched getIssuesByKeys. By
+    // default, delegate to each test's getIssue mock per key so existing status setups
+    // (including rejections) keep driving the batched code path with no per-test changes.
+    getIssuesByKeysMock.mockImplementation(async (keys: string[]) => {
+      const issues: Array<{ key: string }> = [];
+      for (const key of keys) {
+        const issue = await getIssueMock(key, ["status"]);
+        if (issue) issues.push({ key, ...issue });
+      }
+      return issues;
     });
   });
   it("renders PR Status and preserves merge conflict fallback when no action is running", async () => {
@@ -960,5 +973,20 @@ describe("dashboardRouter", () => {
     expect(res.status).toBe(200);
     expect(html).toContain(">HYDI-1</a>");
     expect(html).not.toContain("Force delete");
+  });
+
+  it("does not run prod-deployment enrichment while its column is hidden", async () => {
+    getAllDispatchRunsMock.mockResolvedValue([makeDispatchRun()]);
+    getIssueMock.mockResolvedValue({
+      fields: { status: { name: "To Do", statusCategory: { key: "new" } } },
+    });
+
+    const { dashboardRouter } = await import("./dashboard.js");
+    const res = await dashboardRouter.request("http://localhost/");
+
+    // The Coolify/GitHub enrichment must be skipped entirely when the column is hidden,
+    // otherwise it performs one GitHub PR lookup per run on every 15s auto-refresh.
+    expect(res.status).toBe(200);
+    expect(annotateRunsWithProdDeploymentStatusMock).not.toHaveBeenCalled();
   });
 });
