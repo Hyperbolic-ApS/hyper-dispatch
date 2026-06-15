@@ -233,27 +233,40 @@ export async function removeBlocker(
   return rows[0] ?? null;
 }
 
+export interface TicketStatusUpdate {
+  ticketKey: string;
+  statusName: string | null;
+  statusCategory: string | null;
+}
+
 /**
- * Persist the latest Jira ticket status for a run (name + status category key).
+ * Batch-persist the latest Jira ticket status for a set of runs in a single query.
  * Captured out-of-band (e.g. by the scheduler's reconcile poll) so the dashboard can
  * render ticket status from the DB instead of calling Jira on every page render.
  * Only writes when a value actually changed, to avoid churn on every poll cycle.
  */
-export async function setTicketStatus(
-  ticketKey: string,
-  statusName: string | null,
-  statusCategory: string | null
+export async function setTicketStatuses(
+  updates: TicketStatusUpdate[]
 ): Promise<void> {
+  if (updates.length === 0) return;
+  const ticketKeys = updates.map((u) => u.ticketKey);
+  const statusNames = updates.map((u) => u.statusName);
+  const statusCategories = updates.map((u) => u.statusCategory);
   await sql`
-    UPDATE dispatch_runs
+    UPDATE dispatch_runs AS dr
     SET
-      ticket_status_name = ${statusName},
-      ticket_status_category = ${statusCategory},
+      ticket_status_name = u.status_name,
+      ticket_status_category = u.status_category,
       updated_at = NOW()
-    WHERE ticket_key = ${ticketKey}
+    FROM unnest(
+      ${ticketKeys}::text[],
+      ${statusNames}::text[],
+      ${statusCategories}::text[]
+    ) AS u(ticket_key, status_name, status_category)
+    WHERE dr.ticket_key = u.ticket_key
       AND (
-        ticket_status_name IS DISTINCT FROM ${statusName}
-        OR ticket_status_category IS DISTINCT FROM ${statusCategory}
+        dr.ticket_status_name IS DISTINCT FROM u.status_name
+        OR dr.ticket_status_category IS DISTINCT FROM u.status_category
       )
   `;
 }

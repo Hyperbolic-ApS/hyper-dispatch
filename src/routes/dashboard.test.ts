@@ -213,7 +213,8 @@ describe("dashboardRouter", () => {
 
     expect(html).toContain("Page 2 of 3 (120 total)");
     expect(html).toContain('href="/dashboard?project=HYDI">← Prev</a>');
-    expect(html).toContain('href="/dashboard?project=HYDI&page=3">Next →</a>');
+    // Ampersand is escaped to &amp; so the href is well-formed HTML.
+    expect(html).toContain('href="/dashboard?project=HYDI&amp;page=3">Next →</a>');
   });
 
   // ─── Project dropdown (from getDistinctRunProjectKeys) ─────────────────────
@@ -340,6 +341,35 @@ describe("dashboardRouter", () => {
     });
     // No `event` filter — adding one would silently hide non-PR-triggered runs.
     expect(workflowRunListRequests[0]).not.toHaveProperty("event");
+  });
+
+  it("detects review running via head_branch when pull_requests is empty", async () => {
+    getDispatchRunsPageMock.mockResolvedValue([
+      makeDispatchRun({
+        ticket_key: "HYDI-76",
+        status: "succeeded",
+        pr_url: "https://github.com/warp/hyper-dispatch/pull/76",
+        pr_has_conflicts: false,
+      }),
+    ]);
+    listWorkflowRunsForRepoMock.mockResolvedValue({
+      data: {
+        workflow_runs: [
+          {
+            name: "Oz PR Review Commenting",
+            status: "in_progress",
+            pull_requests: [],
+            head_branch: "agent/HYDI-76",
+          },
+        ],
+      },
+    });
+
+    const { dashboardRouter } = await import("./dashboard.js");
+    const res = await dashboardRouter.request("http://localhost/");
+    const html = await res.text();
+
+    expect(html).toContain("Review running");
   });
 
   it("detects revision running via head_branch when pull_requests is empty", async () => {

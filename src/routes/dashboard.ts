@@ -162,6 +162,14 @@ function prodDeploymentBadge(deployedToProd: boolean | null): string {
 
 const showProdDeploymentColumn = false;
 
+// Build the `?…` suffix for a URL that will be interpolated into an HTML
+// `href` attribute. Escapes `&` to `&amp;` so the resulting markup is
+// well-formed (no entity-reference ambiguity for strict parsers / SAX flows).
+function buildHrefSuffix(params: URLSearchParams): string {
+  if (params.size === 0) return "";
+  return `?${params.toString().replace(/&/g, "&amp;")}`;
+}
+
 function buildDashboardRedirect(
   filters: { project?: string | null; hideDone?: string | null; status?: string | null },
   notice: { type: "success" | "error"; message: string },
@@ -525,7 +533,7 @@ function renderDashboardContent(view: DashboardView): string {
       if (selectedProject) tagParams.set("project", selectedProject);
       if (hideDone) tagParams.set("hideDone", "1");
       if (selectedStatus !== option.key) tagParams.set("status", option.key);
-      const href = `/dashboard${tagParams.size > 0 ? `?${tagParams.toString()}` : ""}`;
+      const href = `/dashboard${buildHrefSuffix(tagParams)}`;
       const selectedClass = selectedStatus === option.key ? " stat-selected" : "";
       return `<a href="${href}" class="stat stat-link${selectedClass}" style="${option.style}" role="button" aria-pressed="${selectedStatus === option.key}">${count} ${option.label}</a>`;
     })
@@ -611,7 +619,7 @@ function renderDashboardContent(view: DashboardView): string {
     if (hideDone) params.set("hideDone", "1");
     if (selectedStatus) params.set("status", selectedStatus);
     if (p > 1) params.set("page", String(p));
-    return `/dashboard${params.size > 0 ? `?${params.toString()}` : ""}`;
+    return `/dashboard${buildHrefSuffix(params)}`;
   };
   const paginationHtml =
     totalPages > 1
@@ -673,7 +681,7 @@ dashboardRouter.get("/", async (c) => {
   if (!hideDone) hideDoneToggleParams.set("hideDone", "1");
   if (selectedProject) hideDoneToggleParams.set("project", selectedProject);
   if (selectedStatus) hideDoneToggleParams.set("status", selectedStatus);
-  const hideDoneToggleHref = `/dashboard${hideDoneToggleParams.size > 0 ? `?${hideDoneToggleParams.toString()}` : ""}`;
+  const hideDoneToggleHref = `/dashboard${buildHrefSuffix(hideDoneToggleParams)}`;
   const projectOptionsHtml = [
     `<option value=""${selectedProject === "" ? " selected" : ""}>All Projects</option>`,
     ...view.projects.map(

@@ -317,6 +317,50 @@ describe.skipIf(!process.env.RUN_DB_TESTS)("queries integration", () => {
     expect(updated?.status).toBe("queued");
   });
 
+  it("integration: setTicketStatuses upserts every supplied row in a single batched UPDATE", async () => {
+    await queries.upsertDispatchRun({
+      ticketKey: "HYDI-300",
+      projectKey: "HYDI",
+      summary: "First",
+      status: "running",
+    });
+    await queries.upsertDispatchRun({
+      ticketKey: "HYDI-301",
+      projectKey: "HYDI",
+      summary: "Second",
+      status: "running",
+    });
+    await queries.upsertDispatchRun({
+      ticketKey: "HYDI-302",
+      projectKey: "HYDI",
+      summary: "Unmentioned",
+      status: "running",
+    });
+
+    await queries.setTicketStatuses([
+      { ticketKey: "HYDI-300", statusName: "In Progress", statusCategory: "in-flight" },
+      { ticketKey: "HYDI-301", statusName: "Done", statusCategory: "done" },
+    ]);
+
+    const allRuns = await queries.getRunsByProject("HYDI");
+    const persisted = allRuns
+      .filter((run) => ["HYDI-300", "HYDI-301", "HYDI-302"].includes(run.ticket_key))
+      .map((run) => ({
+        ticket_key: run.ticket_key,
+        ticket_status_name: run.ticket_status_name,
+        ticket_status_category: run.ticket_status_category,
+      }))
+      .sort((a, b) => a.ticket_key.localeCompare(b.ticket_key));
+    expect(persisted).toEqual([
+      { ticket_key: "HYDI-300", ticket_status_name: "In Progress", ticket_status_category: "in-flight" },
+      { ticket_key: "HYDI-301", ticket_status_name: "Done", ticket_status_category: "done" },
+      { ticket_key: "HYDI-302", ticket_status_name: null, ticket_status_category: null },
+    ]);
+
+    // Empty-input fast path: no-op (and no SQL error from an empty array).
+    await expect(queries.setTicketStatuses([])).resolves.toBeUndefined();
+  });
+
   it("integration: updateRunStatus partial updates preserve unspecified fields and enforce null/undefined behavior", async () => {
     await queries.upsertDispatchRun({
       ticketKey: "HYDI-70",
