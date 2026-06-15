@@ -4,7 +4,7 @@ import {
   getProjectConfig,
   createProjectConfig,
   updateProjectConfig,
-  deactivateProjectConfig,
+  deleteProjectConfig,
   type ProjectConfig,
 } from "../db/config-queries.js";
 import { discoverSkills } from "../github/skills.js";
@@ -363,6 +363,14 @@ document.addEventListener('DOMContentLoaded', () => {
 ${skillsPickerScript}`;
 }
 
+function projectDeleteSection(projectKey: string): string {
+  return `<div style="margin-top:16px">
+  <form method="POST" action="/config/${projectKey}/delete" onsubmit="return confirm('Delete this project and its dispatch history?')">
+    <button type="submit" class="btn btn-danger">Delete project</button>
+  </form>
+</div>`;
+}
+
 async function handleSkillDiscoveryPost(c: Context): Promise<Response> {
   let payload:
     | { repo?: unknown; projectKey?: unknown; githubPat?: unknown }
@@ -578,11 +586,7 @@ configRouter.get("/:projectKey", async (c) => {
   const body = `
 <h1>Edit: ${config.project_key}</h1>
 ${projectForm(`/config/${config.project_key}`, config, config.project_key)}
-<div style="margin-top:16px">
-  <form method="POST" action="/config/${config.project_key}/delete" onsubmit="return confirm('Deactivate this project?')">
-    <button type="submit" class="btn btn-danger">Deactivate</button>
-  </form>
-</div>`;
+${projectDeleteSection(config.project_key)}`;
 
   return c.html(layout(`Edit ${projectKey}`, body));
 });
@@ -662,11 +666,22 @@ configRouter.post("/:projectKey", async (c) => {
   return c.redirect(`/config/${projectKey}`);
 });
 
-// ─── POST /:projectKey/delete — Deactivate project ────────────────────────────
+// ─── POST /:projectKey/delete — Delete project ────────────────────────────────
 
 configRouter.post("/:projectKey/delete", async (c) => {
   const { projectKey } = c.req.param();
-  await deactivateProjectConfig(projectKey);
+  const existing = await getProjectConfig(projectKey);
+  if (!existing) {
+    return c.html(
+      layout(
+        "Not Found",
+        `<p>Project <strong>${projectKey}</strong> not found. <a href="/config">Back</a></p>`
+      ),
+      404
+    );
+  }
+
+  await deleteProjectConfig(projectKey);
   return c.redirect("/config");
 });
 

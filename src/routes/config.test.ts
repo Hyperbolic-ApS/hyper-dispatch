@@ -7,7 +7,7 @@ const listProjectConfigsMock = vi.fn();
 const getProjectConfigMock = vi.fn();
 const createProjectConfigMock = vi.fn();
 const updateProjectConfigMock = vi.fn();
-const deactivateProjectConfigMock = vi.fn();
+const deleteProjectConfigMock = vi.fn();
 const discoverSkillsMock = vi.fn();
 const validateJiraProjectMock = vi.fn();
 
@@ -16,7 +16,7 @@ vi.mock("../db/config-queries.js", () => ({
   getProjectConfig: getProjectConfigMock,
   createProjectConfig: createProjectConfigMock,
   updateProjectConfig: updateProjectConfigMock,
-  deactivateProjectConfig: deactivateProjectConfigMock,
+  deleteProjectConfig: deleteProjectConfigMock,
 }));
 
 vi.mock("../github/skills.js", () => ({
@@ -221,6 +221,41 @@ describe("configRouter", () => {
       "HYDI",
       expect.objectContaining({ oz_agent_identity_uid: null })
     );
+  });
+
+  it("POST /:projectKey/delete removes the project and redirects to config overview", async () => {
+    getProjectConfigMock.mockResolvedValue(makeProjectConfig({ project_key: "HYDI" }));
+    const client = await getClient();
+    const res = await client[":projectKey"].delete.$post({
+      param: { projectKey: "HYDI" },
+    });
+
+    expect(res.status).toBe(302);
+    expect(res.headers.get("location")).toBe("/config");
+    expect(deleteProjectConfigMock).toHaveBeenCalledWith("HYDI");
+  });
+
+  it("POST /:projectKey/delete returns 404 and skips deletion for an unknown project", async () => {
+    getProjectConfigMock.mockResolvedValue(null);
+    const client = await getClient();
+    const res = await client[":projectKey"].delete.$post({
+      param: { projectKey: "MISSING" },
+    });
+
+    expect(res.status).toBe(404);
+    expect(deleteProjectConfigMock).not.toHaveBeenCalled();
+  });
+
+  it("POST /:projectKey/delete returns 500 when the delete query throws", async () => {
+    getProjectConfigMock.mockResolvedValue(makeProjectConfig({ project_key: "HYDI" }));
+    deleteProjectConfigMock.mockRejectedValue(new Error("DB failure"));
+    const client = await getClient();
+    const res = await client[":projectKey"].delete.$post({
+      param: { projectKey: "HYDI" },
+    });
+
+    expect(res.status).toBe(500);
+    expect(deleteProjectConfigMock).toHaveBeenCalledWith("HYDI");
   });
 
   it("POST /skills returns 400 for invalid owner/repo format", async () => {

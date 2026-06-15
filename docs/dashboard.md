@@ -54,10 +54,11 @@ When Coolify env vars are configured, dashboard rows are further enriched by res
 **Routes**: See [api.md](./api.md) for the full route list under Configuration API.
 
 The config UI allows managing project configurations:
-- Add/edit/deactivate projects
+- Add/edit/delete projects
 - Projects overview (`/config`) shows the **+ New Project** button below the project list table
 - Projects overview (`/config`) omits the `Projects` nav link/button since users are already on that page
 - Projects overview row actions (Edit/Validate) are rendered as button-style controls with filled backgrounds and borders for clearer affordance
+- Project edit page includes a **Delete project** action that removes the project config and its associated `dispatch_runs` history after confirmation
 - Select skills from the GitHub repo (dynamic dropdown)
   - Discovery uses the current in-form `GitHub Repo` value immediately (no save required)
   - If entered, the current in-form `GitHub PAT` is used for discovery before save
