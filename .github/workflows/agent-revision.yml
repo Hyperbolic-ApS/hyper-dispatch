@@ -3,7 +3,8 @@
 # This workflow can be triggered by:
 #   1) Dispatch from the "Oz PR Review Commenting" workflow (runs on the PR branch)
 #   2) A manual "/revise" PR conversation comment
-# on PR branches that match the `agent/*` naming convention.
+# on PR branches that match the `agent/{ticket-key}` or
+# `agent/{ticket-key}-{short-descriptor}` naming convention.
 #
 # When triggered, it:
 #   1. Extracts the Jira ticket key from the branch name (agent/{ticket-key})
@@ -107,7 +108,8 @@ jobs:
             });
 
             const branch = pr.head.ref;
-            const ticketKey = branch.startsWith("agent/") ? branch.slice("agent/".length) : "";
+            const ticketMatch = branch.match(/^agents?\/([A-Z][A-Z0-9]+-\d+)(?:-[a-z0-9-]+)?$/);
+            const ticketKey = ticketMatch ? ticketMatch[1] : "";
 
             core.setOutput("pr_number", String(prNumber));
             core.setOutput("pr_url", pr.html_url);
@@ -123,7 +125,7 @@ jobs:
             core.setOutput("workflow_run_head_sha", workflowRunHeadSha);
 
             if (!ticketKey) {
-              core.setOutput("skip_reason", `Branch ${branch} does not match agent/*`);
+              core.setOutput("skip_reason", `Branch ${branch} does not match agent/{ticket-key}[-short-descriptor]`);
               return;
             }
 
