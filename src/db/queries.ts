@@ -20,6 +20,8 @@ export interface DispatchRun {
   pr_display_state: "open" | "draft" | "merged" | "closed" | null;
   session_link: string | null;
   error: string | null;
+  ticket_status_name: string | null;
+  ticket_status_category: string | null;
   created_at: Date;
   updated_at: Date;
 }
@@ -229,6 +231,44 @@ export async function removeBlocker(
     RETURNING *
   `;
   return rows[0] ?? null;
+}
+
+export interface TicketStatusUpdate {
+  ticketKey: string;
+  statusName: string | null;
+  statusCategory: string | null;
+}
+
+/**
+ * Batch-persist the latest Jira ticket status for a set of runs in a single query.
+ * Captured out-of-band (e.g. by the scheduler's reconcile poll) so the dashboard can
+ * render ticket status from the DB instead of calling Jira on every page render.
+ * Only writes when a value actually changed, to avoid churn on every poll cycle.
+ */
+export async function setTicketStatuses(
+  updates: TicketStatusUpdate[]
+): Promise<void> {
+  if (updates.length === 0) return;
+  const ticketKeys = updates.map((u) => u.ticketKey);
+  const statusNames = updates.map((u) => u.statusName);
+  const statusCategories = updates.map((u) => u.statusCategory);
+  await sql`
+    UPDATE dispatch_runs AS dr
+    SET
+      ticket_status_name = u.status_name,
+      ticket_status_category = u.status_category,
+      updated_at = NOW()
+    FROM unnest(
+      ${ticketKeys}::text[],
+      ${statusNames}::text[],
+      ${statusCategories}::text[]
+    ) AS u(ticket_key, status_name, status_category)
+    WHERE dr.ticket_key = u.ticket_key
+      AND (
+        dr.ticket_status_name IS DISTINCT FROM u.status_name
+        OR dr.ticket_status_category IS DISTINCT FROM u.status_category
+      )
+  `;
 }
 
 /**

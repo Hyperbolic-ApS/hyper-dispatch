@@ -184,3 +184,82 @@ export async function getRunCountsByStatus(): Promise<RunStatusCount[]> {
     SELECT status, COUNT(*)::TEXT as count FROM dispatch_runs GROUP BY status
   `;
 }
+
+/**
+ * Default dashboard page size. Kept modest so a single render/transfer stays small
+ * regardless of how large dispatch_runs grows.
+ */
+export const DEFAULT_DASHBOARD_PAGE_SIZE = 50;
+
+export interface DispatchRunFilter {
+  /** Restrict to a single project (null/undefined = all projects). */
+  projectKey?: string | null;
+  /** Restrict to these agent statuses (empty = all statuses). */
+  statuses?: string[];
+  /** Exclude runs whose Jira ticket status category is 'done'. */
+  hideDone?: boolean;
+}
+
+// Each filter is always present in the SQL but becomes a no-op when unset, so we
+// avoid dynamic WHERE-clause composition while keeping every value parameterized.
+// - projectKey null  -> `NULL::text IS NULL` short-circuits to true
+// - statuses empty   -> the `${empty}` boolean is true
+// - hideDone false   -> the `${!hideDone}` boolean is true
+export async function getDispatchRunsPage(
+  filter: DispatchRunFilter,
+  limit: number,
+  offset: number
+): Promise<DispatchRun[]> {
+  const projectKey = filter.projectKey ?? null;
+  const statuses = filter.statuses ?? [];
+  const hideDone = filter.hideDone ?? false;
+  return sql<DispatchRun[]>`
+    SELECT * FROM dispatch_runs
+    WHERE (${projectKey}::text IS NULL OR project_key = ${projectKey})
+      AND (${statuses.length === 0} OR status = ANY(${statuses}::text[]))
+      AND (${!hideDone} OR ticket_status_category IS DISTINCT FROM 'done')
+    ORDER BY created_at DESC
+    LIMIT ${limit} OFFSET ${offset}
+  `;
+}
+
+/** Total number of runs matching a filter (for pagination page counts). */
+export async function countDispatchRuns(
+  filter: DispatchRunFilter
+): Promise<number> {
+  const projectKey = filter.projectKey ?? null;
+  const statuses = filter.statuses ?? [];
+  const hideDone = filter.hideDone ?? false;
+  const rows = await sql<Array<{ count: string }>>`
+    SELECT COUNT(*)::TEXT AS count FROM dispatch_runs
+    WHERE (${projectKey}::text IS NULL OR project_key = ${projectKey})
+      AND (${statuses.length === 0} OR status = ANY(${statuses}::text[]))
+      AND (${!hideDone} OR ticket_status_category IS DISTINCT FROM 'done')
+  `;
+  return parseInt(rows[0]?.count ?? "0", 10);
+}
+
+/**
+ * Per-status counts for the dashboard stat bar, scoped by project + hideDone but
+ * NOT by the status-tag filter (so selecting a status tag does not change the bar).
+ */
+export async function getStatusCounts(
+  filter: Pick<DispatchRunFilter, "projectKey" | "hideDone">
+): Promise<RunStatusCount[]> {
+  const projectKey = filter.projectKey ?? null;
+  const hideDone = filter.hideDone ?? false;
+  return sql<RunStatusCount[]>`
+    SELECT status, COUNT(*)::TEXT AS count FROM dispatch_runs
+    WHERE (${projectKey}::text IS NULL OR project_key = ${projectKey})
+      AND (${!hideDone} OR ticket_status_category IS DISTINCT FROM 'done')
+    GROUP BY status
+  `;
+}
+
+/** Distinct project keys present in dispatch_runs (for the project dropdown). */
+export async function getDistinctRunProjectKeys(): Promise<string[]> {
+  const rows = await sql<Array<{ project_key: string }>>`
+    SELECT DISTINCT project_key FROM dispatch_runs ORDER BY project_key ASC
+  `;
+  return rows.map((row) => row.project_key);
+}
