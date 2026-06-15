@@ -98,6 +98,15 @@ async function transitionMergedPrsToDone(): Promise<void> {
   for (const run of succeededRuns) {
     if (!run.pr_url) continue;
 
+    // Once a PR reaches a terminal display state (merged/closed), its conflict and
+    // display-state metadata no longer change, and the merged→Done transition has already
+    // been attempted in the same cycle/path that first observed the terminal state (here,
+    // the GitHub webhook, or pr-merge — all idempotent). Skipping these avoids re-fetching
+    // every historical PR from GitHub on each 30s sweep as succeeded runs accumulate.
+    if (run.pr_display_state === "merged" || run.pr_display_state === "closed") {
+      continue;
+    }
+
     const parsed = parseGithubPullRequestUrl(run.pr_url);
     if (!parsed) {
       console.warn(

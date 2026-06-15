@@ -44,26 +44,34 @@ async function reconcileProjectRuns(config: ProjectConfig): Promise<void> {
     }
   }
 
+  if (existingRuns.length === 0) return;
+
+  // Detect tickets deleted in Jira with a single batched bulk-fetch instead of one
+  // getIssue per run. bulkfetch omits missing/inaccessible keys from `issues`, so any
+  // existing run whose key is absent from the response no longer exists in Jira.
+  let liveIssues;
+  try {
+    liveIssues = await jira.getIssuesByKeys(
+      existingRuns.map((run) => run.ticket_key),
+      ["status"]
+    );
+  } catch (err) {
+    // If the batch request fails, skip deletions for this cycle rather than risk
+    // removing runs whose tickets actually still exist.
+    console.warn(
+      `[scheduler] Could not verify Jira existence for project ${config.project_key}:`,
+      err
+    );
+    return;
+  }
+
+  const liveTicketKeys = new Set(liveIssues.map((issue) => issue.key));
   for (const run of existingRuns) {
-    try {
-      await jira.getIssue(run.ticket_key, ["status"]);
-    } catch (err) {
-      const status =
-        err instanceof jira.JiraApiError
-          ? err.status
-          : (err as { status?: number } | null)?.status;
-      if (status === 404) {
-        await deleteRun(run.ticket_key);
-        console.log(
-          `[scheduler] Removed ${run.ticket_key} from dispatch_runs because it no longer exists in Jira.`
-        );
-        continue;
-      }
-      console.warn(
-        `[scheduler] Could not verify Jira existence for ${run.ticket_key}:`,
-        err
-      );
-    }
+    if (liveTicketKeys.has(run.ticket_key)) continue;
+    await deleteRun(run.ticket_key);
+    console.log(
+      `[scheduler] Removed ${run.ticket_key} from dispatch_runs because it no longer exists in Jira.`
+    );
   }
 }
 

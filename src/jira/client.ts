@@ -4,6 +4,7 @@ import type {
   JiraField,
   JiraStatus,
   JiraSearchResponse,
+  JiraBulkFetchResponse,
   JiraTransitionsResponse,
 } from "./types.js";
 export class JiraApiError extends Error {
@@ -71,6 +72,43 @@ export async function getIssue(
     ? `?fields=${encodeURIComponent(fields.join(","))}`
     : "";
   return jiraFetch<JiraIssue>(`/rest/api/3/issue/${issueKey}${params}`);
+}
+
+/**
+ * Maximum number of issue keys accepted by POST /rest/api/3/issue/bulkfetch per request.
+ */
+const BULK_FETCH_MAX_KEYS = 100;
+
+/**
+ * Fetch many Jira issues in a single bulk operation, chunked to the API's 100-key limit.
+ *
+ * Unlike a JQL `key IN (...)` query (which fails the whole request if any key no longer
+ * exists), bulkfetch tolerates missing/inaccessible keys by omitting them from `issues`
+ * (and reporting them under `issueErrors`). Callers can therefore treat a key's absence
+ * from the returned list as "not found" without issuing one request per key.
+ *
+ * @param issueKeys  Issue keys (or IDs) to fetch.
+ * @param fields     Fields to include per issue (defaults to status only).
+ */
+export async function getIssuesByKeys(
+  issueKeys: string[],
+  fields: string[] = ["status"]
+): Promise<JiraIssue[]> {
+  if (issueKeys.length === 0) return [];
+
+  const issues: JiraIssue[] = [];
+  for (let start = 0; start < issueKeys.length; start += BULK_FETCH_MAX_KEYS) {
+    const batch = issueKeys.slice(start, start + BULK_FETCH_MAX_KEYS);
+    const page = await jiraFetch<JiraBulkFetchResponse>(
+      "/rest/api/3/issue/bulkfetch",
+      {
+        method: "POST",
+        body: JSON.stringify({ issueIdsOrKeys: batch, fields }),
+      }
+    );
+    issues.push(...(page.issues ?? []));
+  }
+  return issues;
 }
 
 /**

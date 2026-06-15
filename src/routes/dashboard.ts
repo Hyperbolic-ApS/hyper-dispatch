@@ -6,7 +6,10 @@ import { env } from "../config/env.js";
 import { resolveProjectTokens } from "../config/env.js";
 import { brandIconSvg, faviconDataUri } from "./branding.js";
 import * as jira from "../jira/client.js";
-import { annotateRunsWithProdDeploymentStatus } from "../coolify/prod-deployment.js";
+import {
+  annotateRunsWithProdDeploymentStatus,
+  type RunWithProdDeployment,
+} from "../coolify/prod-deployment.js";
 import {
   getPullRequestState,
   parseGithubPullRequestUrl,
@@ -304,7 +307,13 @@ dashboardRouter.get("/", async (c) => {
     ? (selectedStatusQuery as DashboardStatusFilterKey)
     : "";
   const [runs, configs] = await Promise.all([getAllDispatchRuns(), listProjectConfigs()]);
-  const runsWithProdDeployment = await annotateRunsWithProdDeploymentStatus(runs);
+  // The prod-deployment column is currently hidden (showProdDeploymentColumn === false).
+  // Skip the enrichment while it is hidden: annotateRunsWithProdDeploymentStatus performs
+  // one GitHub PR lookup per run when Coolify is configured, and that output is never
+  // rendered. The call is retained behind the flag for quick re-enablement.
+  const runsWithProdDeployment: RunWithProdDeployment[] = showProdDeploymentColumn
+    ? await annotateRunsWithProdDeploymentStatus(runs)
+    : runs.map((run) => ({ ...run, deployed_to_prod: null }));
   const projects = Array.from(
     new Set([
       ...configs.filter((c) => c.active).map((c) => c.project_key),
@@ -312,23 +321,27 @@ dashboardRouter.get("/", async (c) => {
     ])
   ).sort((a, b) => a.localeCompare(b));
   const ticketStatusByKey = new Map<string, { name: string; categoryKey: string }>();
-  await Promise.all(
-    runsWithProdDeployment.map(async (run) => {
-      try {
-        const issue = await jira.getIssue(run.ticket_key, ["status"]);
-        const status = issue.fields.status;
-        if (status?.name && status?.statusCategory?.key) {
-          ticketStatusByKey.set(run.ticket_key, {
-            name: status.name,
-            categoryKey: status.statusCategory.key,
-          });
-        }
-      } catch (err) {
-        // Best effort only — dashboard should still render if Jira is unavailable.
-        console.warn(`[dashboard] Failed to load Jira status for ${run.ticket_key}:`, err);
+  // Fetch all ticket statuses in batched bulk requests (<=100 keys each) instead of one
+  // Jira call per run. This keeps the 15s dashboard auto-refresh from issuing N Jira
+  // requests as dispatch_runs grows. Best-effort: a failure leaves rows without a status.
+  try {
+    const issues = await jira.getIssuesByKeys(
+      runsWithProdDeployment.map((run) => run.ticket_key),
+      ["status"]
+    );
+    for (const issue of issues) {
+      const status = issue.fields?.status;
+      if (status?.name && status?.statusCategory?.key) {
+        ticketStatusByKey.set(issue.key, {
+          name: status.name,
+          categoryKey: status.statusCategory.key,
+        });
       }
-    })
-  );
+    }
+  } catch (err) {
+    // Best effort only — dashboard should still render if Jira is unavailable.
+    console.warn("[dashboard] Failed to load Jira ticket statuses:", err);
+  }
   const projectFilteredRuns = selectedProject
     ? runsWithProdDeployment.filter((run) => run.project_key === selectedProject)
     : runsWithProdDeployment;
