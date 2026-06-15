@@ -17,6 +17,7 @@ const {
   mockDeleteRun,
   mockGetIssue,
   mockGetIssuesByKeys,
+  mockSetTicketStatus,
   mockSearchIssuesInStatus,
   mockSpawnAgent,
   mockSyncTicketInToDo,
@@ -43,6 +44,7 @@ const {
     mockDeleteRun: vi.fn(),
     mockGetIssue: vi.fn(),
     mockGetIssuesByKeys: vi.fn(),
+    mockSetTicketStatus: vi.fn(),
     mockSearchIssuesInStatus: vi.fn(),
     mockSpawnAgent: vi.fn(),
     mockSyncTicketInToDo: vi.fn(),
@@ -63,6 +65,7 @@ vi.mock("../db/queries.js", () => ({
   listActiveProjectConfigs: mockListActiveProjectConfigs,
   getRunsByProject: mockGetRunsByProject,
   deleteRun: mockDeleteRun,
+  setTicketStatus: mockSetTicketStatus,
 }));
 
 vi.mock("../jira/client.js", () => ({
@@ -96,6 +99,7 @@ describe("processQueue", () => {
     mockDeleteRun.mockResolvedValue(undefined);
     mockGetIssue.mockResolvedValue(makeJiraIssue());
     mockGetIssuesByKeys.mockResolvedValue([]);
+    mockSetTicketStatus.mockResolvedValue(undefined);
     mockSearchIssuesInStatus.mockResolvedValue([]);
     mockSpawnAgent.mockResolvedValue(undefined);
     mockSyncTicketInToDo.mockResolvedValue({ action: "queued" });
@@ -396,6 +400,24 @@ describe("processQueue", () => {
     expect(mockDeleteRun).toHaveBeenCalledWith("HYDI-2");
   });
 
+  it("persists ticket status for each live issue during reconciliation", async () => {
+    const project = makeProjectConfig({ project_key: "HYDI" });
+    mockListActiveProjectConfigs
+      .mockResolvedValueOnce([project])
+      .mockResolvedValueOnce([]);
+    mockSearchIssuesInStatus.mockResolvedValue([]);
+    mockGetRunsByProject.mockResolvedValue([
+      makeDispatchRun({ ticket_key: "HYDI-1", project_key: "HYDI" }),
+    ]);
+    // Default makeJiraIssue status is To Do / new.
+    mockGetIssuesByKeys.mockResolvedValue([makeJiraIssue({ key: "HYDI-1" })]);
+    mockGetActiveRunCount.mockResolvedValue(4);
+
+    await processQueue();
+
+    expect(mockSetTicketStatus).toHaveBeenCalledWith("HYDI-1", "To Do", "new");
+  });
+
   it("does not delete any runs when the batched existence check fails", async () => {
     const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
     const project = makeProjectConfig({ project_key: "HYDI" });
@@ -451,6 +473,7 @@ describe("startSchedulerLoop", () => {
     mockGetRunsByProject.mockResolvedValue([]);
     mockGetIssue.mockResolvedValue(makeJiraIssue());
     mockGetIssuesByKeys.mockResolvedValue([]);
+    mockSetTicketStatus.mockResolvedValue(undefined);
     mockSearchIssuesInStatus.mockResolvedValue([]);
     mockSpawnAgent.mockResolvedValue(undefined);
     mockSyncTicketInToDo.mockResolvedValue({ action: "queued" });

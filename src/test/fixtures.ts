@@ -56,6 +56,8 @@ export function makeDispatchRun(
     pr_display_state: null,
     session_link: null,
     error: null,
+    ticket_status_name: null,
+    ticket_status_category: null,
     created_at: new Date("2026-01-01T00:00:00.000Z"),
     updated_at: new Date("2026-01-01T00:00:00.000Z"),
   };

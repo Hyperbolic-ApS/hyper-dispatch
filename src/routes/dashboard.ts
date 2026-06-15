@@ -1,11 +1,19 @@
 import { Hono } from "hono";
 import { Octokit } from "@octokit/rest";
-import { getAllDispatchRuns, listProjectConfigs } from "../db/config-queries.js";
+import {
+  getAllDispatchRuns,
+  getDispatchRunsPage,
+  countDispatchRuns,
+  getStatusCounts,
+  getDistinctRunProjectKeys,
+  listProjectConfigs,
+  DEFAULT_DASHBOARD_PAGE_SIZE,
+  type DispatchRunFilter,
+} from "../db/config-queries.js";
 import { deleteRun } from "../db/queries.js";
 import { env } from "../config/env.js";
 import { resolveProjectTokens } from "../config/env.js";
 import { brandIconSvg, faviconDataUri } from "./branding.js";
-import * as jira from "../jira/client.js";
 import {
   annotateRunsWithProdDeploymentStatus,
   type RunWithProdDeployment,
@@ -212,6 +220,11 @@ const CSS = `
   .row-menu.open .row-menu-list { display: block; }
   .row-menu-delete { display: block; width: 100%; border: none; background: transparent; color: #b91c1c; text-align: left; border-radius: 4px; font-size: 0.8rem; padding: 6px 8px; cursor: pointer; }
   .row-menu-delete:hover { background: #fee2e2; }
+  .pagination { display: flex; align-items: center; gap: 12px; margin-top: 16px; font-size: 0.875rem; color: #374151; }
+  .pagination a { padding: 6px 12px; border: 1px solid #d1d5db; border-radius: 6px; background: #fff; color: #111827; }
+  .pagination a:hover { background: #f9fafb; text-decoration: none; }
+  .pagination .disabled { padding: 6px 12px; border: 1px solid #e5e7eb; border-radius: 6px; color: #9ca3af; background: #f9fafb; }
+  .page-info { font-weight: 500; }
 `;
 
 dashboardRouter.post("/:ticketKey/delete", async (c) => {
@@ -293,79 +306,153 @@ dashboardRouter.post("/:ticketKey/delete", async (c) => {
   );
 });
 
-dashboardRouter.get("/", async (c) => {
-  const hideDone = c.req.query("hideDone") === "1";
-  const selectedProject = c.req.query("project") ?? "";
-  const selectedStatusQuery = c.req.query("status") ?? "";
-  const notice = c.req.query("notice") ?? "";
-  const noticeType = c.req.query("noticeType") === "error" ? "error" : "success";
-  const deleteFailedKey = c.req.query("deleteFailed") ?? "";
-  const escapedSelectedProject = escapeHtml(selectedProject);
-  const escapedSelectedStatus = escapeHtml(selectedStatusQuery);
-  const escapedNotice = escapeHtml(notice);
-  const selectedStatus = dashboardStatusFilterKeys.has(selectedStatusQuery as DashboardStatusFilterKey)
+// ─── GitHub workflow-run cache ───────────────────────────────────────────────
+type WorkflowRunLite = {
+  name?: string | null;
+  status?: string | null;
+  head_branch?: string | null;
+  pull_requests?: Array<{ number?: number }> | null;
+};
+
+// Short-TTL in-process cache of a repo's workflow runs, keyed by repo + token.
+// Without this, every dashboard refresh re-paginated the entire repo workflow
+// history. Shared across requests so concurrent tabs/refreshes reuse one fetch.
+const WORKFLOW_RUNS_CACHE_TTL_MS = 10_000;
+const workflowRunsCache = new Map<
+  string,
+  { expiresAt: number; runs: WorkflowRunLite[] }
+>();
+
+async function getRepoWorkflowRuns(
+  client: Octokit,
+  owner: string,
+  repo: string,
+  cacheKey: string
+): Promise<WorkflowRunLite[]> {
+  const cached = workflowRunsCache.get(cacheKey);
+  if (cached && cached.expiresAt > Date.now()) {
+    return cached.runs;
+  }
+  const runs: WorkflowRunLite[] = [];
+  for (let page = 1; ; page += 1) {
+    const { data } = await client.actions.listWorkflowRunsForRepo({
+      owner,
+      repo,
+      per_page: 100,
+      page,
+    });
+    runs.push(...(data.workflow_runs ?? []));
+    if ((data.workflow_runs ?? []).length < 100) break;
+  }
+  workflowRunsCache.set(cacheKey, {
+    expiresAt: Date.now() + WORKFLOW_RUNS_CACHE_TTL_MS,
+    runs,
+  });
+  return runs;
+}
+
+interface DashboardQuery {
+  hideDone: boolean;
+  selectedProject: string;
+  selectedStatus: DashboardStatusFilterKey | "";
+  page: number;
+  deleteFailedKey: string;
+}
+
+function readDashboardQuery(
+  getQuery: (key: string) => string | undefined
+): DashboardQuery {
+  const hideDone = getQuery("hideDone") === "1";
+  const selectedProject = getQuery("project") ?? "";
+  const selectedStatusQuery = getQuery("status") ?? "";
+  const selectedStatus = dashboardStatusFilterKeys.has(
+    selectedStatusQuery as DashboardStatusFilterKey
+  )
     ? (selectedStatusQuery as DashboardStatusFilterKey)
     : "";
-  const [runs, configs] = await Promise.all([getAllDispatchRuns(), listProjectConfigs()]);
+  const pageRaw = Number.parseInt(getQuery("page") ?? "1", 10);
+  const page = Number.isFinite(pageRaw) && pageRaw > 0 ? pageRaw : 1;
+  const deleteFailedKey = getQuery("deleteFailed") ?? "";
+  return { hideDone, selectedProject, selectedStatus, page, deleteFailedKey };
+}
+
+interface DashboardView {
+  query: DashboardQuery;
+  runs: RunWithProdDeployment[];
+  total: number;
+  limit: number;
+  counts: Record<string, number>;
+  totalBlocked: number;
+  projects: string[];
+  actionStateByPr: Map<string, PrActionState>;
+}
+
+// Loads exactly one page of runs plus the aggregates needed to render the view.
+// Filtering, hideDone, and pagination all happen in SQL, and ticket status is read
+// from persisted columns, so a render performs zero live Jira calls regardless of
+// how large dispatch_runs grows.
+async function loadDashboardView(query: DashboardQuery): Promise<DashboardView> {
+  const { hideDone, selectedProject, selectedStatus, page } = query;
+  const statuses = selectedStatus
+    ? Array.from(dashboardStatusesByFilterKey.get(selectedStatus) ?? [])
+    : [];
+  const filter: DispatchRunFilter = {
+    projectKey: selectedProject || null,
+    statuses,
+    hideDone,
+  };
+  const limit = DEFAULT_DASHBOARD_PAGE_SIZE;
+  const offset = (page - 1) * limit;
+
+  const [pageRuns, total, statusCountRows, runProjectKeys, configs] =
+    await Promise.all([
+      getDispatchRunsPage(filter, limit, offset),
+      countDispatchRuns(filter),
+      getStatusCounts({ projectKey: selectedProject || null, hideDone }),
+      getDistinctRunProjectKeys(),
+      listProjectConfigs(),
+    ]);
+
   // The prod-deployment column is currently hidden (showProdDeploymentColumn === false).
-  // Skip the enrichment while it is hidden: annotateRunsWithProdDeploymentStatus performs
-  // one GitHub PR lookup per run when Coolify is configured, and that output is never
-  // rendered. The call is retained behind the flag for quick re-enablement.
-  const runsWithProdDeployment: RunWithProdDeployment[] = showProdDeploymentColumn
-    ? await annotateRunsWithProdDeploymentStatus(runs)
-    : runs.map((run) => ({ ...run, deployed_to_prod: null }));
+  // Skip the enrichment while hidden so we never do a per-row GitHub PR lookup whose
+  // output is not rendered. The call is retained behind the flag for re-enablement.
+  const runs: RunWithProdDeployment[] = showProdDeploymentColumn
+    ? await annotateRunsWithProdDeploymentStatus(pageRuns)
+    : pageRuns.map((run) => ({ ...run, deployed_to_prod: null }));
+
   const projects = Array.from(
     new Set([
-      ...configs.filter((c) => c.active).map((c) => c.project_key),
-      ...runs.map((run) => run.project_key),
+      ...configs.filter((config) => config.active).map((config) => config.project_key),
+      ...runProjectKeys,
     ])
   ).sort((a, b) => a.localeCompare(b));
-  const ticketStatusByKey = new Map<string, { name: string; categoryKey: string }>();
-  // Fetch all ticket statuses in batched bulk requests (<=100 keys each) instead of one
-  // Jira call per run. This keeps the 15s dashboard auto-refresh from issuing N Jira
-  // requests as dispatch_runs grows. Best-effort: a failure leaves rows without a status.
-  try {
-    const issues = await jira.getIssuesByKeys(
-      runsWithProdDeployment.map((run) => run.ticket_key),
-      ["status"]
-    );
-    for (const issue of issues) {
-      const status = issue.fields?.status;
-      if (status?.name && status?.statusCategory?.key) {
-        ticketStatusByKey.set(issue.key, {
-          name: status.name,
-          categoryKey: status.statusCategory.key,
-        });
-      }
-    }
-  } catch (err) {
-    // Best effort only — dashboard should still render if Jira is unavailable.
-    console.warn("[dashboard] Failed to load Jira ticket statuses:", err);
+
+  const counts: Record<string, number> = {
+    running: 0,
+    queued: 0,
+    blocked: 0,
+    succeeded: 0,
+    failed: 0,
+    stale: 0,
+    blocked_cycle: 0,
+  };
+  for (const row of statusCountRows) {
+    counts[row.status] = (counts[row.status] ?? 0) + Number.parseInt(row.count, 10);
   }
-  const projectFilteredRuns = selectedProject
-    ? runsWithProdDeployment.filter((run) => run.project_key === selectedProject)
-    : runsWithProdDeployment;
-  const visibleRuns = hideDone
-    ? projectFilteredRuns.filter(
-        (run) => ticketStatusByKey.get(run.ticket_key)?.categoryKey !== "done"
-      )
-    : projectFilteredRuns;
-  const statusFilteredRuns = selectedStatus
-    ? visibleRuns.filter((run) => {
-        const allowedStatuses = dashboardStatusesByFilterKey.get(selectedStatus);
-        return allowedStatuses ? allowedStatuses.has(run.status) : true;
-      })
-    : visibleRuns;
-  const configByProjectKey = new Map(configs.map((config) => [config.project_key, config]));
+  const totalBlocked = (counts.blocked ?? 0) + (counts.blocked_cycle ?? 0);
+
+  // Resolve PR action-state badges for this page's PRs only, grouped by repo + token
+  // so each configured credential boundary is respected. Workflow runs are cached.
+  const configByProjectKey = new Map(
+    configs.map((config) => [config.project_key, config])
+  );
   const githubClientByToken = new Map<string, Octokit>();
   const actionStateByPr = new Map<string, PrActionState>();
-
-  // Group PRs by repo + token so each configured credential boundary is respected.
   const repoGroups = new Map<
     string,
     { owner: string; repo: string; token: string; prs: { prKey: string; pullNumber: number; branchName: string }[] }
   >();
-  for (const run of statusFilteredRuns) {
+  for (const run of runs) {
     if (!run.pr_url) continue;
     const parsedPr = parseGithubPullRequestUrl(run.pr_url);
     if (!parsedPr) continue;
@@ -384,29 +471,14 @@ dashboardRouter.get("/", async (c) => {
   }
 
   await Promise.all(
-    Array.from(repoGroups.values()).map(async ({ owner, repo, token, prs }) => {
+    Array.from(repoGroups.entries()).map(async ([repoKey, { owner, repo, token, prs }]) => {
       let githubClient = githubClientByToken.get(token);
       if (!githubClient) {
         githubClient = new Octokit({ auth: token });
         githubClientByToken.set(token, githubClient);
       }
       try {
-        const workflowRuns: Array<{
-          name?: string | null;
-          status?: string | null;
-          head_branch?: string | null;
-          pull_requests?: Array<{ number?: number }> | null;
-        }> = [];
-        for (let page = 1; ; page += 1) {
-          const { data } = await githubClient.actions.listWorkflowRunsForRepo({
-            owner,
-            repo,
-            per_page: 100,
-            page,
-          });
-          workflowRuns.push(...(data.workflow_runs ?? []));
-          if ((data.workflow_runs ?? []).length < 100) break;
-        }
+        const workflowRuns = await getRepoWorkflowRuns(githubClient, owner, repo, repoKey);
         for (const pr of prs) {
           const reviewRunning = workflowRuns.some(
             (wfRun) =>
@@ -430,38 +502,19 @@ dashboardRouter.get("/", async (c) => {
     })
   );
 
-  const counts: Record<string, number> = {
-    running: 0,
-    queued: 0,
-    blocked: 0,
-    succeeded: 0,
-    failed: 0,
-    stale: 0,
-    blocked_cycle: 0,
-  };
-  for (const run of visibleRuns) {
-    counts[run.status] = (counts[run.status] ?? 0) + 1;
-  }
-  const totalBlocked = (counts.blocked ?? 0) + (counts.blocked_cycle ?? 0);
-  const hideDoneToggleParams = new URLSearchParams();
-  if (!hideDone) hideDoneToggleParams.set("hideDone", "1");
-  if (selectedProject) hideDoneToggleParams.set("project", selectedProject);
-  if (selectedStatus) hideDoneToggleParams.set("status", selectedStatus);
-  const hideDoneToggleHref = `/dashboard${hideDoneToggleParams.size > 0 ? `?${hideDoneToggleParams.toString()}` : ""}`;
-  const projectOptionsHtml = [
-    `<option value=""${selectedProject === "" ? " selected" : ""}>All Projects</option>`,
-    ...projects.map(
-      (project) =>
-        `<option value="${escapeHtml(project)}"${selectedProject === project ? " selected" : ""}>${escapeHtml(project)}</option>`
-    ),
-  ].join("");
+  return { query, runs, total, limit, counts, totalBlocked, projects, actionStateByPr };
+}
+
+// Renders the dynamic dashboard section (stats bar + table + pagination). Shared by
+// the full page and the /fragment endpoint so the client poll can swap it in place.
+function renderDashboardContent(view: DashboardView): string {
+  const { runs, counts, totalBlocked, total, limit, actionStateByPr } = view;
+  const { hideDone, selectedProject, selectedStatus, page, deleteFailedKey } = view.query;
+  const escapedSelectedProject = escapeHtml(selectedProject);
 
   const statsHtml = dashboardStatusFilterOptions
     .map((option) => {
-      const count =
-        option.key === "blocked"
-          ? totalBlocked
-          : (counts[option.key] ?? 0);
+      const count = option.key === "blocked" ? totalBlocked : (counts[option.key] ?? 0);
       const tagParams = new URLSearchParams();
       if (selectedProject) tagParams.set("project", selectedProject);
       if (hideDone) tagParams.set("hideDone", "1");
@@ -471,7 +524,8 @@ dashboardRouter.get("/", async (c) => {
       return `<a href="${href}" class="stat stat-link${selectedClass}" style="${option.style}" role="button" aria-pressed="${selectedStatus === option.key}">${count} ${option.label}</a>`;
     })
     .join("\n");
-  const rows = statusFilteredRuns.map((run) => {
+
+  const rows = runs.map((run) => {
     const ticketUrl = `${env.JIRA_SITE_URL}/browse/${run.ticket_key}`;
     const branchName = `agent/${run.ticket_key}`;
     const runtime = formatDuration(run.spawned_at, run.completed_at);
@@ -521,10 +575,7 @@ dashboardRouter.get("/", async (c) => {
       <td><a href="${ticketUrl}" target="_blank">${run.ticket_key}</a></td>
       <td>${run.project_key}</td>
       <td>${run.summary ? run.summary.slice(0, 80) : "-"}</td>
-      <td>${ticketStatusBadge(
-        ticketStatusByKey.get(run.ticket_key)?.name ?? null,
-        ticketStatusByKey.get(run.ticket_key)?.categoryKey ?? null
-      )}</td>
+      <td>${ticketStatusBadge(run.ticket_status_name, run.ticket_status_category)}</td>
       <td>${statusBadge(run.status)}</td>
       <td>${formatSpawnedAtDate(run.spawned_at)}</td>
       <td>${runtime}</td>
@@ -546,11 +597,89 @@ dashboardRouter.get("/", async (c) => {
     </tr>`;
   });
 
+  const totalPages = Math.max(1, Math.ceil(total / limit));
+  const currentPage = Math.min(page, totalPages);
+  const pageHref = (p: number): string => {
+    const params = new URLSearchParams();
+    if (selectedProject) params.set("project", selectedProject);
+    if (hideDone) params.set("hideDone", "1");
+    if (selectedStatus) params.set("status", selectedStatus);
+    if (p > 1) params.set("page", String(p));
+    return `/dashboard${params.size > 0 ? `?${params.toString()}` : ""}`;
+  };
+  const paginationHtml =
+    totalPages > 1
+      ? `<div class="pagination">
+      ${currentPage > 1 ? `<a href="${pageHref(currentPage - 1)}">← Prev</a>` : '<span class="disabled">← Prev</span>'}
+      <span class="page-info">Page ${currentPage} of ${totalPages} (${total} total)</span>
+      ${currentPage < totalPages ? `<a href="${pageHref(currentPage + 1)}">Next →</a>` : '<span class="disabled">Next →</span>'}
+    </div>`
+      : "";
+
+  const colspan = showProdDeploymentColumn ? 13 : 12;
+  const tableBody =
+    rows.length === 0
+      ? `<tr><td colspan="${colspan}" style="text-align:center;color:#6b7280">${
+          selectedStatus
+            ? `no ${escapeHtml(selectedStatus)} tasks available`
+            : "No runs found for the current filter"
+        }</td></tr>`
+      : rows.join("\n");
+
+  return `<div class="stats">
+    ${statsHtml}
+  </div>
+  <table>
+    <thead>
+      <tr>
+        <th>Ticket</th>
+        <th>Project</th>
+        <th>Summary</th>
+        <th>Ticket Status</th>
+        <th>Agent Status</th>
+        <th>Spawned At</th>
+        <th>Runtime</th>
+        <th>Branch</th>
+        <th>Oz Task</th>
+        <th>PR Status</th>
+        ${showProdDeploymentColumn ? "<th>Prod Deployment (Coolify)</th>" : ""}
+        <th>Links</th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody>
+      ${tableBody}
+    </tbody>
+  </table>
+  ${paginationHtml}`;
+}
+
+dashboardRouter.get("/", async (c) => {
+  const query = readDashboardQuery((key) => c.req.query(key));
+  const notice = c.req.query("notice") ?? "";
+  const noticeType = c.req.query("noticeType") === "error" ? "error" : "success";
+  const escapedNotice = escapeHtml(notice);
+  const view = await loadDashboardView(query);
+  const { hideDone, selectedProject, selectedStatus } = query;
+  const escapedSelectedStatus = escapeHtml(selectedStatus);
+
+  const hideDoneToggleParams = new URLSearchParams();
+  if (!hideDone) hideDoneToggleParams.set("hideDone", "1");
+  if (selectedProject) hideDoneToggleParams.set("project", selectedProject);
+  if (selectedStatus) hideDoneToggleParams.set("status", selectedStatus);
+  const hideDoneToggleHref = `/dashboard${hideDoneToggleParams.size > 0 ? `?${hideDoneToggleParams.toString()}` : ""}`;
+  const projectOptionsHtml = [
+    `<option value=""${selectedProject === "" ? " selected" : ""}>All Projects</option>`,
+    ...view.projects.map(
+      (project) =>
+        `<option value="${escapeHtml(project)}"${selectedProject === project ? " selected" : ""}>${escapeHtml(project)}</option>`
+    ),
+  ].join("");
+
   const html = `<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta http-equiv="refresh" content="15">
   <title>HyperDispatch</title>
   <link rel="icon" href="${faviconDataUri()}">
   <style>${CSS}</style>
@@ -574,48 +703,36 @@ dashboardRouter.get("/", async (c) => {
       <a href="/config" class="btn btn-secondary">⚙ Configure</a>
     </div>
   </div>
-  <div class="stats">
-    ${statsHtml}
-  </div>
   ${notice ? `<div class="notice notice-${noticeType}">${escapedNotice}</div>` : ""}
-  <table>
-    <thead>
-      <tr>
-        <th>Ticket</th>
-        <th>Project</th>
-        <th>Summary</th>
-        <th>Ticket Status</th>
-        <th>Agent Status</th>
-        <th>Spawned At</th>
-        <th>Runtime</th>
-        <th>Branch</th>
-        <th>Oz Task</th>
-        <th>PR Status</th>
-        ${showProdDeploymentColumn ? "<th>Prod Deployment (Coolify)</th>" : ""}
-        <th>Links</th>
-        <th></th>
-      </tr>
-    </thead>
-    <tbody>
-      ${
-        statusFilteredRuns.length === 0
-          ? `<tr><td colspan="${showProdDeploymentColumn ? 13 : 12}" style="text-align:center;color:#6b7280">${
-              selectedStatus
-                ? `no ${selectedStatus} tasks available`
-                : "No runs found for the current filter"
-            }</td></tr>`
-          : rows.join("\n")
-      }
-    </tbody>
-  </table>
+  <div id="dashboard-content">
+    ${renderDashboardContent(view)}
+  </div>
   <script>
+    // Centralized refresh: fetch the server-rendered table fragment for the current
+    // filters/page and swap it in place. Polling calls this on a timer; a future
+    // websocket layer can call the same function (or push the fragment) without
+    // conflicting — the timer is the fallback.
+    async function refreshDashboard() {
+      try {
+        const res = await fetch("/dashboard/fragment" + window.location.search, {
+          headers: { "X-Requested-With": "fetch" },
+        });
+        if (!res.ok) return;
+        const html = await res.text();
+        const container = document.getElementById("dashboard-content");
+        if (container) container.innerHTML = html;
+      } catch {
+        // Best effort — keep the last rendered content on a failed refresh.
+      }
+    }
+    setInterval(refreshDashboard, 15000);
     let previousVisibilityState = document.visibilityState;
     document.addEventListener("visibilitychange", () => {
       const becameVisible =
         previousVisibilityState !== "visible" && document.visibilityState === "visible";
       previousVisibilityState = document.visibilityState;
       if (!becameVisible) return;
-      window.location.reload();
+      refreshDashboard();
     });
     document.addEventListener("click", async (event) => {
       const button = event.target instanceof Element ? event.target.closest("[data-copy-branch]") : null;
@@ -678,4 +795,10 @@ dashboardRouter.get("/", async (c) => {
 </html>`;
 
   return c.html(html);
+});
+
+dashboardRouter.get("/fragment", async (c) => {
+  const query = readDashboardQuery((key) => c.req.query(key));
+  const view = await loadDashboardView(query);
+  return c.html(renderDashboardContent(view));
 });

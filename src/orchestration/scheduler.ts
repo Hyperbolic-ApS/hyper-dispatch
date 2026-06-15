@@ -8,6 +8,7 @@ import {
   getRunsByStatus,
   listActiveProjectConfigs,
   releaseSpawnClaim,
+  setTicketStatus,
   type ProjectConfig,
   updateRunStatus,
 } from "../db/queries.js";
@@ -63,6 +64,17 @@ async function reconcileProjectRuns(config: ProjectConfig): Promise<void> {
       err
     );
     return;
+  }
+
+  // Persist each live ticket's status so the dashboard can render it from the DB
+  // (refreshed out-of-band here) instead of calling Jira on every page render.
+  for (const issue of liveIssues) {
+    const status = issue.fields?.status;
+    await setTicketStatus(
+      issue.key,
+      status?.name ?? null,
+      status?.statusCategory?.key ?? null
+    );
   }
 
   const liveTicketKeys = new Set(liveIssues.map((issue) => issue.key));

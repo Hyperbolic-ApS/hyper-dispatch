@@ -11,7 +11,7 @@ Displays all tracked dispatch runs in a table with:
 - Ticket key (linked to Jira)
 - Project key
 - Summary
-- Ticket status (live Jira workflow status, e.g. To Do / In Progress / Done)
+- Ticket status (Jira workflow status, e.g. To Do / In Progress / Done) read from persisted `dispatch_runs.ticket_status_name` / `ticket_status_category` — the dashboard render performs zero live Jira calls regardless of how many runs are tracked
 - Agent status badge (color-coded: green=succeeded, blue=running, yellow=queued, orange=blocked, red=failed)
 - Spawned-at timestamp in the viewer's local timezone, rendered as `dd/MM/YY HH:MM`
 - Agent runtime (for running/completed entries)
@@ -40,12 +40,19 @@ Displays all tracked dispatch runs in a table with:
   - Project filtering is applied first, then status-tag filtering
   - When a selected status has no matching rows, the table shows `no {status} tasks available` (for example, `no stale tasks available`)
 
-Summary stats bar at the top: counts of running / queued / blocked / succeeded / failed / stale.
+Summary stats bar at the top: counts of running / queued / blocked / succeeded / failed / stale. Counts are computed from `dispatch_runs` via a single grouped SQL query that respects the active project and `hideDone` filters; the `Blocked` tile sums both `blocked` and `blocked_cycle`.
 
-Auto-refreshes every 15 seconds, and also triggers an immediate refresh when the browser tab becomes active again.
+### Pagination
 
-**Data source**: Primarily the `dispatch_runs` table (fast), enriched with live Jira issue status and Oz run data (runtime, session link) when available. Ticket statuses are fetched in batched Jira `bulkfetch` requests (max 100 keys each), not one request per row, so the 15s auto-refresh issues a small, near-constant number of Jira calls regardless of how many runs are tracked.
-PR action-state badges are resolved from GitHub workflow runs associated with each PR, using the configured project GitHub token when present (falling back to the global token).
+Rows are paginated server-side at 50 per page (`DEFAULT_DASHBOARD_PAGE_SIZE`). Filtering (project key, status, `hideDone`) and pagination (`LIMIT`/`OFFSET`) are applied in SQL via `getDispatchRunsPage` + `countDispatchRuns`, so memory and render cost do not grow with `dispatch_runs` size. Page controls (`← Prev` / `Page X of Y (N total)` / `Next →`) appear only when the total exceeds one page and preserve the current filters in their hrefs. The `?page=N` query parameter is omitted on page 1 for cleaner URLs.
+
+### Refresh model
+
+Auto-refreshes every 15 seconds, and also triggers an immediate refresh when the browser tab becomes active again. The refresh is a client-side `fetch("/dashboard/fragment" + window.location.search)` that swaps the inner `#dashboard-content` only — there is no full-page `<meta http-equiv="refresh">` reload, which keeps scroll position, open row menus, and the filter form state intact, and keeps the door open for a future websocket push that reuses the same fragment endpoint.
+
+**Route**: `GET /dashboard/fragment` returns the same stats + table + pagination block as `GET /dashboard` but without the document shell, so the polling script can drop it straight into `#dashboard-content`.
+
+**Data source**: Exclusively the `dispatch_runs` table on the render path — ticket status (name + category) is persisted there by the scheduler's reconcile loop, so dashboard renders do not call Jira. PR action-state badges are resolved from GitHub workflow runs associated with each PR, grouped by repo + token so each repo is fetched once per render (not once per PR), using the configured project GitHub token when present (falling back to the global token). Workflow-run lookups go through a short-TTL (10s) in-process cache keyed by `owner/repo::token`, so concurrent tabs and back-to-back 15s polls reuse a single GitHub fetch instead of re-paginating the repo's entire workflow history every refresh.
 PR link display-state suffixes are read from `dispatch_runs.pr_display_state`, so dashboard auto-refreshes do not add per-row GitHub PR lookups.
 When Coolify env vars are configured and the production-deployment column is enabled, dashboard rows are further enriched by resolving the PR merge commit and checking whether that commit appears in successful production deployments in Coolify. While that column is hidden (the current default), this enrichment is skipped entirely so the auto-refresh does not perform a per-row GitHub PR lookup whose result would not be displayed.
 

@@ -27,7 +27,9 @@ export async function runMigrations(): Promise<void> {
   await sql.unsafe(`
     ALTER TABLE dispatch_runs
       ADD COLUMN IF NOT EXISTS pr_has_conflicts BOOLEAN,
-      ADD COLUMN IF NOT EXISTS pr_display_state TEXT CHECK (pr_display_state IN ('open', 'draft', 'merged', 'closed'));
+      ADD COLUMN IF NOT EXISTS pr_display_state TEXT CHECK (pr_display_state IN ('open', 'draft', 'merged', 'closed')),
+      ADD COLUMN IF NOT EXISTS ticket_status_name TEXT,
+      ADD COLUMN IF NOT EXISTS ticket_status_category TEXT;
   `);
 
   console.log("Database migrations applied successfully");

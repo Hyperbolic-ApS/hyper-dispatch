@@ -51,6 +51,8 @@ Tracks ticket → agent run state. Managed by the orchestration loop.
 | `pr_display_state` | `TEXT` | Persisted PR display state for dashboard rendering (`open`/`draft`/`merged`/`closed`/`null` unknown), DB-constrained to the four non-null states |
 | `session_link` | `TEXT` | Oz session link for live monitoring |
 | `error` | `TEXT` | Last failure reason |
+| `ticket_status_name` | `TEXT` | Persisted Jira workflow status name (e.g. `To Do`, `In Progress`, `Done`); written by the scheduler's reconcile loop so the dashboard never calls Jira on render |
+| `ticket_status_category` | `TEXT` | Persisted Jira status category key (e.g. `new`, `in-flight`, `done`); used by the dashboard for badge color and by `hideDone` filtering (`hideDone` excludes rows whose category is `done`; null categories are shown) |
 | `created_at` | `TIMESTAMPTZ` | Row creation time |
 | `updated_at` | `TIMESTAMPTZ` | Last update time |
 
@@ -58,6 +60,7 @@ Tracks ticket → agent run state. Managed by the orchestration loop.
 
 - `idx_status` on `dispatch_runs(status)` — for run monitor queries and concurrency counting.
 - `idx_project` on `dispatch_runs(project_key)` — for per-project dashboard filtering.
+- `idx_dispatch_runs_created_at` on `dispatch_runs(created_at DESC)` — supports the dashboard's default ordering and keeps `LIMIT`/`OFFSET` pagination cheap as the table grows.
 
 ## Status transition notes
 

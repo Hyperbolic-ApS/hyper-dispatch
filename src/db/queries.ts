@@ -20,6 +20,8 @@ export interface DispatchRun {
   pr_display_state: "open" | "draft" | "merged" | "closed" | null;
   session_link: string | null;
   error: string | null;
+  ticket_status_name: string | null;
+  ticket_status_category: string | null;
   created_at: Date;
   updated_at: Date;
 }
@@ -229,6 +231,31 @@ export async function removeBlocker(
     RETURNING *
   `;
   return rows[0] ?? null;
+}
+
+/**
+ * Persist the latest Jira ticket status for a run (name + status category key).
+ * Captured out-of-band (e.g. by the scheduler's reconcile poll) so the dashboard can
+ * render ticket status from the DB instead of calling Jira on every page render.
+ * Only writes when a value actually changed, to avoid churn on every poll cycle.
+ */
+export async function setTicketStatus(
+  ticketKey: string,
+  statusName: string | null,
+  statusCategory: string | null
+): Promise<void> {
+  await sql`
+    UPDATE dispatch_runs
+    SET
+      ticket_status_name = ${statusName},
+      ticket_status_category = ${statusCategory},
+      updated_at = NOW()
+    WHERE ticket_key = ${ticketKey}
+      AND (
+        ticket_status_name IS DISTINCT FROM ${statusName}
+        OR ticket_status_category IS DISTINCT FROM ${statusCategory}
+      )
+  `;
 }
 
 /**
