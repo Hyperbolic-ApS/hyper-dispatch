@@ -57,7 +57,7 @@ In addition to webhook-triggered ingestion, the scheduler loop performs a Jira r
 
 ## PR Merge to Done
 
-When a worker run completes successfully, HyperDispatch stores the PR URL artifact and moves the issue to `In Review`.
+When a worker run completes successfully, HyperDispatch stores the PR URL artifact, posts a Jira comment with that PR URL, and moves the issue to `In Review`.
 When GitHub sends a signed `pull_request` webhook with `action: "closed"` and `pull_request.merged: true`, HyperDispatch immediately transitions the matching Jira issue to `Done` and unblocks dependent runs.
 The monitor still polls GitHub for `succeeded` runs with PR URLs as a backfill path and uses the same idempotent transition helper, so duplicate webhook/monitor observations remain safe.
 
