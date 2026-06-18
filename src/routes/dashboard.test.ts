@@ -583,6 +583,9 @@ describe("dashboardRouter", () => {
     expect(html).toContain('fetch("/dashboard/fragment"');
     expect(html).toContain("setInterval(refreshDashboard, 15000)");
     expect(html).toContain('document.addEventListener("visibilitychange"');
+    expect(html).toContain("clearTransientDashboardQueryParams");
+    expect(html).toContain('for (const key of ["notice", "noticeType", "deleteFailed"])');
+    expect(html).toContain("window.history.replaceState(null, \"\", nextUrl)");
     expect(html).toContain('document.addEventListener("keydown", (event) => {');
     expect(html).toContain('event.key !== "Escape"');
     expect(html).toContain("data-error-token-button");

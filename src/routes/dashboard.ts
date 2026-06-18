@@ -740,6 +740,19 @@ dashboardRouter.get("/", async (c) => {
     ${renderDashboardContent(view)}
   </div>
   <script>
+    (function clearTransientDashboardQueryParams() {
+      const url = new URL(window.location.href);
+      let changed = false;
+      for (const key of ["notice", "noticeType", "deleteFailed"]) {
+        if (!url.searchParams.has(key)) continue;
+        url.searchParams.delete(key);
+        changed = true;
+      }
+      if (!changed) return;
+      const query = url.searchParams.toString();
+      const nextUrl = url.pathname + (query ? "?" + query : "") + url.hash;
+      window.history.replaceState(null, "", nextUrl);
+    })();
     // Centralized refresh: fetch the server-rendered table fragment for the current
     // filters/page and swap it in place. Polling calls this on a timer; a future
     // websocket layer can call the same function (or push the fragment) without

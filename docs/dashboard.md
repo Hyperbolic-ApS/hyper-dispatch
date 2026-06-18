@@ -52,6 +52,7 @@ Rows are paginated server-side at 50 per page (`DEFAULT_DASHBOARD_PAGE_SIZE`). F
 ### Refresh model
 
 Auto-refreshes every 15 seconds, and also triggers an immediate refresh when the browser tab becomes active again. The refresh is a client-side `fetch("/dashboard/fragment" + window.location.search)` that swaps the inner `#dashboard-content` only — there is no full-page `<meta http-equiv="refresh">` reload, which keeps scroll position, open row menus, and the filter form state intact, and keeps the door open for a future websocket push that reuses the same fragment endpoint.
+After the initial render, transient query params used for one-time feedback (`notice`, `noticeType`, `deleteFailed`) are removed from the URL via `history.replaceState`, so browser refresh does not replay stale delete confirmation/error notices.
 
 **Route**: `GET /dashboard/fragment` returns the same stats + table + pagination block as `GET /dashboard` but without the document shell, so the polling script can drop it straight into `#dashboard-content`.
 
