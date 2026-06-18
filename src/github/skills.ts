@@ -1,4 +1,4 @@
-import { Octokit } from "@octokit/rest";
+import { createGithubClient } from "./octokit.js";
 import { env } from "../config/env.js";
 
 export interface SkillEntry {
@@ -20,7 +20,7 @@ export async function discoverSkills(
   branch = "main",
   githubToken?: string
 ): Promise<SkillEntry[]> {
-  const octokit = new Octokit({ auth: githubToken ?? env.GITHUB_TOKEN });
+  const octokit = createGithubClient(githubToken ?? env.GITHUB_TOKEN);
 
   const { data } = await octokit.git.getTree({
     owner,

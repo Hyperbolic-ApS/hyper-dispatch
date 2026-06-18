@@ -1,5 +1,4 @@
 import { Hono } from "hono";
-import { Octokit } from "@octokit/rest";
 import {
   getAllDispatchRuns,
   getDispatchRunsPage,
@@ -121,17 +120,6 @@ type PrActionState = {
   revisionRunning: boolean;
 };
 
-const REVIEW_WORKFLOW_NAME = "Oz PR Review Commenting";
-const REVISION_WORKFLOW_NAME = "Agent Revision on Review Feedback";
-const IN_FLIGHT_WORKFLOW_STATUSES = new Set([
-  "queued",
-  "in_progress",
-  "pending",
-  "waiting",
-  "requested",
-  "action_required",
-]);
-
 function prStatusBadge(
   hasConflicts: boolean | null,
   hasPr: boolean,
@@ -217,7 +205,10 @@ const CSS = `
   .copy-branch-btn { border: 1px solid #d1d5db; background: #fff; color: #374151; border-radius: 6px; padding: 3px 5px; line-height: 0; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; }
   .copy-branch-btn:hover { background: #f9fafb; }
   .copy-branch-btn.copied { background: #dcfce7; border-color: #86efac; color: #166534; }
-  .notice { margin-bottom: 12px; padding: 10px 12px; border-radius: 6px; font-size: 0.875rem; font-weight: 500; }
+  .notice { margin-bottom: 12px; padding: 10px 12px; border-radius: 6px; font-size: 0.875rem; font-weight: 500; display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+  .notice-message { flex: 1 1 auto; }
+  .notice-dismiss { border: none; background: transparent; color: inherit; width: 20px; height: 20px; border-radius: 999px; font-size: 16px; line-height: 1; cursor: pointer; padding: 0; display: inline-flex; align-items: center; justify-content: center; }
+  .notice-dismiss:hover { background: rgba(0, 0, 0, 0.08); }
   .notice-success { background: #dcfce7; color: #166534; border: 1px solid #86efac; }
   .notice-error { background: #fee2e2; color: #991b1b; border: 1px solid #fca5a5; }
   .row-actions-cell { text-align: right; white-space: nowrap; position: relative; width: 1%; }
@@ -233,6 +224,14 @@ const CSS = `
   .pagination a:hover { background: #f9fafb; text-decoration: none; }
   .pagination .disabled { padding: 6px 12px; border: 1px solid #e5e7eb; border-radius: 6px; color: #9ca3af; background: #f9fafb; }
   .page-info { font-weight: 500; }
+  .agent-status-cell { display: inline-flex; align-items: center; gap: 6px; }
+  .error-token-wrap { position: relative; display: inline-flex; align-items: center; }
+  .error-token { width: 16px; height: 16px; border: 0; border-radius: 999px; background: #dc2626; color: #fff; font-size: 0.68rem; font-weight: 700; line-height: 1; display: inline-flex; align-items: center; justify-content: center; cursor: pointer; padding: 0; }
+  .error-token:focus-visible { outline: 2px solid #111827; outline-offset: 2px; }
+  .error-tooltip { display: none; position: absolute; top: 50%; left: calc(100% + 8px); transform: translateY(-50%); background: #111827; color: #fff; border-radius: 6px; padding: 6px 8px; font-size: 0.75rem; line-height: 1.3; box-shadow: 0 8px 20px rgba(0,0,0,0.18); width: max-content; max-width: 320px; z-index: 40; white-space: normal; }
+  .error-token-wrap:hover .error-tooltip,
+  .error-token-wrap:focus-within .error-tooltip,
+  .error-token-wrap[data-open="true"] .error-tooltip { display: block; }
 `;
 
 dashboardRouter.post("/:ticketKey/delete", async (c) => {
@@ -314,57 +313,6 @@ dashboardRouter.post("/:ticketKey/delete", async (c) => {
   );
 });
 
-// ─── GitHub workflow-run cache ───────────────────────────────────────────────
-type WorkflowRunLite = {
-  name?: string | null;
-  status?: string | null;
-  head_branch?: string | null;
-  pull_requests?: Array<{ number?: number }> | null;
-};
-
-// Short-TTL in-process cache of a repo's workflow runs, keyed by repo + token.
-// Without this, every dashboard refresh re-paginated the entire repo workflow
-// history. Shared across requests so concurrent tabs/refreshes reuse one fetch.
-const WORKFLOW_RUNS_CACHE_TTL_MS = 10_000;
-const workflowRunsCache = new Map<
-  string,
-  { expiresAt: number; runs: WorkflowRunLite[] }
->();
-
-async function getRepoWorkflowRuns(
-  client: Octokit,
-  owner: string,
-  repo: string,
-  cacheKey: string
-): Promise<WorkflowRunLite[]> {
-  const cached = workflowRunsCache.get(cacheKey);
-  if (cached && cached.expiresAt > Date.now()) {
-    return cached.runs;
-  }
-  const runs: WorkflowRunLite[] = [];
-  for (let page = 1; ; page += 1) {
-    const { data } = await client.actions.listWorkflowRunsForRepo({
-      owner,
-      repo,
-      per_page: 100,
-      page,
-    });
-    runs.push(...(data.workflow_runs ?? []));
-    if ((data.workflow_runs ?? []).length < 100) break;
-  }
-  const now = Date.now();
-  workflowRunsCache.set(cacheKey, {
-    expiresAt: now + WORKFLOW_RUNS_CACHE_TTL_MS,
-    runs,
-  });
-  // Prune expired entries so the cache stays bounded across token rotations and
-  // project churn over a long-lived server process.
-  for (const [key, entry] of workflowRunsCache) {
-    if (entry.expiresAt <= now) workflowRunsCache.delete(key);
-  }
-  return runs;
-}
-
 interface DashboardQuery {
   hideDone: boolean;
   selectedProject: string;
@@ -398,7 +346,6 @@ interface DashboardView {
   counts: Record<string, number>;
   totalBlocked: number;
   projects: string[];
-  actionStateByPr: Map<string, PrActionState>;
 }
 
 // Loads exactly one page of runs plus the aggregates needed to render the view.
@@ -455,74 +402,17 @@ async function loadDashboardView(query: DashboardQuery): Promise<DashboardView> 
   }
   const totalBlocked = (counts.blocked ?? 0) + (counts.blocked_cycle ?? 0);
 
-  // Resolve PR action-state badges for this page's PRs only, grouped by repo + token
-  // so each configured credential boundary is respected. Workflow runs are cached.
-  const configByProjectKey = new Map(
-    configs.map((config) => [config.project_key, config])
-  );
-  const githubClientByToken = new Map<string, Octokit>();
-  const actionStateByPr = new Map<string, PrActionState>();
-  const repoGroups = new Map<
-    string,
-    { owner: string; repo: string; token: string; prs: { prKey: string; pullNumber: number; branchName: string }[] }
-  >();
-  for (const run of runs) {
-    if (!run.pr_url) continue;
-    const parsedPr = parseGithubPullRequestUrl(run.pr_url);
-    if (!parsedPr) continue;
-    const prKey = `${parsedPr.owner}/${parsedPr.repo}#${parsedPr.pullNumber}`;
-    const config = configByProjectKey.get(run.project_key);
-    const githubToken = config ? resolveProjectTokens(config).githubToken : env.GITHUB_TOKEN;
-    const repoKey = `${parsedPr.owner}/${parsedPr.repo}::${githubToken}`;
-    let group = repoGroups.get(repoKey);
-    if (!group) {
-      group = { owner: parsedPr.owner, repo: parsedPr.repo, token: githubToken, prs: [] };
-      repoGroups.set(repoKey, group);
-    }
-    if (!group.prs.some((p) => p.prKey === prKey)) {
-      group.prs.push({ prKey, pullNumber: parsedPr.pullNumber, branchName: `agent/${run.ticket_key}` });
-    }
-  }
-
-  await Promise.all(
-    Array.from(repoGroups.entries()).map(async ([repoKey, { owner, repo, token, prs }]) => {
-      let githubClient = githubClientByToken.get(token);
-      if (!githubClient) {
-        githubClient = new Octokit({ auth: token });
-        githubClientByToken.set(token, githubClient);
-      }
-      try {
-        const workflowRuns = await getRepoWorkflowRuns(githubClient, owner, repo, repoKey);
-        for (const pr of prs) {
-          const reviewRunning = workflowRuns.some(
-            (wfRun) =>
-              wfRun.name === REVIEW_WORKFLOW_NAME &&
-              IN_FLIGHT_WORKFLOW_STATUSES.has(wfRun.status ?? "") &&
-              ((wfRun.pull_requests ?? []).some((p) => p.number === pr.pullNumber) ||
-                wfRun.head_branch === pr.branchName)
-          );
-          const revisionRunning = workflowRuns.some(
-            (wfRun) =>
-              wfRun.name === REVISION_WORKFLOW_NAME &&
-              IN_FLIGHT_WORKFLOW_STATUSES.has(wfRun.status ?? "") &&
-              ((wfRun.pull_requests ?? []).some((p) => p.number === pr.pullNumber) ||
-                wfRun.head_branch === pr.branchName)
-          );
-          actionStateByPr.set(pr.prKey, { reviewRunning, revisionRunning });
-        }
-      } catch {
-        // Best effort only — dashboard should still render if GitHub is unavailable.
-      }
-    })
-  );
-
-  return { query, runs, total, limit, counts, totalBlocked, projects, actionStateByPr };
+  // PR review/revision action-state is resolved out-of-band by the monitor loop
+  // and persisted to dispatch_runs (pr_review_running / pr_revision_running), so
+  // this render performs zero live GitHub calls regardless of how many PRs are on
+  // the page.
+  return { query, runs, total, limit, counts, totalBlocked, projects };
 }
 
 // Renders the dynamic dashboard section (stats bar + table + pagination). Shared by
 // the full page and the /fragment endpoint so the client poll can swap it in place.
 function renderDashboardContent(view: DashboardView): string {
-  const { runs, counts, totalBlocked, total, limit, actionStateByPr } = view;
+  const { runs, counts, totalBlocked, total, limit } = view;
   const { hideDone, selectedProject, selectedStatus, page, deleteFailedKey } = view.query;
   const escapedSelectedProject = escapeHtml(selectedProject);
 
@@ -569,8 +459,6 @@ function renderDashboardContent(view: DashboardView): string {
               return `<a href="${run.pr_url}" target="_blank">${prLabel}${prSuffix}</a>`;
             })()
           : "-";
-    const parsedPr = run.pr_url ? parseGithubPullRequestUrl(run.pr_url) : null;
-    const prKey = parsedPr ? `${parsedPr.owner}/${parsedPr.repo}#${parsedPr.pullNumber}` : null;
     const showForceDelete = run.ticket_key === deleteFailedKey;
     const rowActions = `<div class="row-menu" data-row-menu>
       <button class="row-menu-btn" type="button" data-row-menu-button aria-label="Open actions for ${run.ticket_key}" aria-expanded="false">⋮</button>
@@ -585,12 +473,19 @@ function renderDashboardContent(view: DashboardView): string {
       </div>
     </div>`;
 
+    const errorToken = run.error
+      ? `<span class="error-token-wrap" data-error-token>
+          <button class="error-token" type="button" data-error-token-button aria-label="Show error for ${run.ticket_key}" aria-expanded="false">!</button>
+          <span class="error-tooltip" role="tooltip">${escapeHtml(run.error)}</span>
+        </span>`
+      : "";
+
     return `<tr>
       <td><a href="${ticketUrl}" target="_blank">${run.ticket_key}</a></td>
       <td>${run.project_key}</td>
       <td>${run.summary ? run.summary.slice(0, 80) : "-"}</td>
       <td>${ticketStatusBadge(run.ticket_status_name, run.ticket_status_category)}</td>
-      <td>${statusBadge(run.status)}</td>
+      <td><span class="agent-status-cell">${statusBadge(run.status)}${errorToken}</span></td>
       <td>${formatSpawnedAtDate(run.spawned_at)}</td>
       <td>${runtime}</td>
       <td>
@@ -603,7 +498,18 @@ function renderDashboardContent(view: DashboardView): string {
       <td>${prStatusBadge(
         run.pr_has_conflicts,
         Boolean(run.pr_url),
-        prKey ? actionStateByPr.get(prKey) ?? null : null
+        // Running badges only apply to non-terminal PRs. The monitor stops
+        // refreshing these flags once a PR is merged/closed (it leaves the
+        // active-PR set), so gate on display state to avoid showing a stale
+        // "Review running" on a merged PR.
+        run.pr_url &&
+          run.pr_display_state !== "merged" &&
+          run.pr_display_state !== "closed"
+          ? {
+              reviewRunning: Boolean(run.pr_review_running),
+              revisionRunning: Boolean(run.pr_revision_running),
+            }
+          : null
       )}</td>
       ${showProdDeploymentColumn ? `<td>${prodDeploymentBadge(run.deployed_to_prod)}</td>` : ""}
       <td>${actionLink}${blockedByHtml}</td>
@@ -717,11 +623,24 @@ dashboardRouter.get("/", async (c) => {
       <a href="/config" class="btn btn-secondary">⚙ Configure</a>
     </div>
   </div>
-  ${notice ? `<div class="notice notice-${noticeType}">${escapedNotice}</div>` : ""}
+  ${notice ? `<div class="notice notice-${noticeType}" role="status"><span class="notice-message">${escapedNotice}</span><button class="notice-dismiss" type="button" data-notice-dismiss aria-label="Dismiss notification">×</button></div>` : ""}
   <div id="dashboard-content">
     ${renderDashboardContent(view)}
   </div>
   <script>
+    (function clearTransientDashboardQueryParams() {
+      const url = new URL(window.location.href);
+      let changed = false;
+      for (const key of ["notice", "noticeType", "deleteFailed"]) {
+        if (!url.searchParams.has(key)) continue;
+        url.searchParams.delete(key);
+        changed = true;
+      }
+      if (!changed) return;
+      const query = url.searchParams.toString();
+      const nextUrl = url.pathname + (query ? "?" + query : "") + url.hash;
+      window.history.replaceState(null, "", nextUrl);
+    })();
     // Centralized refresh: fetch the server-rendered table fragment for the current
     // filters/page and swap it in place. Polling calls this on a timer; a future
     // websocket layer can call the same function (or push the fragment) without
@@ -776,6 +695,12 @@ dashboardRouter.get("/", async (c) => {
     document.addEventListener("click", (event) => {
       const target = event.target instanceof HTMLElement ? event.target : null;
       if (!target) return;
+      const noticeDismissButton = target.closest("[data-notice-dismiss]");
+      if (noticeDismissButton instanceof HTMLButtonElement) {
+        const noticeEl = noticeDismissButton.closest(".notice");
+        if (noticeEl instanceof HTMLElement) noticeEl.remove();
+        return;
+      }
       const button = target.closest("[data-row-menu-button]");
       if (button instanceof HTMLButtonElement) {
         const menu = button.closest("[data-row-menu]");
@@ -799,6 +724,49 @@ dashboardRouter.get("/", async (c) => {
         if (openMenu.contains(target)) continue;
         openMenu.classList.remove("open");
         const openButton = openMenu.querySelector("[data-row-menu-button]");
+        if (openButton instanceof HTMLButtonElement) {
+          openButton.setAttribute("aria-expanded", "false");
+        }
+      }
+    });
+    document.addEventListener("click", (event) => {
+      const target = event.target instanceof HTMLElement ? event.target : null;
+      if (!target) return;
+      const button = target.closest("[data-error-token-button]");
+      if (button instanceof HTMLButtonElement) {
+        const token = button.closest("[data-error-token]");
+        if (!(token instanceof HTMLElement)) return;
+        const isOpen = token.getAttribute("data-open") === "true";
+        for (const openToken of document.querySelectorAll("[data-error-token][data-open='true']")) {
+          if (!(openToken instanceof HTMLElement)) continue;
+          openToken.setAttribute("data-open", "false");
+          const openButton = openToken.querySelector("[data-error-token-button]");
+          if (openButton instanceof HTMLButtonElement) {
+            openButton.setAttribute("aria-expanded", "false");
+          }
+        }
+        if (!isOpen) {
+          token.setAttribute("data-open", "true");
+          button.setAttribute("aria-expanded", "true");
+        }
+        return;
+      }
+      for (const openToken of document.querySelectorAll("[data-error-token][data-open='true']")) {
+        if (!(openToken instanceof HTMLElement)) continue;
+        if (openToken.contains(target)) continue;
+        openToken.setAttribute("data-open", "false");
+        const openButton = openToken.querySelector("[data-error-token-button]");
+        if (openButton instanceof HTMLButtonElement) {
+          openButton.setAttribute("aria-expanded", "false");
+        }
+      }
+    });
+    document.addEventListener("keydown", (event) => {
+      if (event.key !== "Escape") return;
+      for (const openToken of document.querySelectorAll("[data-error-token][data-open='true']")) {
+        if (!(openToken instanceof HTMLElement)) continue;
+        openToken.setAttribute("data-open", "false");
+        const openButton = openToken.querySelector("[data-error-token-button]");
         if (openButton instanceof HTMLButtonElement) {
           openButton.setAttribute("aria-expanded", "false");
         }

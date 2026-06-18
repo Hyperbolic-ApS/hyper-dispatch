@@ -36,6 +36,8 @@ CREATE TABLE IF NOT EXISTS dispatch_runs (
   pr_url         TEXT,
   pr_has_conflicts BOOLEAN,
   pr_display_state TEXT CHECK (pr_display_state IN ('open', 'draft', 'merged', 'closed')),
+  pr_review_running BOOLEAN,
+  pr_revision_running BOOLEAN,
   session_link   TEXT,
   error          TEXT,
   ticket_status_name TEXT,
