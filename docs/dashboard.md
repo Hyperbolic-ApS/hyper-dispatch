@@ -15,7 +15,11 @@ Displays all tracked dispatch runs in a table with:
 - Agent status badge (color-coded: green=succeeded, blue=running, yellow=queued, orange=blocked, red=failed)
   - When a run includes persisted `dispatch_runs.error` text, the Agent Status cell shows a red `!` error token next to the status badge
   - Hovering the token (desktop) or tapping/clicking it (touch/mouse) reveals the escaped error text in an inline tooltip; `Esc` or outside-click closes tapped tooltips
-- Spawned-at timestamp in the viewer's local timezone, rendered as `dd/MM/YY HH:MM`
+- Spawned-at timestamp in the viewer's local timezone
+  - Shows `Now` when the run was spawned within the last minute
+  - Shows `Today at HH:MM` for runs spawned earlier on the current day
+  - Shows `Yesterday at HH:MM` for runs spawned on the previous day
+  - Falls back to `dd/MM/YY HH:MM` for older runs
 - Agent runtime (for running/completed entries)
 - Branch (`agent/{ticket-key}`) with an inline clipboard icon button that copies the branch name to clipboard (shows a checkmark on success)
 - Oz task link labeled `Open` (opens the run task/session in Oz). The session link is usually not available at spawn time — the Oz session is created once the run bootstraps on a worker — so the monitor loop backfills it for in-flight runs (including `BLOCKED`) on its next poll, making the link available while the run is still `running` (within ~30s of the session existing)

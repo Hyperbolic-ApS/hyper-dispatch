@@ -32,6 +32,11 @@ const spawnedAtDateTimeFormatter = new Intl.DateTimeFormat("en-GB", {
   minute: "2-digit",
   hour12: false,
 });
+const spawnedAtTimeFormatter = new Intl.DateTimeFormat("en-GB", {
+  hour: "2-digit",
+  minute: "2-digit",
+  hour12: false,
+});
 
 function formatDuration(start: Date | null, end: Date | null): string {
   if (!start) return "-";
@@ -47,6 +52,22 @@ function formatDuration(start: Date | null, end: Date | null): string {
 
 function formatSpawnedAtDate(d: Date | null): string {
   if (!d) return "-";
+  const now = new Date();
+  const diffMs = now.getTime() - d.getTime();
+  if (diffMs >= 0 && diffMs < 60_000) {
+    return "Now";
+  }
+  const nowMidnight = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const spawnedAtMidnight = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+  const dayDiff = Math.round(
+    (nowMidnight.getTime() - spawnedAtMidnight.getTime()) / 86_400_000
+  );
+  if (dayDiff === 0) {
+    return `Today at ${spawnedAtTimeFormatter.format(d)}`;
+  }
+  if (dayDiff === 1) {
+    return `Yesterday at ${spawnedAtTimeFormatter.format(d)}`;
+  }
   const parts = spawnedAtDateTimeFormatter.formatToParts(d);
   const values = new Map(parts.map((part) => [part.type, part.value]));
   return `${values.get("day")}/${values.get("month")}/${values.get("year")} ${values.get("hour")}:${values.get("minute")}`;
