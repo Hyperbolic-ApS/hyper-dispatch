@@ -119,6 +119,43 @@ describe("dashboardRouter", () => {
     expect(html).toMatch(/\d{2}\/\d{2}\/\d{2} \d{2}:\d{2}/);
   });
 
+  it("renders an error token in Agent Status when a run has error text", async () => {
+    getDispatchRunsPageMock.mockResolvedValue([
+      makeDispatchRun({
+        ticket_key: "HYDI-83",
+        status: "failed",
+        error: "Spawn failed: <bad-response>",
+      }),
+    ]);
+
+    const { dashboardRouter } = await import("./dashboard.js");
+    const res = await dashboardRouter.request("http://localhost/");
+    const html = await res.text();
+
+    expect(res.status).toBe(200);
+    expect(html).toContain("data-error-token-button");
+    expect(html).toContain("Show error for HYDI-83");
+    expect(html).toContain("Spawn failed: &lt;bad-response&gt;");
+    expect(html).not.toContain("Spawn failed: <bad-response>");
+  });
+
+  it("does not render an error token when error text is absent", async () => {
+    getDispatchRunsPageMock.mockResolvedValue([
+      makeDispatchRun({
+        ticket_key: "HYDI-84",
+        status: "failed",
+        error: null,
+      }),
+    ]);
+
+    const { dashboardRouter } = await import("./dashboard.js");
+    const res = await dashboardRouter.request("http://localhost/");
+    const html = await res.text();
+
+    expect(res.status).toBe(200);
+    expect(html).not.toContain("Show error for HYDI-84");
+  });
+
   // ─── Filter + pagination delegation to SQL ─────────────────────────────────
 
   it("passes project/status/hideDone filters and pagination offset to getDispatchRunsPage", async () => {
@@ -544,6 +581,9 @@ describe("dashboardRouter", () => {
     expect(html).toContain('fetch("/dashboard/fragment"');
     expect(html).toContain("setInterval(refreshDashboard, 15000)");
     expect(html).toContain('document.addEventListener("visibilitychange"');
+    expect(html).toContain('document.addEventListener("keydown", (event) => {');
+    expect(html).toContain('event.key !== "Escape"');
+    expect(html).toContain("data-error-token-button");
     expect(html).toContain('id="dashboard-content"');
     expect(html).toContain("⚙ Configure</a>");
   });
