@@ -525,6 +525,8 @@ describe("dashboardRouter", () => {
 
     expect(html).toContain("&lt;img src=x onerror=alert(1)&gt;");
     expect(html).not.toContain("<img src=x onerror=alert(1)>");
+    expect(html).toContain("data-notice-dismiss");
+    expect(html).toContain('aria-label="Dismiss notification"');
   });
 
   // ─── Polling script (replaces full-page meta refresh) ──────────────────────
