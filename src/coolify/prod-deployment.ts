@@ -1,4 +1,4 @@
-import { Octokit } from "@octokit/rest";
+import { createGithubClient } from "../github/octokit.js";
 import { env } from "../config/env.js";
 import type { DispatchRun as ConfigDispatchRun } from "../db/config-queries.js";
 
@@ -118,7 +118,7 @@ export async function annotateRunsWithProdDeploymentStatus(
     return runs.map((run) => ({ ...run, deployed_to_prod: null }));
   }
 
-  const github = new Octokit({ auth: env.GITHUB_TOKEN });
+  const github = createGithubClient(env.GITHUB_TOKEN);
   const deploymentByTicket = new Map<string, boolean | null>();
 
   await Promise.all(

@@ -49,6 +49,8 @@ Tracks ticket → agent run state. Managed by the orchestration loop.
 | `pr_url` | `TEXT` | Pull request URL |
 | `pr_has_conflicts` | `BOOLEAN` | Whether GitHub currently reports merge conflicts for the PR (`true`/`false`/`null` unknown) |
 | `pr_display_state` | `TEXT` | Persisted PR display state for dashboard rendering (`open`/`draft`/`merged`/`closed`/`null` unknown), DB-constrained to the four non-null states |
+| `pr_review_running` | `BOOLEAN` | Whether the PR review workflow is currently in-flight (`true`/`false`/`null` unknown); resolved out-of-band by the run monitor so the dashboard renders the badge without live GitHub calls |
+| `pr_revision_running` | `BOOLEAN` | Whether the PR revision workflow is currently in-flight (`true`/`false`/`null` unknown); resolved out-of-band by the run monitor |
 | `session_link` | `TEXT` | Oz session link for live monitoring |
 | `error` | `TEXT` | Last failure reason |
 | `ticket_status_name` | `TEXT` | Persisted Jira workflow status name (e.g. `To Do`, `In Progress`, `Done`); written by the scheduler's reconcile loop so the dashboard never calls Jira on render |

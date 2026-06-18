@@ -10,6 +10,7 @@ const {
   jiraAddCommentToIssueMock,
   ozRetrieveMock,
   ozApiConstructorMock,
+  getRunsWithActivePrMock,
 } = vi.hoisted(() => ({
   getRunsByStatusMock: vi.fn(),
   updateRunStatusMock: vi.fn(),
@@ -19,6 +20,7 @@ const {
   jiraAddCommentToIssueMock: vi.fn(),
   ozRetrieveMock: vi.fn(),
   ozApiConstructorMock: vi.fn(),
+  getRunsWithActivePrMock: vi.fn(),
 }));
 
 vi.mock("../config/env.js", () => ({
@@ -38,6 +40,7 @@ vi.mock("../config/env.js", () => ({
 
 vi.mock("../db/queries.js", () => ({
   getRunsByStatus: getRunsByStatusMock,
+  getRunsWithActivePr: getRunsWithActivePrMock,
   updateRunStatus: updateRunStatusMock,
   getProjectConfig: getProjectConfigMock,
 }));
@@ -61,12 +64,15 @@ vi.mock("oz-agent-sdk", () => ({
   },
 }));
 
-vi.mock("@octokit/rest", () => ({
-  Octokit: class MockOctokit {
-    pulls = {
-      get: vi.fn(),
-    };
-  },
+vi.mock("../github/octokit.js", () => ({
+  createGithubClient: () => ({
+    pulls: { get: vi.fn() },
+    actions: {
+      listWorkflowRunsForRepo: vi
+        .fn()
+        .mockResolvedValue({ data: { workflow_runs: [] } }),
+    },
+  }),
 }));
 
 async function importMonitor() {
@@ -89,6 +95,8 @@ beforeEach(() => {
   jiraAddCommentToIssueMock.mockReset();
   ozRetrieveMock.mockReset();
   ozApiConstructorMock.mockReset();
+  getRunsWithActivePrMock.mockReset();
+  getRunsWithActivePrMock.mockResolvedValue([]);
 });
 
 afterEach(() => {

@@ -28,10 +28,6 @@ vi.mock("../validator/jira.js", () => ({
 }));
 vi.mock("../jira/client.js", () => ({}));
 
-vi.mock("@octokit/rest", () => ({
-  Octokit: vi.fn(),
-}));
-
 describe("configRouter", () => {
   beforeEach(() => {
     vi.clearAllMocks();

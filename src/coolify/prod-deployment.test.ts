@@ -3,12 +3,12 @@ import { makeDispatchRun } from "../test/fixtures.js";
 
 const githubPullGetMock = vi.fn();
 
-vi.mock("@octokit/rest", () => ({
-  Octokit: class MockOctokit {
-    pulls = {
+vi.mock("../github/octokit.js", () => ({
+  createGithubClient: () => ({
+    pulls: {
       get: githubPullGetMock,
-    };
-  },
+    },
+  }),
 }));
 
 describe("annotateRunsWithProdDeploymentStatus", () => {
