@@ -13,6 +13,7 @@ const jiraGetTransitionsMock = vi.fn();
 const jiraTransitionIssueMock = vi.fn();
 const githubRequestMock = vi.fn();
 const githubGraphqlMock = vi.fn();
+const githubPullsGetMock = vi.fn();
 let githubWebhookSecret: string | undefined = "test-secret";
 
 vi.mock("../db/queries.js", () => ({
@@ -36,6 +37,7 @@ vi.mock("@octokit/rest", () => ({
   Octokit: class MockOctokit {
     request = githubRequestMock;
     graphql = githubGraphqlMock;
+    pulls = { get: githubPullsGetMock };
   },
 }));
 
@@ -63,6 +65,7 @@ describe("webhookRouter", () => {
     updateRunStatusMock.mockReset();
     githubRequestMock.mockReset();
     githubGraphqlMock.mockReset();
+    githubPullsGetMock.mockReset();
     jiraGetIssueMock.mockReset();
     jiraGetTransitionsMock.mockReset();
     jiraTransitionIssueMock.mockReset();
@@ -371,7 +374,7 @@ describe("webhookRouter", () => {
     });
   });
 
-  it("keeps draft display state when ready transition fails for opened draft PRs", async () => {
+  it("keeps draft display state when ready transition fails and the PR is still a draft", async () => {
     const prUrl = "https://github.com/org/repo/pull/421";
     const prNodeId = "PR_kwDOExample421";
     const consoleWarnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
@@ -382,6 +385,10 @@ describe("webhookRouter", () => {
       makeProjectConfig({ project_key: "HYDI", github_pat: "project-gh-token" })
     );
     githubGraphqlMock.mockRejectedValue(new Error("failed to mark ready for review"));
+    // Authoritative state confirms the PR genuinely is still a draft.
+    githubPullsGetMock.mockResolvedValue({
+      data: { merged_at: null, state: "open", draft: true },
+    });
 
     const body = JSON.stringify({
       action: "opened",
@@ -405,6 +412,7 @@ describe("webhookRouter", () => {
     });
 
     expect(res.status).toBe(200);
+    expect(githubPullsGetMock).toHaveBeenCalled();
     expect(updateRunStatusMock).toHaveBeenCalledWith("HYDI-85", {
       pr_display_state: "draft",
     });
@@ -413,6 +421,61 @@ describe("webhookRouter", () => {
       pr_url: prUrl,
       pr_display_state: "draft",
       transitioned_to_ready: false,
+      run_count: 1,
+    });
+    consoleWarnSpy.mockRestore();
+  });
+
+  it("keeps open display state on redelivery of an opened draft event after a prior successful transition", async () => {
+    // GitHub delivers webhooks at least once. A redelivered `opened` event still
+    // carries `draft: true`, but the PR was already transitioned, so the mutation
+    // now fails. The persisted state must stay `open`, not regress to `draft`.
+    const prUrl = "https://github.com/org/repo/pull/422";
+    const prNodeId = "PR_kwDOExample422";
+    const consoleWarnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    getRunsByPrUrlMock.mockResolvedValue([
+      makeDispatchRun({ ticket_key: "HYDI-86", project_key: "HYDI", pr_url: prUrl }),
+    ]);
+    getProjectConfigMock.mockResolvedValue(
+      makeProjectConfig({ project_key: "HYDI", github_pat: "project-gh-token" })
+    );
+    githubGraphqlMock.mockRejectedValue(new Error("Pull request is not in the draft state"));
+    // Authoritative state shows the PR is already ready for review (not a draft).
+    githubPullsGetMock.mockResolvedValue({
+      data: { merged_at: null, state: "open", draft: false },
+    });
+
+    const body = JSON.stringify({
+      action: "opened",
+      pull_request: {
+        html_url: prUrl,
+        node_id: prNodeId,
+        state: "open",
+        draft: true,
+        merged_at: null,
+      },
+    });
+    const { webhookRouter } = await import("./jira.js");
+
+    const res = await webhookRouter.request("http://localhost/github", {
+      method: "POST",
+      body,
+      headers: {
+        "x-github-event": "pull_request",
+        "x-hub-signature-256": makeGithubSignature(body),
+      },
+    });
+
+    expect(res.status).toBe(200);
+    expect(githubPullsGetMock).toHaveBeenCalled();
+    expect(updateRunStatusMock).toHaveBeenCalledWith("HYDI-86", {
+      pr_display_state: "open",
+    });
+    expect(await res.json()).toMatchObject({
+      action: "updated",
+      pr_url: prUrl,
+      pr_display_state: "open",
+      transitioned_to_ready: true,
       run_count: 1,
     });
     consoleWarnSpy.mockRestore();

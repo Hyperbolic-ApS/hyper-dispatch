@@ -38,6 +38,7 @@ Receives GitHub webhook payloads for pull request state updates.
   - Reads `pull_request.html_url`
   - Looks up matching runs via `pr_url`
   - If `action === "opened"` and `pull_request.draft === true`, attempts to immediately mark the PR ready-for-review via the GitHub GraphQL `markPullRequestReadyForReview` mutation (keyed by `pull_request.node_id`). The REST "update a pull request" endpoint cannot change a PR's draft state, so GraphQL is required.
+  - The transition is idempotent for at-least-once webhook redelivery: if the mutation fails (for example, because the PR is already ready), the authoritative PR state is re-read so an already-open PR is persisted as `open` rather than regressing to `draft`.
   - Derives `pr_display_state` as:
     - `merged_at` present → `merged`
     - `state === "open"` and `draft === true` → `draft`
