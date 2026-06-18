@@ -19,10 +19,22 @@ If any of these are missing, do your best with what's available. The ticket key 
 ## 2. Create Branch
 
 ```sh
-git checkout -b agent/{ticket-key}
+SUMMARY_SLUG=$(printf '%s' "{summary}" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9]+/-/g; s/^-+|-+$//g; s/-+/-/g' | cut -d- -f1-3)
+BRANCH_NAME="agent/{ticket-key}-${SUMMARY_SLUG}"
+git checkout -b "$BRANCH_NAME"
 ```
 
-Use the exact ticket key. Example: `agent/PROJ-123`. This naming convention is required — the PR review feedback loop depends on it.
+Branch names must include the ticket key plus a short descriptor to improve scanability in GitHub/Jira/tooling. Keep descriptors minimal:
+- prefer 2-3 words (at most 4)
+- avoid filler words (`add`, `the`, `to`, `for`, `and`, etc.) unless needed for clarity
+- keep total suffix length concise (aim ~24 characters max)
+
+Examples:
+- ✅ `agent/PROJ-123-github-webhooks`
+- ✅ `agent/PROJ-123-descriptive-branch-name`
+- ❌ `agent/PROJ-123-add-short-descriptive-text-to-branch-name`
+
+This convention is required — the PR review feedback loop depends on extracting `{ticket-key}` from the branch name.
 
 ## 3. Investigate
 
@@ -152,7 +164,7 @@ Use the ticket key as prefix. The summary should be the ticket's summary (concis
 Push and create a pull request:
 
 ```sh
-git push -u origin agent/{ticket-key}
+git push -u origin "$(git branch --show-current)"
 gh pr create \
   --title "{ticket-key}: {summary}" \
   --body "Implements [{ticket-key}]({jira-base-url}/browse/{ticket-key})
@@ -212,7 +224,7 @@ Call `report_pr` with the PR URL and branch name. This is how HyperDispatch know
 
 ## Important Constraints
 
-- **Branch name must be `agent/{ticket-key}`** — this is non-negotiable.
+- **Branch name must be `agent/{ticket-key}-{short-descriptor}`** — this is non-negotiable. Keep descriptor short and human-scannable.
 - **A PR must be created** — HyperDispatch marks the run as failed if no PR artifact is found.
 - **PRs must not be drafts** — always create a normal, ready-for-review pull request. Never pass `--draft` to `gh pr create`, and run `gh pr ready` immediately after creation to force the PR out of draft state (verify with `gh pr view --json isDraft`).
 - **Do not modify files outside the ticket's scope** — parallel agents are working on other tickets simultaneously.

@@ -18,7 +18,7 @@ The Agent Spawner creates a run via the `oz-agent-sdk` with:
 HyperDispatch is not opinionated about what the skill does internally. It expects two things:
 
 1. **A PR is created** — the agent must create a pull request and output the URL via `report_pr`. HyperDispatch extracts the PR URL from run artifacts to update the state store and Jira ticket.
-2. **Branch naming**: `agent/{ticket-key}` (e.g., `agent/PROJ-123`). This convention enables the PR review feedback loop GitHub Action to extract the ticket key.
+2. **Branch naming**: `agent/{ticket-key}-{short-descriptor}` (e.g., `agent/PROJ-123-github-webhooks`). The descriptor should be very short (2-3 words, 4 max) so branch names remain manageable. This convention enables the PR review feedback loop GitHub Action to extract the ticket key while still giving quick context.
 
 Everything else — planning, implementation strategy, testing, commit style — is the skill's responsibility.
 
@@ -49,11 +49,11 @@ Workflow file: `.github/workflows/agent-revision.yml`
 
 - **Automatic loop trigger**: a `workflow_run` event for `Oz PR Review Commenting` completes successfully.
 - **Manual trigger**: an `issue_comment` event is created on the PR containing `/revise`.
-- The PR branch name starts with `agent/` (i.e., it was created by a HyperDispatch worker agent).
+- The PR branch name starts with `agent/` and includes a Jira key (`agent/{ticket-key}` with optional `-{short-descriptor}` suffix).
 
 ### Behavior
 
-1. Extracts the Jira ticket key from the branch name (`agent/{ticket-key}` → `{ticket-key}`).
+1. Extracts the Jira ticket key from the branch name (`agent/{ticket-key}` or `agent/{ticket-key}-{short-descriptor}` → `{ticket-key}`).
 2. For automatic triggers, resolves the PR from the completed review workflow run and collects the latest automated review summary and inline comments.
 3. Applies a severity gate for automatic triggers: only runs revision when detected severity is at or above `REVISION_MIN_SEVERITY` (default `important`).
 4. For manual `/revise` triggers, bypasses the severity gate and includes the manual instruction plus latest automated review feedback (if present).
@@ -121,7 +121,7 @@ Workflow file: `.github/workflows/ci.yml`
 The default skill (`.agents/skills/hyperdispatch-worker/SKILL.md`) implements a standard workflow:
 
 1. Parse ticket details from prompt (key, summary, description)
-2. Create branch `agent/{ticket-key}`
+2. Create branch `agent/{ticket-key}-{short-descriptor}` (keep descriptor concise: 2-3 words, 4 max)
 3. Investigate the codebase
 4. Plan the implementation
 5. Configure headless Playwright MCP for automated screenshots (`@playwright/mcp`, isolated Chromium profile, screenshot output directory)
