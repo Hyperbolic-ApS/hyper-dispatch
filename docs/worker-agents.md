@@ -12,6 +12,7 @@ The Agent Spawner creates a run via the `oz-agent-sdk` with:
 - **skill**: from the project config (one or more skill specs).
 - **mcp_servers**: optional map from project config (`mcp_servers`) when set.
 - **prompt**: constructed from the Jira ticket (key, summary, description, acceptance criteria).
+  - Prompt now includes an explicit `Branch name: agent/{ticket-key}-{short-descriptor}` line derived from the ticket summary slug (first three normalized words), so downstream consumers can reuse the exact same branch-name derivation.
 
 ## Skill Contract
 

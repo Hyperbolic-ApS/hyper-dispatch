@@ -22,6 +22,7 @@ import {
   getPullRequestState,
   parseGithubPullRequestUrl,
 } from "../github/pull-requests.js";
+import { buildAgentBranchName } from "../orchestration/branch-name.js";
 
 export const dashboardRouter = new Hono();
 const spawnedAtDateTimeFormatter = new Intl.DateTimeFormat("en-GB", {
@@ -491,7 +492,11 @@ async function loadDashboardView(query: DashboardQuery): Promise<DashboardView> 
       repoGroups.set(repoKey, group);
     }
     if (!group.prs.some((p) => p.prKey === prKey)) {
-      group.prs.push({ prKey, pullNumber: parsedPr.pullNumber, branchName: `agent/${run.ticket_key}` });
+      group.prs.push({
+        prKey,
+        pullNumber: parsedPr.pullNumber,
+        branchName: buildAgentBranchName(run.ticket_key, run.summary),
+      });
     }
   }
 
@@ -552,7 +557,7 @@ function renderDashboardContent(view: DashboardView): string {
 
   const rows = runs.map((run) => {
     const ticketUrl = `${env.JIRA_SITE_URL}/browse/${run.ticket_key}`;
-    const branchName = `agent/${run.ticket_key}`;
+    const branchName = buildAgentBranchName(run.ticket_key, run.summary);
     const runtime = formatDuration(run.spawned_at, run.completed_at);
     const ozTaskLink = run.session_link
       ? `<a href="${run.session_link}" target="_blank">Open</a>`

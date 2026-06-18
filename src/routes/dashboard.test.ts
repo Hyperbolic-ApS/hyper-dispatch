@@ -88,6 +88,7 @@ describe("dashboardRouter", () => {
 
     expect(res.status).toBe(200);
     expect(html).toContain(">HYDI-1</a>");
+    expect(html).toContain("<code>agent/HYDI-1-default-fixture-summary</code>");
     // Ticket-status badge text comes straight from the persisted column.
     expect(html).toContain(">In Progress</span>");
     expect(html).toContain("Agent Status");
@@ -384,6 +385,7 @@ describe("dashboardRouter", () => {
     getDispatchRunsPageMock.mockResolvedValue([
       makeDispatchRun({
         ticket_key: "HYDI-76",
+        summary: "Fix branch column mismatch now",
         status: "succeeded",
         pr_url: "https://github.com/warp/hyper-dispatch/pull/76",
         pr_has_conflicts: false,
@@ -396,7 +398,7 @@ describe("dashboardRouter", () => {
             name: "Oz PR Review Commenting",
             status: "in_progress",
             pull_requests: [],
-            head_branch: "agent/HYDI-76",
+            head_branch: "agent/HYDI-76-fix-branch-column",
           },
         ],
       },
@@ -413,6 +415,7 @@ describe("dashboardRouter", () => {
     getDispatchRunsPageMock.mockResolvedValue([
       makeDispatchRun({
         ticket_key: "HYDI-77",
+        summary: "Track branch names correctly",
         status: "succeeded",
         pr_url: "https://github.com/warp/hyper-dispatch/pull/77",
         pr_has_conflicts: false,
@@ -425,7 +428,7 @@ describe("dashboardRouter", () => {
             name: "Agent Revision on Review Feedback",
             status: "in_progress",
             pull_requests: [],
-            head_branch: "agent/HYDI-77",
+            head_branch: "agent/HYDI-77-track-branch-names",
           },
         ],
       },
@@ -458,7 +461,13 @@ describe("dashboardRouter", () => {
 
   it("follows workflow-run pagination and finds in-flight runs on later pages", async () => {
     getDispatchRunsPageMock.mockResolvedValue([
-      makeDispatchRun({ ticket_key: "HYDI-90", status: "succeeded", pr_url: "https://github.com/warp/hyper-dispatch/pull/90", pr_has_conflicts: false }),
+      makeDispatchRun({
+        ticket_key: "HYDI-90",
+        summary: "Follow branch slug flow",
+        status: "succeeded",
+        pr_url: "https://github.com/warp/hyper-dispatch/pull/90",
+        pr_has_conflicts: false,
+      }),
     ]);
     const firstPageRuns = Array.from({ length: 100 }, (_, i) => ({
       name: "Oz PR Review Commenting",
@@ -471,7 +480,12 @@ describe("dashboardRouter", () => {
       .mockResolvedValueOnce({
         data: {
           workflow_runs: [
-            { name: "Oz PR Review Commenting", status: "in_progress", pull_requests: [], head_branch: "agent/HYDI-90" },
+            {
+              name: "Oz PR Review Commenting",
+              status: "in_progress",
+              pull_requests: [],
+              head_branch: "agent/HYDI-90-follow-branch-slug",
+            },
           ],
         },
       });

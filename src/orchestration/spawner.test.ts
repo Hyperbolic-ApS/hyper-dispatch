@@ -161,7 +161,9 @@ describe("buildPrompt", () => {
       },
     });
 
-    expect(buildPrompt("HYDI-32", issue)).toBe("Implement HYDI-32: Summary only");
+    expect(buildPrompt("HYDI-32", issue)).toBe(
+      "Implement HYDI-32: Summary only\nBranch name: agent/HYDI-32-summary-only"
+    );
   });
 
   it("builds prompt from summary and description", () => {
@@ -182,7 +184,7 @@ describe("buildPrompt", () => {
     });
 
     expect(buildPrompt("HYDI-32", issue)).toBe(
-      "Implement HYDI-32: With description\n\nSingle paragraph"
+      "Implement HYDI-32: With description\nBranch name: agent/HYDI-32-with-description\n\nSingle paragraph"
     );
   });
 
@@ -208,7 +210,7 @@ describe("buildPrompt", () => {
     });
 
     expect(buildPrompt("HYDI-32", issue)).toBe(
-      "Implement HYDI-32: Multi paragraph\n\nParagraph one\nParagraph two"
+      "Implement HYDI-32: Multi paragraph\nBranch name: agent/HYDI-32-multi-paragraph\n\nParagraph one\nParagraph two"
     );
   });
 });
@@ -320,7 +322,7 @@ describe("spawnAgent", () => {
     await spawnAgent("HYDI-32", config, issue);
 
     expect(runMock).toHaveBeenCalledWith({
-      prompt: "Implement HYDI-32: Implement tests",
+      prompt: "Implement HYDI-32: Implement tests\nBranch name: agent/HYDI-32-implement-tests",
       config: expect.objectContaining({
         name: "HYDI-32",
         environment_id: config.oz_env_id,
