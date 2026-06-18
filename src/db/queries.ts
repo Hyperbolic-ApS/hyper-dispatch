@@ -208,26 +208,29 @@ export async function deleteRevisionEvent(eventKey: string): Promise<void> {
 }
 
 /**
- * Atomically claim the revision slot for a tracked run by transitioning it to
- * 'running' only when it is not already running. Returns `claimed: true` with the
- * prior status when the slot was acquired (no other revision in flight), or
- * `claimed: false` when a revision is already running for this ticket — which
- * prevents rapid successive reviews from spawning overlapping agents on the same
- * branch. The run monitor releases the slot when the spawned Oz run reaches a
- * terminal state; `releaseRevisionSlot` restores the prior status if the spawn
- * itself fails.
+ * Atomically claim the revision slot for a tracked run. Transitions the run to
+ * 'running' and clears `run_id`, but only when it is currently in a terminal
+ * state (`succeeded` | `failed` | `stale`); returns the prior status. Returns
+ * `claimed: false` when the run is already `running` (a revision is in flight,
+ * which prevents overlapping agents on the same branch) or is owned by the
+ * scheduler (`queued` / `blocked` / `blocked_cycle`), so a revision never steals
+ * a row mid-dispatch. Clearing `run_id` makes the run monitor skip the row (via
+ * its `!run.run_id` guard) during the window before `spawnRevisionRun` binds the
+ * new run id, avoiding a race where the monitor reconciles the stale prior run.
+ * The monitor releases the slot when the spawned run terminates;
+ * `releaseRevisionSlot` restores the prior status if the spawn itself fails.
  */
 export async function claimRevisionSlot(
   ticketKey: string
 ): Promise<{ claimed: boolean; previousStatus: DispatchRun["status"] | null }> {
   const rows = await sql<Array<{ previous_status: DispatchRun["status"] }>>`
     UPDATE dispatch_runs AS dr
-    SET status = 'running', updated_at = NOW()
+    SET status = 'running', run_id = NULL, updated_at = NOW()
     FROM (
       SELECT status FROM dispatch_runs WHERE ticket_key = ${ticketKey}
     ) AS prev
     WHERE dr.ticket_key = ${ticketKey}
-      AND dr.status <> 'running'
+      AND dr.status IN ('succeeded', 'failed', 'stale')
     RETURNING prev.status AS previous_status
   `;
   if (rows.length === 0) {

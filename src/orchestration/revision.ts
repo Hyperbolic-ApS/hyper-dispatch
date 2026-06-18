@@ -56,9 +56,7 @@ function extractTicketKeyFromBranch(branch: string): string | null {
 }
 
 function normalizeRevId(raw: string): string {
-  const trimmed = raw.trim().toUpperCase();
-  if (trimmed.startsWith("REV-")) return trimmed;
-  return `REV-${trimmed.replace(/^REV-?/i, "")}`;
+  return raw.trim().toUpperCase();
 }
 
 export function extractActionItemIds(texts: string[]): string[] {
@@ -76,40 +74,6 @@ export function extractActionItemIds(texts: string[]): string[] {
   }
 
   return [...ids].sort();
-}
-
-function parseReviewComment(body: string): { path: string; line: number | null } {
-  const firstLine = body.split("\n")[0] ?? "";
-  const match = firstLine.match(/^###\s+(.+?):(\d+|\?)\s*$/);
-  if (!match) {
-    return { path: "unknown", line: null };
-  }
-  return {
-    path: match[1]?.trim() || "unknown",
-    line: match[2] === "?" ? null : Number(match[2]),
-  };
-}
-
-function parseInlineReviewCommentsFromBody(reviewBody: string): Array<{
-  path: string;
-  line: number | null;
-  body: string;
-}> {
-  const marker = "## Automated Review Inline Comments";
-  const markerIndex = reviewBody.indexOf(marker);
-  if (markerIndex === -1) return [];
-
-  const section = reviewBody.slice(markerIndex + marker.length).trim();
-  if (!section) return [];
-
-  const chunks = section.split(/\n(?=###\s+)/g).map((chunk) => chunk.trim()).filter(Boolean);
-  const parsed = [];
-  for (const chunk of chunks) {
-    const location = parseReviewComment(chunk);
-    const body = chunk.replace(/^###\s+.+\n?/m, "").trim();
-    parsed.push({ ...location, body });
-  }
-  return parsed;
 }
 
 function parseTicketKeyFromText(text: string): string | null {
@@ -381,9 +345,11 @@ export async function handleGithubRevisionWebhook(params: {
       return { action: "ignored", reason: "PR is not tracked or branch has no ticket key" };
     }
 
-    const inlineReviewComments = reviewId
-      ? await listReviewComments(context.githubToken, context.pr, reviewId)
-      : parseInlineReviewCommentsFromBody(reviewBody);
+    const inlineReviewComments = await listReviewComments(
+      context.githubToken,
+      context.pr,
+      reviewId
+    );
     const actionItems = extractActionItemIds([
       reviewBody,
       ...inlineReviewComments.map((comment) => comment.body),

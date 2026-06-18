@@ -390,6 +390,23 @@ describe("handleGithubRevisionWebhook", () => {
     expect(runMock).not.toHaveBeenCalled();
   });
 
+  it("ignores non-reply pull_request_review_comment events", async () => {
+    const { handleGithubRevisionWebhook } = await import("./revision.js");
+    const result = await handleGithubRevisionWebhook({
+      event: "pull_request_review_comment",
+      payload: {
+        action: "created",
+        comment: { body: "Some inline note" },
+      },
+    });
+
+    expect(result).toEqual({
+      action: "ignored",
+      reason: "review comment events are ignored; wait for submitted review",
+    });
+    expect(runMock).not.toHaveBeenCalled();
+  });
+
   it("ignores a duplicate /revise comment delivery without spawning", async () => {
     getRunsByPrUrlMock.mockResolvedValue([
       makeDispatchRun({

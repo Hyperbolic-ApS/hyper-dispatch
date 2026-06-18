@@ -318,24 +318,52 @@ describe.skipIf(!process.env.RUN_DB_TESTS)("queries integration", () => {
     expect(afterDelete).toBe(true);
   });
 
-  it("integration: claimRevisionSlot guards overlapping revisions and releaseRevisionSlot restores prior status", async () => {
+  it("integration: claimRevisionSlot claims terminal runs, clears run_id, and releaseRevisionSlot restores prior status", async () => {
     await queries.upsertDispatchRun({
       ticketKey: "HYDI-701",
       projectKey: "HYDI",
       status: "succeeded",
     });
+    await queries.updateRunStatus("HYDI-701", { run_id: "run-original-701" });
 
     const firstClaim = await queries.claimRevisionSlot("HYDI-701");
     const secondClaim = await queries.claimRevisionSlot("HYDI-701");
     expect(firstClaim).toEqual({ claimed: true, previousStatus: "succeeded" });
     expect(secondClaim).toEqual({ claimed: false, previousStatus: null });
 
+    // run_id is cleared so the monitor's `!run.run_id` guard skips the row
+    // until spawnRevisionRun binds the new run id.
     const running = await queries.getRunsByStatus("running");
-    expect(running.map((run) => run.ticket_key)).toContain("HYDI-701");
+    const claimed = running.find((run) => run.ticket_key === "HYDI-701");
+    expect(claimed).toBeDefined();
+    expect(claimed?.run_id).toBeNull();
 
     await queries.releaseRevisionSlot("HYDI-701", firstClaim.previousStatus);
     const reclaim = await queries.claimRevisionSlot("HYDI-701");
     expect(reclaim).toEqual({ claimed: true, previousStatus: "succeeded" });
+  });
+
+  it("integration: claimRevisionSlot does not steal queued, blocked, or blocked_cycle runs", async () => {
+    await queries.upsertDispatchRun({ ticketKey: "HYDI-710", projectKey: "HYDI", status: "queued" });
+    await queries.upsertDispatchRun({
+      ticketKey: "HYDI-711",
+      projectKey: "HYDI",
+      status: "blocked",
+      blockedBy: ["HYDI-1"],
+    });
+    await queries.upsertDispatchRun({
+      ticketKey: "HYDI-712",
+      projectKey: "HYDI",
+      status: "blocked_cycle",
+      blockedBy: ["HYDI-2"],
+    });
+
+    expect(await queries.claimRevisionSlot("HYDI-710")).toEqual({ claimed: false, previousStatus: null });
+    expect(await queries.claimRevisionSlot("HYDI-711")).toEqual({ claimed: false, previousStatus: null });
+    expect(await queries.claimRevisionSlot("HYDI-712")).toEqual({ claimed: false, previousStatus: null });
+
+    // The scheduler-owned rows are untouched (still claimable by claimRunForSpawn).
+    expect(await queries.claimRunForSpawn("HYDI-710")).toBe(true);
   });
 
   it("integration: removeBlocker removes one blocker while preserving status when blockers remain", async () => {
