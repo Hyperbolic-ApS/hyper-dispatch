@@ -155,6 +155,87 @@ export async function releaseSpawnClaim(ticketKey: string): Promise<void> {
   `;
 }
 
+// ─── Revision idempotency & concurrency ──────────────────────────────────────
+
+/**
+ * Record a revision-triggering webhook event for idempotency.
+ * `eventKey` is a stable per-delivery key (e.g. `review:<reviewId>` or
+ * `comment:<commentId>`). Returns true when the event is newly recorded and the
+ * caller may proceed, or false when the same event was already processed — which
+ * happens on GitHub webhook redeliveries/retries — so a duplicate run is skipped.
+ */
+export async function tryRecordRevisionEvent(params: {
+  eventKey: string;
+  ticketKey: string;
+  prUrl: string;
+}): Promise<boolean> {
+  const rows = await sql<Array<{ event_key: string }>>`
+    INSERT INTO revision_events (event_key, ticket_key, pr_url)
+    VALUES (${params.eventKey}, ${params.ticketKey}, ${params.prUrl})
+    ON CONFLICT (event_key) DO NOTHING
+    RETURNING event_key
+  `;
+  return rows.length > 0;
+}
+
+/**
+ * Remove a previously recorded revision event so a genuine retry can proceed.
+ * Called when spawning fails after the event was recorded.
+ */
+export async function deleteRevisionEvent(eventKey: string): Promise<void> {
+  await sql`
+    DELETE FROM revision_events
+    WHERE event_key = ${eventKey}
+  `;
+}
+
+/**
+ * Atomically claim the revision slot for a tracked run by transitioning it to
+ * 'running' only when it is not already running. Returns `claimed: true` with the
+ * prior status when the slot was acquired (no other revision in flight), or
+ * `claimed: false` when a revision is already running for this ticket — which
+ * prevents rapid successive reviews from spawning overlapping agents on the same
+ * branch. The run monitor releases the slot when the spawned Oz run reaches a
+ * terminal state; `releaseRevisionSlot` restores the prior status if the spawn
+ * itself fails.
+ */
+export async function claimRevisionSlot(
+  ticketKey: string
+): Promise<{ claimed: boolean; previousStatus: DispatchRun["status"] | null }> {
+  const rows = await sql<Array<{ previous_status: DispatchRun["status"] }>>`
+    UPDATE dispatch_runs AS dr
+    SET status = 'running', updated_at = NOW()
+    FROM (
+      SELECT status FROM dispatch_runs WHERE ticket_key = ${ticketKey}
+    ) AS prev
+    WHERE dr.ticket_key = ${ticketKey}
+      AND dr.status <> 'running'
+    RETURNING prev.status AS previous_status
+  `;
+  if (rows.length === 0) {
+    return { claimed: false, previousStatus: null };
+  }
+  return { claimed: true, previousStatus: rows[0]!.previous_status };
+}
+
+/**
+ * Restore a run's status after a failed revision spawn, reverting the
+ * `claimRevisionSlot` transition so a later review can retry. No-ops when there
+ * is no prior status or the run is no longer in the claimed 'running' state.
+ */
+export async function releaseRevisionSlot(
+  ticketKey: string,
+  previousStatus: DispatchRun["status"] | null
+): Promise<void> {
+  if (!previousStatus) return;
+  await sql`
+    UPDATE dispatch_runs
+    SET status = ${previousStatus}, updated_at = NOW()
+    WHERE ticket_key = ${ticketKey}
+      AND status = 'running'
+  `;
+}
+
 /**
  * Return all runs with a given status.
  */

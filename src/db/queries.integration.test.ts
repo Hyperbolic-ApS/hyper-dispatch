@@ -88,7 +88,7 @@ describe.skipIf(!process.env.RUN_DB_TESTS)("queries integration", () => {
 
   async function resetTables() {
     await connection.sql.unsafe(`
-      TRUNCATE TABLE dispatch_runs, project_configs RESTART IDENTITY CASCADE;
+      TRUNCATE TABLE dispatch_runs, project_configs, revision_events RESTART IDENTITY CASCADE;
     `);
 
     await connection.sql.unsafe(`
@@ -285,6 +285,57 @@ describe.skipIf(!process.env.RUN_DB_TESTS)("queries integration", () => {
     await queries.releaseSpawnClaim("HYDI-43");
     const stillRunning = await queries.getRunsByStatus("running");
     expect(stillRunning.map((run) => run.ticket_key)).toContain("HYDI-43");
+  });
+
+  it("integration: tryRecordRevisionEvent dedupes redelivered events and deleteRevisionEvent allows retry", async () => {
+    const prUrl = "https://github.com/hyperbolic-co/hyper-dispatch/pull/700";
+    await queries.upsertDispatchRun({
+      ticketKey: "HYDI-700",
+      projectKey: "HYDI",
+      status: "succeeded",
+    });
+    await queries.updateRunStatus("HYDI-700", { pr_url: prUrl });
+
+    const first = await queries.tryRecordRevisionEvent({
+      eventKey: "review:700",
+      ticketKey: "HYDI-700",
+      prUrl,
+    });
+    const replay = await queries.tryRecordRevisionEvent({
+      eventKey: "review:700",
+      ticketKey: "HYDI-700",
+      prUrl,
+    });
+    expect(first).toBe(true);
+    expect(replay).toBe(false);
+
+    await queries.deleteRevisionEvent("review:700");
+    const afterDelete = await queries.tryRecordRevisionEvent({
+      eventKey: "review:700",
+      ticketKey: "HYDI-700",
+      prUrl,
+    });
+    expect(afterDelete).toBe(true);
+  });
+
+  it("integration: claimRevisionSlot guards overlapping revisions and releaseRevisionSlot restores prior status", async () => {
+    await queries.upsertDispatchRun({
+      ticketKey: "HYDI-701",
+      projectKey: "HYDI",
+      status: "succeeded",
+    });
+
+    const firstClaim = await queries.claimRevisionSlot("HYDI-701");
+    const secondClaim = await queries.claimRevisionSlot("HYDI-701");
+    expect(firstClaim).toEqual({ claimed: true, previousStatus: "succeeded" });
+    expect(secondClaim).toEqual({ claimed: false, previousStatus: null });
+
+    const running = await queries.getRunsByStatus("running");
+    expect(running.map((run) => run.ticket_key)).toContain("HYDI-701");
+
+    await queries.releaseRevisionSlot("HYDI-701", firstClaim.previousStatus);
+    const reclaim = await queries.claimRevisionSlot("HYDI-701");
+    expect(reclaim).toEqual({ claimed: true, previousStatus: "succeeded" });
   });
 
   it("integration: removeBlocker removes one blocker while preserving status when blockers remain", async () => {

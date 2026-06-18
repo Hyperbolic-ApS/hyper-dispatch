@@ -5,6 +5,10 @@ const {
   getProjectConfigMock,
   getRunsByPrUrlMock,
   updateRunStatusMock,
+  tryRecordRevisionEventMock,
+  deleteRevisionEventMock,
+  claimRevisionSlotMock,
+  releaseRevisionSlotMock,
   jiraGetIssueMock,
   resolveProjectTokensMock,
   resolveModelMock,
@@ -16,6 +20,10 @@ const {
   getProjectConfigMock: vi.fn(),
   getRunsByPrUrlMock: vi.fn(),
   updateRunStatusMock: vi.fn(),
+  tryRecordRevisionEventMock: vi.fn(),
+  deleteRevisionEventMock: vi.fn(),
+  claimRevisionSlotMock: vi.fn(),
+  releaseRevisionSlotMock: vi.fn(),
   jiraGetIssueMock: vi.fn(),
   resolveProjectTokensMock: vi.fn(),
   resolveModelMock: vi.fn(),
@@ -29,6 +37,10 @@ vi.mock("../db/queries.js", () => ({
   getProjectConfig: getProjectConfigMock,
   getRunsByPrUrl: getRunsByPrUrlMock,
   updateRunStatus: updateRunStatusMock,
+  tryRecordRevisionEvent: tryRecordRevisionEventMock,
+  deleteRevisionEvent: deleteRevisionEventMock,
+  claimRevisionSlot: claimRevisionSlotMock,
+  releaseRevisionSlot: releaseRevisionSlotMock,
 }));
 
 vi.mock("../jira/client.js", () => ({
@@ -71,6 +83,10 @@ describe("handleGithubRevisionWebhook", () => {
     getProjectConfigMock.mockReset();
     getRunsByPrUrlMock.mockReset();
     updateRunStatusMock.mockReset();
+    tryRecordRevisionEventMock.mockReset();
+    deleteRevisionEventMock.mockReset();
+    claimRevisionSlotMock.mockReset();
+    releaseRevisionSlotMock.mockReset();
     jiraGetIssueMock.mockReset();
     resolveProjectTokensMock.mockReset();
     resolveModelMock.mockReset();
@@ -95,6 +111,10 @@ describe("handleGithubRevisionWebhook", () => {
     resolveModelMock.mockReturnValue("auto");
     runMock.mockResolvedValue({ run_id: "run_revision_1" });
     retrieveRunMock.mockResolvedValue({ session_link: "https://warp.dev/run_revision_1" });
+    tryRecordRevisionEventMock.mockResolvedValue(true);
+    deleteRevisionEventMock.mockResolvedValue(undefined);
+    claimRevisionSlotMock.mockResolvedValue({ claimed: true, previousStatus: "succeeded" });
+    releaseRevisionSlotMock.mockResolvedValue(undefined);
   });
 
   it("spawns a revision run when submitted review contains action items", async () => {
@@ -148,6 +168,117 @@ describe("handleGithubRevisionWebhook", () => {
         model: "auto",
       })
     );
+    expect(tryRecordRevisionEventMock).toHaveBeenCalledWith({
+      eventKey: "review:999",
+      ticketKey: "HYDI-44",
+      prUrl: "https://github.com/org/repo/pull/44",
+    });
+    expect(claimRevisionSlotMock).toHaveBeenCalledWith("HYDI-44");
+  });
+
+  it("ignores a duplicate submitted-review delivery without spawning", async () => {
+    getRunsByPrUrlMock.mockResolvedValue([
+      makeDispatchRun({
+        ticket_key: "HYDI-44",
+        project_key: "HYDI",
+        pr_url: "https://github.com/org/repo/pull/44",
+      }),
+    ]);
+    octokitPaginateMock.mockResolvedValue([
+      { path: "src/orchestration/revision.ts", line: 120, body: "**[REV-001] Important**" },
+    ]);
+    tryRecordRevisionEventMock.mockResolvedValue(false);
+
+    const { handleGithubRevisionWebhook } = await import("./revision.js");
+    const result = await handleGithubRevisionWebhook({
+      event: "pull_request_review",
+      payload: {
+        action: "submitted",
+        repository: { owner: { login: "org" }, name: "repo" },
+        pull_request: {
+          number: 44,
+          html_url: "https://github.com/org/repo/pull/44",
+          head: { ref: "agent/HYDI-44-pr-revision-webhook" },
+        },
+        review: { id: 999, state: "COMMENTED", body: "1. [REV-001] Fix it." },
+      },
+    });
+
+    expect(result).toEqual({
+      action: "ignored",
+      reason: "duplicate review delivery already processed",
+    });
+    expect(claimRevisionSlotMock).not.toHaveBeenCalled();
+    expect(runMock).not.toHaveBeenCalled();
+  });
+
+  it("ignores a submitted review when a revision is already in progress", async () => {
+    getRunsByPrUrlMock.mockResolvedValue([
+      makeDispatchRun({
+        ticket_key: "HYDI-44",
+        project_key: "HYDI",
+        pr_url: "https://github.com/org/repo/pull/44",
+      }),
+    ]);
+    octokitPaginateMock.mockResolvedValue([
+      { path: "src/orchestration/revision.ts", line: 120, body: "**[REV-001] Important**" },
+    ]);
+    claimRevisionSlotMock.mockResolvedValue({ claimed: false, previousStatus: null });
+
+    const { handleGithubRevisionWebhook } = await import("./revision.js");
+    const result = await handleGithubRevisionWebhook({
+      event: "pull_request_review",
+      payload: {
+        action: "submitted",
+        repository: { owner: { login: "org" }, name: "repo" },
+        pull_request: {
+          number: 44,
+          html_url: "https://github.com/org/repo/pull/44",
+          head: { ref: "agent/HYDI-44-pr-revision-webhook" },
+        },
+        review: { id: 1001, state: "COMMENTED", body: "1. [REV-001] Fix it." },
+      },
+    });
+
+    expect(result).toEqual({
+      action: "ignored",
+      reason: "revision already in progress for this PR",
+    });
+    expect(runMock).not.toHaveBeenCalled();
+  });
+
+  it("releases the slot and idempotency record when spawning fails", async () => {
+    getRunsByPrUrlMock.mockResolvedValue([
+      makeDispatchRun({
+        ticket_key: "HYDI-44",
+        project_key: "HYDI",
+        pr_url: "https://github.com/org/repo/pull/44",
+      }),
+    ]);
+    octokitPaginateMock.mockResolvedValue([
+      { path: "src/orchestration/revision.ts", line: 120, body: "**[REV-001] Important**" },
+    ]);
+    runMock.mockRejectedValue(new Error("spawn failed"));
+
+    const { handleGithubRevisionWebhook } = await import("./revision.js");
+    await expect(
+      handleGithubRevisionWebhook({
+        event: "pull_request_review",
+        payload: {
+          action: "submitted",
+          repository: { owner: { login: "org" }, name: "repo" },
+          pull_request: {
+            number: 44,
+            html_url: "https://github.com/org/repo/pull/44",
+            head: { ref: "agent/HYDI-44-pr-revision-webhook" },
+          },
+          review: { id: 999, state: "COMMENTED", body: "1. [REV-001] Fix it." },
+        },
+      })
+    ).rejects.toThrow("spawn failed");
+
+    expect(releaseRevisionSlotMock).toHaveBeenCalledWith("HYDI-44", "succeeded");
+    expect(deleteRevisionEventMock).toHaveBeenCalledWith("review:999");
   });
 
   it("skips spawning when submitted review has no action items", async () => {
@@ -255,6 +386,50 @@ describe("handleGithubRevisionWebhook", () => {
     expect(result).toEqual({
       action: "ignored",
       reason: "review comment reply does not trigger revision",
+    });
+    expect(runMock).not.toHaveBeenCalled();
+  });
+
+  it("ignores a duplicate /revise comment delivery without spawning", async () => {
+    getRunsByPrUrlMock.mockResolvedValue([
+      makeDispatchRun({
+        ticket_key: "HYDI-44",
+        project_key: "HYDI",
+        pr_url: "https://github.com/org/repo/pull/44",
+      }),
+    ]);
+    octokitPullGetMock.mockResolvedValue({
+      data: { head: { ref: "agent/HYDI-44-pr-revision-webhook" } },
+    });
+    tryRecordRevisionEventMock.mockResolvedValue(false);
+
+    const { handleGithubRevisionWebhook } = await import("./revision.js");
+    const result = await handleGithubRevisionWebhook({
+      event: "issue_comment",
+      payload: {
+        action: "created",
+        repository: { owner: { login: "org" }, name: "repo" },
+        issue: {
+          number: 44,
+          html_url: "https://github.com/org/repo/pull/44",
+          pull_request: { html_url: "https://github.com/org/repo/pull/44" },
+        },
+        comment: {
+          id: 555,
+          user: { login: "kasper" },
+          body: "/revise tighten the guard",
+        },
+      },
+    });
+
+    expect(result).toEqual({
+      action: "ignored",
+      reason: "duplicate comment delivery already processed",
+    });
+    expect(tryRecordRevisionEventMock).toHaveBeenCalledWith({
+      eventKey: "comment:555",
+      ticketKey: "HYDI-44",
+      prUrl: "https://github.com/org/repo/pull/44",
     });
     expect(runMock).not.toHaveBeenCalled();
   });

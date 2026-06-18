@@ -1,7 +1,15 @@
 import { Octokit } from "@octokit/rest";
 import type { McpServerConfig } from "oz-agent-sdk/resources/agent/agent";
 import { resolveProjectTokens } from "../config/env.js";
-import { getProjectConfig, getRunsByPrUrl, updateRunStatus } from "../db/queries.js";
+import {
+  claimRevisionSlot,
+  deleteRevisionEvent,
+  getProjectConfig,
+  getRunsByPrUrl,
+  releaseRevisionSlot,
+  tryRecordRevisionEvent,
+  updateRunStatus,
+} from "../db/queries.js";
 import * as jira from "../jira/client.js";
 import { getOzClient } from "./oz-client.js";
 import { resolveModel } from "./spawner.js";
@@ -283,6 +291,52 @@ function extractManualInstructions(commentBody: string): string {
   return commentBody.replace(/\/revise\b/gi, "").trim();
 }
 
+type SpawnRevisionParams = Parameters<typeof spawnRevisionRun>[0];
+
+type GuardedRevisionOutcome =
+  | { status: "spawned"; runId: string }
+  | { status: "duplicate" }
+  | { status: "in_progress" };
+
+/**
+ * Guarded revision spawn. Two safeguards run before the (expensive) Oz spawn:
+ *  1. Idempotency — a stable per-delivery `eventKey` is recorded so a redelivered
+ *     webhook (GitHub retries) does not spawn a duplicate run.
+ *  2. Concurrency — an atomic running-run claim ensures rapid successive reviews
+ *     cannot start overlapping revision agents on the same branch.
+ * On spawn failure the claim and ledger entry are released so a genuine retry can
+ * proceed.
+ */
+async function recordAndSpawnRevision(params: {
+  eventKey: string | null;
+  spawn: SpawnRevisionParams;
+}): Promise<GuardedRevisionOutcome> {
+  const { ticketKey, prUrl } = params.spawn;
+
+  if (params.eventKey) {
+    const recorded = await tryRecordRevisionEvent({
+      eventKey: params.eventKey,
+      ticketKey,
+      prUrl,
+    });
+    if (!recorded) return { status: "duplicate" };
+  }
+
+  const claim = await claimRevisionSlot(ticketKey);
+  if (!claim.claimed) return { status: "in_progress" };
+
+  try {
+    const run = await spawnRevisionRun(params.spawn);
+    return { status: "spawned", runId: run.runId };
+  } catch (err) {
+    await releaseRevisionSlot(ticketKey, claim.previousStatus).catch(() => {});
+    if (params.eventKey) {
+      await deleteRevisionEvent(params.eventKey).catch(() => {});
+    }
+    throw err;
+  }
+}
+
 export async function handleGithubRevisionWebhook(params: {
   event: string;
   payload: unknown;
@@ -339,20 +393,29 @@ export async function handleGithubRevisionWebhook(params: {
     }
 
     const feedback = buildAutoFeedback(reviewBody, inlineReviewComments);
-    const run = await spawnRevisionRun({
-      ticketKey: context.ticketKey,
-      projectKey: context.projectKey,
-      branch: context.pr.branch,
-      prUrl: context.pr.htmlUrl,
-      mode: "auto_review_submitted",
-      reviewState,
-      feedback,
+    const outcome = await recordAndSpawnRevision({
+      eventKey: `review:${reviewId}`,
+      spawn: {
+        ticketKey: context.ticketKey,
+        projectKey: context.projectKey,
+        branch: context.pr.branch,
+        prUrl: context.pr.htmlUrl,
+        mode: "auto_review_submitted",
+        reviewState,
+        feedback,
+      },
     });
+    if (outcome.status === "duplicate") {
+      return { action: "ignored", reason: "duplicate review delivery already processed" };
+    }
+    if (outcome.status === "in_progress") {
+      return { action: "ignored", reason: "revision already in progress for this PR" };
+    }
     return {
       action: "spawned",
       mode: "auto_review_submitted",
       ticketKey: context.ticketKey,
-      runId: run.runId,
+      runId: outcome.runId,
       actionItemCount: actionItems.length,
     };
   }
@@ -402,21 +465,31 @@ export async function handleGithubRevisionWebhook(params: {
     const instructions = extractManualInstructions(commentBody);
     const feedback = instructions || "No additional instruction provided after /revise.";
 
-    const run = await spawnRevisionRun({
-      ticketKey,
-      projectKey: projectConfig.project_key,
-      branch: effectiveBranch,
-      prUrl,
-      mode: "manual_comment",
-      reviewState: "manual",
-      feedback,
+    const commentId = parsePrNumber(payload.comment?.id);
+    const outcome = await recordAndSpawnRevision({
+      eventKey: commentId != null ? `comment:${commentId}` : null,
+      spawn: {
+        ticketKey,
+        projectKey: projectConfig.project_key,
+        branch: effectiveBranch,
+        prUrl,
+        mode: "manual_comment",
+        reviewState: "manual",
+        feedback,
+      },
     });
+    if (outcome.status === "duplicate") {
+      return { action: "ignored", reason: "duplicate comment delivery already processed" };
+    }
+    if (outcome.status === "in_progress") {
+      return { action: "ignored", reason: "revision already in progress for this PR" };
+    }
 
     return {
       action: "spawned",
       mode: "manual_comment",
       ticketKey,
-      runId: run.runId,
+      runId: outcome.runId,
       actionItemCount: 1,
     };
   }

@@ -69,6 +69,7 @@ Signed GitHub webhook events also drive in-app PR revision runs:
 - Submitted review content is scanned for actionable items (`REV-###` IDs / action-list entries); if none are present, no Oz revision run is spawned.
 - `issue_comment` with `/revise ...` triggers manual revision; HyperDispatch still reads ticket context but forwards only the explicit `/revise` instruction text to the revision run.
 - `pull_request_review_comment` events are ignored for spawning so inline-comment replies/subcomments do not create duplicate revision runs.
+- Revision spawns are deduplicated by GitHub review/comment id (`revision_events` ledger) and guarded by an atomic running-run claim, so webhook redeliveries and rapid successive reviews cannot spawn duplicate or overlapping revision runs on the same branch.
 
 ## Board Validation
 

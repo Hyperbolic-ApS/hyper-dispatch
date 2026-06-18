@@ -18,7 +18,7 @@ The Agent Spawner creates a run via the `oz-agent-sdk` with:
 HyperDispatch is not opinionated about what the skill does internally. It expects two things:
 
 1. **A PR is created** — the agent must create a pull request and output the URL via `report_pr`. HyperDispatch extracts the PR URL from run artifacts to update the state store and Jira ticket.
-2. **Branch naming**: `agent/{ticket-key}-{short-descriptor}` (e.g., `agent/PROJ-123-github-webhooks`). The descriptor should be very short (2-3 words, 4 max) so branch names remain manageable. This convention enables the PR review feedback loop GitHub Action to extract the ticket key while still giving quick context.
+2. **Branch naming**: `agent/{ticket-key}-{short-descriptor}` (e.g., `agent/PROJ-123-github-webhooks`). The descriptor should be very short (2-3 words, 4 max) so branch names remain manageable. This convention enables the PR review feedback loop to extract the ticket key while still giving quick context.
 
 Everything else — planning, implementation strategy, testing, commit style — is the skill's responsibility.
 
@@ -56,7 +56,8 @@ HyperDispatch handles PR revision triggering directly in application code via th
 2. For submitted reviews, loads review body + inline comments and detects action items from `REV-###` references / action-list entries.
 3. Spawns a revision run **only when action items are present**; no severity threshold is applied.
 4. For manual `/revise ...` comments, HyperDispatch still reads the ticket but passes only the explicit `/revise` instruction to the revision agent.
-5. Spawns an Oz run against the existing PR branch with the same revision prompt contract used previously in `agent-revision.yml` (read feedback, implement fixes, test, commit, push existing branch, no new PR).
+5. Spawns an Oz run against the existing PR branch with the revision prompt contract (read feedback, implement fixes, test, commit, push existing branch, no new PR).
+6. Deduplicates and serializes spawns: each triggering event (GitHub review/comment id) is recorded in `revision_events` so redelivered webhooks do not spawn duplicates, and an atomic running-run claim prevents overlapping revision agents on the same branch (the run monitor releases the claim when the spawned run reaches a terminal state).
 
 ## Automated PR Review Commenting
 

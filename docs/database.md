@@ -1,6 +1,6 @@
 # Database
 
-HyperDispatch uses PostgreSQL for persistent state. Two tables serve both orchestration logic and the dashboard.
+HyperDispatch uses PostgreSQL for persistent state. Three tables serve both orchestration logic and the dashboard.
 
 ## Tables
 
@@ -56,11 +56,23 @@ Tracks ticket → agent run state. Managed by the orchestration loop.
 | `created_at` | `TIMESTAMPTZ` | Row creation time |
 | `updated_at` | `TIMESTAMPTZ` | Last update time |
 
+### `revision_events`
+
+Idempotency ledger for PR revision webhook events. One row per processed delivery so redelivered GitHub webhooks do not spawn duplicate revision runs.
+
+| Column | Type | Description |
+|---|---|---|
+| `event_key` | `TEXT` PK | Stable per-delivery key (`review:<reviewId>` or `comment:<commentId>`) |
+| `ticket_key` | `TEXT` | Jira issue key the revision targets |
+| `pr_url` | `TEXT` | Pull request URL the event was received for |
+| `created_at` | `TIMESTAMPTZ` | Row creation time |
+
 ## Indexes
 
 - `idx_status` on `dispatch_runs(status)` — for run monitor queries and concurrency counting.
 - `idx_project` on `dispatch_runs(project_key)` — for per-project dashboard filtering.
 - `idx_dispatch_runs_created_at` on `dispatch_runs(created_at DESC)` — supports the dashboard's default ordering and keeps `LIMIT`/`OFFSET` pagination cheap as the table grows.
+- `idx_revision_events_ticket` on `revision_events(ticket_key)` — for looking up revision events by ticket.
 
 ## Status transition notes
 
@@ -69,9 +81,10 @@ Tracks ticket → agent run state. Managed by the orchestration loop.
 - Runs in `blocked_cycle` remain `blocked_cycle` after blocker removal (cycle status is not auto-cleared by this query path).
 - `claimRunForSpawn(ticketKey)` atomically transitions a row from `queued` → `running` and returns whether the claim succeeded. This is used to prevent duplicate dispatches across concurrent triggers.
 - `releaseSpawnClaim(ticketKey)` reverts `running` → `queued` only when `run_id IS NULL` (failed pre-spawn path), so claimed rows tied to real Oz runs are never accidentally released.
+- `claimRevisionSlot(ticketKey)` atomically transitions a run to `running` only when it is not already `running`, returning the prior status. It guards against overlapping PR revision spawns on the same branch; `releaseRevisionSlot(ticketKey, previousStatus)` restores the prior status if the spawn fails (otherwise the run monitor clears the `running` state when the spawned run terminates).
 - Scheduler errors after `spawnAgent` invocation are persisted as `failed` instead of being re-queued; if that failure-state write also fails, claim rollback is attempted so rows remain recoverable and do not stay stranded in `running` indefinitely.
 - `upsertDispatchRun` conflict updates do not allow stale incoming `queued` writes to overwrite rows already in `running` or `succeeded`.
 
 ## Migrations
 
-Schema migrations are managed with raw SQL files in `src/db/migrations/`. Each migration file is named `NNN_description.sql` and applied in order on startup.
+The schema is applied on startup by `runMigrations()` (`src/db/migrate.ts`): it executes `src/db/schema.sql` (idempotent `CREATE TABLE IF NOT EXISTS` / `CREATE INDEX IF NOT EXISTS`) followed by additive `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` statements. New tables and indexes are added to `schema.sql`; new columns on existing tables are also mirrored in the additive block, so repeated runs are safe.
