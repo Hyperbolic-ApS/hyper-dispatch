@@ -1,6 +1,5 @@
 import { Hono } from "hono";
 import { createHmac, timingSafeEqual } from "node:crypto";
-import { Octokit } from "@octokit/rest";
 import * as jira from "../jira/client.js";
 import {
   getRunsByPrUrl,
@@ -15,6 +14,7 @@ import {
 } from "../jira/columns.js";
 import { syncTicketInToDo } from "../orchestration/ticket-sync.js";
 import { transitionMergedPrToDone } from "../orchestration/pr-merge.js";
+import { createGithubClient } from "../github/octokit.js";
 import { getPullRequestDisplayState } from "../github/pull-requests.js";
 import { env } from "../config/env.js";
 export { priorityNameToNumber } from "../orchestration/ticket-sync.js";
@@ -90,7 +90,7 @@ async function transitionDraftPullRequestToReady(
 ): Promise<PullRequestDisplayState | null> {
   const projectConfig = await getProjectConfig(projectKey);
   const githubToken = projectConfig?.github_pat ?? env.GITHUB_TOKEN;
-  const github = new Octokit({ auth: githubToken });
+  const github = createGithubClient(githubToken);
 
   try {
     await github.graphql(MARK_READY_FOR_REVIEW_MUTATION, {

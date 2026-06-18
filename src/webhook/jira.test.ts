@@ -11,7 +11,6 @@ const syncTicketInToDoMock = vi.fn();
 const jiraGetIssueMock = vi.fn();
 const jiraGetTransitionsMock = vi.fn();
 const jiraTransitionIssueMock = vi.fn();
-const githubRequestMock = vi.fn();
 const githubGraphqlMock = vi.fn();
 const githubPullsGetMock = vi.fn();
 let githubWebhookSecret: string | undefined = "test-secret";
@@ -33,12 +32,15 @@ vi.mock("../jira/client.js", () => ({
   transitionIssue: jiraTransitionIssueMock,
 }));
 
-vi.mock("@octokit/rest", () => ({
-  Octokit: class MockOctokit {
-    request = githubRequestMock;
-    graphql = githubGraphqlMock;
-    pulls = { get: githubPullsGetMock };
-  },
+// jira.ts (GraphQL ready-for-review) and pull-requests.ts (authoritative
+// reconciliation) both obtain their client via createGithubClient, so mocking
+// the factory covers every GitHub call and avoids loading the real octokit.ts
+// (which builds a hardened client via Octokit.plugin at module load).
+vi.mock("../github/octokit.js", () => ({
+  createGithubClient: () => ({
+    graphql: githubGraphqlMock,
+    pulls: { get: githubPullsGetMock },
+  }),
 }));
 
 vi.mock("../config/env.js", () => ({
@@ -63,7 +65,6 @@ describe("webhookRouter", () => {
     removeBlockerMock.mockReset();
     syncTicketInToDoMock.mockReset();
     updateRunStatusMock.mockReset();
-    githubRequestMock.mockReset();
     githubGraphqlMock.mockReset();
     githubPullsGetMock.mockReset();
     jiraGetIssueMock.mockReset();
@@ -360,8 +361,8 @@ describe("webhookRouter", () => {
       expect.stringContaining("markPullRequestReadyForReview"),
       { pullRequestId: prNodeId }
     );
-    // The unsupported REST PATCH draft=false contract must not be used.
-    expect(githubRequestMock).not.toHaveBeenCalled();
+    // A successful mutation is authoritative on its own — no extra PR fetch.
+    expect(githubPullsGetMock).not.toHaveBeenCalled();
     expect(updateRunStatusMock).toHaveBeenCalledWith("HYDI-84", {
       pr_display_state: "open",
     });
