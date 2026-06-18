@@ -55,7 +55,7 @@ Receives GitHub webhook payloads for pull request state updates.
 - `action`
 - `pr_url`
 - `pr_display_state`
-- `transitioned_to_ready` (`true` only when an `opened` draft PR was successfully converted to ready-for-review)
+- `transitioned_to_ready` (`true` only when this webhook request performed the draft→ready transition via the GraphQL mutation; a redelivery that finds the PR already ready persists `pr_display_state: "open"` but reports `false`)
 - `run_count`
 
 ## Status API

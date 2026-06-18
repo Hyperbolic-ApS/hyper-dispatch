@@ -77,17 +77,27 @@ const MARK_READY_FOR_REVIEW_MUTATION = `
   }
 `;
 
-// Marks a draft PR ready for review and returns the resulting display state, or
-// `null` when the state could not be determined (so the caller keeps the
-// payload-derived state). The mutation throws when the PR is no longer a draft
-// — e.g. an at-least-once webhook redelivery of the same `opened` event after
-// we already transitioned it. In that case we re-read the authoritative state
-// instead of regressing an already-open PR back to `draft`.
+// Outcome of attempting to mark a draft PR ready for review.
+interface ReadyForReviewOutcome {
+  // The display state to persist, or `null` when it could not be determined
+  // (so the caller keeps the payload-derived state).
+  displayState: PullRequestDisplayState | null;
+  // True only when this webhook pass actually performed the draft→ready
+  // transition (the GraphQL mutation succeeded). A redelivery that finds the PR
+  // already ready reconciles to `open` but reports `false`.
+  transitioned: boolean;
+}
+
+// Marks a draft PR ready for review. The mutation throws when the PR is no
+// longer a draft — e.g. an at-least-once webhook redelivery of the same
+// `opened` event after we already transitioned it. In that case we re-read the
+// authoritative state instead of regressing an already-open PR back to `draft`,
+// while reporting `transitioned: false` because this pass performed no change.
 async function transitionDraftPullRequestToReady(
   prUrl: string,
   pullRequestNodeId: string,
   projectKey: string
-): Promise<PullRequestDisplayState | null> {
+): Promise<ReadyForReviewOutcome> {
   const projectConfig = await getProjectConfig(projectKey);
   const githubToken = projectConfig?.github_pat ?? env.GITHUB_TOKEN;
   const github = createGithubClient(githubToken);
@@ -96,20 +106,21 @@ async function transitionDraftPullRequestToReady(
     await github.graphql(MARK_READY_FOR_REVIEW_MUTATION, {
       pullRequestId: pullRequestNodeId,
     });
-    return "open";
+    return { displayState: "open", transitioned: true };
   } catch (err) {
     console.warn(
       `[webhook] markPullRequestReadyForReview failed; reconciling authoritative PR state: ${prUrl}`,
       err
     );
     try {
-      return await getPullRequestDisplayState(prUrl, githubToken);
+      const displayState = await getPullRequestDisplayState(prUrl, githubToken);
+      return { displayState, transitioned: false };
     } catch (stateErr) {
       console.warn(
         `[webhook] Failed to read authoritative PR state after ready transition failure: ${prUrl}`,
         stateErr
       );
-      return null;
+      return { displayState: null, transitioned: false };
     }
   }
 }
@@ -221,17 +232,17 @@ webhookRouter.post("/github", async (c) => {
   if (payload.action === "opened" && payload.pull_request?.draft === true) {
     const pullRequestNodeId = payload.pull_request?.node_id;
     if (pullRequestNodeId) {
-      const resolvedState = await transitionDraftPullRequestToReady(
+      const outcome = await transitionDraftPullRequestToReady(
         prUrl,
         pullRequestNodeId,
         runs[0]!.project_key
       );
-      if (resolvedState) {
-        prDisplayState = resolvedState;
-        // A resolved `open` state means the PR is ready for review — whether we
-        // just transitioned it or a redelivery found it already open.
-        transitionedToReady = resolvedState === "open";
+      if (outcome.displayState) {
+        prDisplayState = outcome.displayState;
       }
+      // `transitioned_to_ready` reflects only a transition performed by this
+      // pass; a redelivery that reconciles to `open` still reports `false`.
+      transitionedToReady = outcome.transitioned;
     } else {
       console.warn(
         `[webhook] Missing pull_request.node_id; cannot transition draft PR to ready for review: ${prUrl}`

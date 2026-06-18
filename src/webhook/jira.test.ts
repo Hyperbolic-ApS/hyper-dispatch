@@ -427,10 +427,12 @@ describe("webhookRouter", () => {
     consoleWarnSpy.mockRestore();
   });
 
-  it("keeps open display state on redelivery of an opened draft event after a prior successful transition", async () => {
+  it("keeps open display state on redelivery but reports transitioned_to_ready false", async () => {
     // GitHub delivers webhooks at least once. A redelivered `opened` event still
     // carries `draft: true`, but the PR was already transitioned, so the mutation
-    // now fails. The persisted state must stay `open`, not regress to `draft`.
+    // now fails. The persisted state must stay `open`, not regress to `draft` —
+    // yet `transitioned_to_ready` must be false because this pass performed no
+    // transition; it only reconciled the authoritative state.
     const prUrl = "https://github.com/org/repo/pull/422";
     const prNodeId = "PR_kwDOExample422";
     const consoleWarnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
@@ -476,7 +478,7 @@ describe("webhookRouter", () => {
       action: "updated",
       pr_url: prUrl,
       pr_display_state: "open",
-      transitioned_to_ready: true,
+      transitioned_to_ready: false,
       run_count: 1,
     });
     consoleWarnSpy.mockRestore();
