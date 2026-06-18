@@ -313,6 +313,39 @@ describe("webhookRouter", () => {
     });
   });
 
+  it("routes signed pull_request_review_comment events to revision orchestration", async () => {
+    handleGithubRevisionWebhookMock.mockResolvedValue({
+      action: "ignored",
+      reason: "review comment events are ignored; wait for submitted review",
+    });
+    const body = JSON.stringify({
+      action: "created",
+      pull_request: { number: 44, html_url: "https://github.com/org/repo/pull/44" },
+      comment: { id: 555, body: "inline note" },
+      repository: { owner: { login: "org" }, name: "repo" },
+    });
+    const { webhookRouter } = await import("./jira.js");
+
+    const res = await webhookRouter.request("http://localhost/github", {
+      method: "POST",
+      body,
+      headers: {
+        "x-github-event": "pull_request_review_comment",
+        "x-hub-signature-256": makeGithubSignature(body),
+      },
+    });
+
+    expect(res.status).toBe(200);
+    expect(handleGithubRevisionWebhookMock).toHaveBeenCalledWith({
+      event: "pull_request_review_comment",
+      payload: JSON.parse(body),
+    });
+    expect(await res.json()).toEqual({
+      action: "ignored",
+      reason: "review comment events are ignored; wait for submitted review",
+    });
+  });
+
   it.each([
     {
       name: "merged",

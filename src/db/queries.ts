@@ -222,36 +222,48 @@ export async function deleteRevisionEvent(eventKey: string): Promise<void> {
  */
 export async function claimRevisionSlot(
   ticketKey: string
-): Promise<{ claimed: boolean; previousStatus: DispatchRun["status"] | null }> {
-  const rows = await sql<Array<{ previous_status: DispatchRun["status"] }>>`
+): Promise<{
+  claimed: boolean;
+  previousStatus: DispatchRun["status"] | null;
+  previousRunId: string | null;
+}> {
+  const rows = await sql<
+    Array<{ previous_status: DispatchRun["status"]; previous_run_id: string | null }>
+  >`
     UPDATE dispatch_runs AS dr
     SET status = 'running', run_id = NULL, updated_at = NOW()
     FROM (
-      SELECT status FROM dispatch_runs WHERE ticket_key = ${ticketKey}
+      SELECT status, run_id FROM dispatch_runs WHERE ticket_key = ${ticketKey}
     ) AS prev
     WHERE dr.ticket_key = ${ticketKey}
       AND dr.status IN ('succeeded', 'failed', 'stale')
-    RETURNING prev.status AS previous_status
+    RETURNING prev.status AS previous_status, prev.run_id AS previous_run_id
   `;
   if (rows.length === 0) {
-    return { claimed: false, previousStatus: null };
+    return { claimed: false, previousStatus: null, previousRunId: null };
   }
-  return { claimed: true, previousStatus: rows[0]!.previous_status };
+  return {
+    claimed: true,
+    previousStatus: rows[0]!.previous_status,
+    previousRunId: rows[0]!.previous_run_id,
+  };
 }
 
 /**
- * Restore a run's status after a failed revision spawn, reverting the
- * `claimRevisionSlot` transition so a later review can retry. No-ops when there
- * is no prior status or the run is no longer in the claimed 'running' state.
+ * Restore a run's status and run_id after a failed revision spawn (or DB write),
+ * reverting the `claimRevisionSlot` transition so a later review can retry and no
+ * orphaned row is left in 'running' with a NULL run_id. No-ops when there is no
+ * prior status or the run is no longer in the claimed 'running' state.
  */
 export async function releaseRevisionSlot(
   ticketKey: string,
-  previousStatus: DispatchRun["status"] | null
+  previousStatus: DispatchRun["status"] | null,
+  previousRunId: string | null = null
 ): Promise<void> {
   if (!previousStatus) return;
   await sql`
     UPDATE dispatch_runs
-    SET status = ${previousStatus}, updated_at = NOW()
+    SET status = ${previousStatus}, run_id = ${previousRunId}, updated_at = NOW()
     WHERE ticket_key = ${ticketKey}
       AND status = 'running'
   `;

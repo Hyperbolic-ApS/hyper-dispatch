@@ -113,7 +113,11 @@ describe("handleGithubRevisionWebhook", () => {
     retrieveRunMock.mockResolvedValue({ session_link: "https://warp.dev/run_revision_1" });
     tryRecordRevisionEventMock.mockResolvedValue(true);
     deleteRevisionEventMock.mockResolvedValue(undefined);
-    claimRevisionSlotMock.mockResolvedValue({ claimed: true, previousStatus: "succeeded" });
+    claimRevisionSlotMock.mockResolvedValue({
+      claimed: true,
+      previousStatus: "succeeded",
+      previousRunId: "run-original-44",
+    });
     releaseRevisionSlotMock.mockResolvedValue(undefined);
   });
 
@@ -223,7 +227,11 @@ describe("handleGithubRevisionWebhook", () => {
     octokitPaginateMock.mockResolvedValue([
       { path: "src/orchestration/revision.ts", line: 120, body: "**[REV-001] Important**" },
     ]);
-    claimRevisionSlotMock.mockResolvedValue({ claimed: false, previousStatus: null });
+    claimRevisionSlotMock.mockResolvedValue({
+      claimed: false,
+      previousStatus: null,
+      previousRunId: null,
+    });
 
     const { handleGithubRevisionWebhook } = await import("./revision.js");
     const result = await handleGithubRevisionWebhook({
@@ -277,7 +285,44 @@ describe("handleGithubRevisionWebhook", () => {
       })
     ).rejects.toThrow("spawn failed");
 
-    expect(releaseRevisionSlotMock).toHaveBeenCalledWith("HYDI-44", "succeeded");
+    expect(releaseRevisionSlotMock).toHaveBeenCalledWith("HYDI-44", "succeeded", "run-original-44");
+    expect(deleteRevisionEventMock).toHaveBeenCalledWith("review:999");
+  });
+
+  it("releases the slot and event record when the DB write fails after a successful spawn", async () => {
+    getRunsByPrUrlMock.mockResolvedValue([
+      makeDispatchRun({
+        ticket_key: "HYDI-44",
+        project_key: "HYDI",
+        pr_url: "https://github.com/org/repo/pull/44",
+      }),
+    ]);
+    octokitPaginateMock.mockResolvedValue([
+      { path: "src/orchestration/revision.ts", line: 120, body: "**[REV-001] Important**" },
+    ]);
+    // The Oz spawn succeeds, but persisting the run to the DB fails.
+    updateRunStatusMock.mockRejectedValue(new Error("db write failed"));
+
+    const { handleGithubRevisionWebhook } = await import("./revision.js");
+    await expect(
+      handleGithubRevisionWebhook({
+        event: "pull_request_review",
+        payload: {
+          action: "submitted",
+          repository: { owner: { login: "org" }, name: "repo" },
+          pull_request: {
+            number: 44,
+            html_url: "https://github.com/org/repo/pull/44",
+            head: { ref: "agent/HYDI-44-pr-revision-webhook" },
+          },
+          review: { id: 999, state: "COMMENTED", body: "1. [REV-001] Fix it." },
+        },
+      })
+    ).rejects.toThrow("db write failed");
+
+    // The Oz run was spawned, then the slot + event key were released for retry.
+    expect(runMock).toHaveBeenCalledTimes(1);
+    expect(releaseRevisionSlotMock).toHaveBeenCalledWith("HYDI-44", "succeeded", "run-original-44");
     expect(deleteRevisionEventMock).toHaveBeenCalledWith("review:999");
   });
 

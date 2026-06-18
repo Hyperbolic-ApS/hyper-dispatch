@@ -175,6 +175,12 @@ async function resolveTrackedRevisionContext(pr: PullRequestRef): Promise<Tracke
   };
 }
 
+/**
+ * Spawn an Oz revision run for the given PR/branch and return the new run id, its
+ * session link, and the resolved model. This function performs NO database write:
+ * the caller (`recordAndSpawnRevision`) owns the `updateRunStatus` call so that a
+ * spawn success followed by a DB-write failure shares a single cleanup path.
+ */
 async function spawnRevisionRun(params: {
   ticketKey: string;
   projectKey: string;
@@ -183,7 +189,7 @@ async function spawnRevisionRun(params: {
   mode: RevisionMode;
   reviewState: string;
   feedback: string;
-}): Promise<{ runId: string }> {
+}): Promise<{ runId: string; sessionLink: string | null; model: string | null }> {
   const config = await getProjectConfig(params.projectKey);
   if (!config) {
     throw new Error(`Missing active project config for ${params.projectKey}`);
@@ -225,17 +231,7 @@ async function spawnRevisionRun(params: {
     );
   }
 
-  await updateRunStatus(params.ticketKey, {
-    status: "running",
-    run_id: runResponse.run_id,
-    model: model ?? null,
-    spawned_at: new Date(),
-    completed_at: null,
-    error: null,
-    session_link: sessionLink,
-  });
-
-  return { runId: runResponse.run_id };
+  return { runId: runResponse.run_id, sessionLink, model: model ?? null };
 }
 
 async function getPullRequestHeadBranch(
@@ -268,7 +264,12 @@ type GuardedRevisionOutcome =
  *     webhook (GitHub retries) does not spawn a duplicate run.
  *  2. Concurrency — an atomic running-run claim ensures rapid successive reviews
  *     cannot start overlapping revision agents on the same branch.
- * On spawn failure the claim and ledger entry are released so a genuine retry can
+ * On success the tracked run's row is REPURPOSED for the revision: its `run_id`,
+ * `model`, `spawned_at`, and `session_link` are overwritten with the revision
+ * run's values, so the original dispatch run's id/session link are not preserved
+ * (the row always reflects the most recent run — see docs/database.md). If either
+ * the spawn or the subsequent DB write fails, the claim (status + original
+ * run_id) and the idempotency ledger entry are released so a genuine retry can
  * proceed.
  */
 async function recordAndSpawnRevision(params: {
@@ -287,13 +288,34 @@ async function recordAndSpawnRevision(params: {
   }
 
   const claim = await claimRevisionSlot(ticketKey);
-  if (!claim.claimed) return { status: "in_progress" };
+  if (!claim.claimed) {
+    // The idempotency event key recorded above is intentionally NOT cleaned up
+    // here. A review that arrives while a revision is already running for this PR
+    // is dropped (not queued), and keeping the event-key record prevents a later
+    // redelivery of the same review from spawning a duplicate. To force-reprocess
+    // a dropped review, an operator must delete its row from `revision_events`.
+    return { status: "in_progress" };
+  }
 
   try {
     const run = await spawnRevisionRun(params.spawn);
+    // The DB write lives here (not in spawnRevisionRun) so that a write failure
+    // after a successful spawn shares the same release/cleanup path below as a
+    // spawn failure.
+    await updateRunStatus(ticketKey, {
+      status: "running",
+      run_id: run.runId,
+      model: run.model,
+      spawned_at: new Date(),
+      completed_at: null,
+      error: null,
+      session_link: run.sessionLink,
+    });
     return { status: "spawned", runId: run.runId };
   } catch (err) {
-    await releaseRevisionSlot(ticketKey, claim.previousStatus).catch(() => {});
+    await releaseRevisionSlot(ticketKey, claim.previousStatus, claim.previousRunId).catch(
+      () => {}
+    );
     if (params.eventKey) {
       await deleteRevisionEvent(params.eventKey).catch(() => {});
     }
