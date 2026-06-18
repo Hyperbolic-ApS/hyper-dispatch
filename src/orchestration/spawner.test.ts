@@ -213,6 +213,20 @@ describe("buildPrompt", () => {
       "Implement HYDI-32: Multi paragraph\nBranch name: agent/HYDI-32-multi-paragraph\n\nParagraph one\nParagraph two"
     );
   });
+
+  it("falls back to ticket-only branch name when summary slug normalizes to empty", () => {
+    const issue = makeJiraIssue({
+      fields: {
+        ...makeJiraIssue().fields,
+        summary: "!!!",
+        description: undefined,
+      },
+    });
+
+    expect(buildPrompt("HYDI-32", issue)).toBe(
+      "Implement HYDI-32: !!!\nBranch name: agent/HYDI-32"
+    );
+  });
 });
 
 describe("resolveModel", () => {

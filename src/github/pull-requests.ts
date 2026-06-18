@@ -1,4 +1,4 @@
-import { Octokit } from "@octokit/rest";
+import { createGithubClient } from "./octokit.js";
 
 export function parseGithubPullRequestUrl(
   prUrl: string
@@ -29,7 +29,7 @@ export async function getPullRequestState(
     throw new Error("Invalid GitHub pull request URL.");
   }
 
-  const github = new Octokit({ auth: githubToken });
+  const github = createGithubClient(githubToken);
   const { data: pullRequest } = await github.pulls.get({
     owner: parsed.owner,
     repo: parsed.repo,
@@ -59,7 +59,7 @@ export async function getPullRequestDisplayState(
     throw new Error("Invalid GitHub pull request URL.");
   }
 
-  const github = new Octokit({ auth: githubToken });
+  const github = createGithubClient(githubToken);
   const { data: pullRequest } = await github.pulls.get({
     owner: parsed.owner,
     repo: parsed.repo,
