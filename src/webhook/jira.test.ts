@@ -11,6 +11,7 @@ const syncTicketInToDoMock = vi.fn();
 const jiraGetIssueMock = vi.fn();
 const jiraGetTransitionsMock = vi.fn();
 const jiraTransitionIssueMock = vi.fn();
+const githubRequestMock = vi.fn();
 let githubWebhookSecret: string | undefined = "test-secret";
 
 vi.mock("../db/queries.js", () => ({
@@ -30,8 +31,15 @@ vi.mock("../jira/client.js", () => ({
   transitionIssue: jiraTransitionIssueMock,
 }));
 
+vi.mock("@octokit/rest", () => ({
+  Octokit: class MockOctokit {
+    request = githubRequestMock;
+  },
+}));
+
 vi.mock("../config/env.js", () => ({
   env: {
+    GITHUB_TOKEN: "global-gh-token",
     get GITHUB_WEBHOOK_SECRET() {
       return githubWebhookSecret;
     },
@@ -51,6 +59,7 @@ describe("webhookRouter", () => {
     removeBlockerMock.mockReset();
     syncTicketInToDoMock.mockReset();
     updateRunStatusMock.mockReset();
+    githubRequestMock.mockReset();
     jiraGetIssueMock.mockReset();
     jiraGetTransitionsMock.mockReset();
     jiraTransitionIssueMock.mockReset();
@@ -301,8 +310,106 @@ describe("webhookRouter", () => {
       action: "updated",
       pr_url: pull_request.html_url,
       pr_display_state: expected,
+      transitioned_to_ready: false,
       run_count: 1,
     });
+  });
+
+  it("transitions newly opened draft PRs to ready-for-review and persists open display state", async () => {
+    const prUrl = "https://github.com/org/repo/pull/420";
+    getRunsByPrUrlMock.mockResolvedValue([
+      makeDispatchRun({ ticket_key: "HYDI-84", project_key: "HYDI", pr_url: prUrl }),
+    ]);
+    getProjectConfigMock.mockResolvedValue(
+      makeProjectConfig({ project_key: "HYDI", github_pat: "project-gh-token" })
+    );
+    githubRequestMock.mockResolvedValue({});
+
+    const body = JSON.stringify({
+      action: "opened",
+      pull_request: {
+        html_url: prUrl,
+        state: "open",
+        draft: true,
+        merged_at: null,
+      },
+    });
+    const { webhookRouter } = await import("./jira.js");
+
+    const res = await webhookRouter.request("http://localhost/github", {
+      method: "POST",
+      body,
+      headers: {
+        "x-github-event": "pull_request",
+        "x-hub-signature-256": makeGithubSignature(body),
+      },
+    });
+
+    expect(res.status).toBe(200);
+    expect(githubRequestMock).toHaveBeenCalledWith(
+      "PATCH /repos/{owner}/{repo}/pulls/{pull_number}",
+      {
+        owner: "org",
+        repo: "repo",
+        pull_number: 420,
+        draft: false,
+      }
+    );
+    expect(updateRunStatusMock).toHaveBeenCalledWith("HYDI-84", {
+      pr_display_state: "open",
+    });
+    expect(await res.json()).toMatchObject({
+      action: "updated",
+      pr_url: prUrl,
+      pr_display_state: "open",
+      transitioned_to_ready: true,
+      run_count: 1,
+    });
+  });
+
+  it("keeps draft display state when ready transition fails for opened draft PRs", async () => {
+    const prUrl = "https://github.com/org/repo/pull/421";
+    const consoleWarnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    getRunsByPrUrlMock.mockResolvedValue([
+      makeDispatchRun({ ticket_key: "HYDI-85", project_key: "HYDI", pr_url: prUrl }),
+    ]);
+    getProjectConfigMock.mockResolvedValue(
+      makeProjectConfig({ project_key: "HYDI", github_pat: "project-gh-token" })
+    );
+    githubRequestMock.mockRejectedValue(new Error("failed to patch PR"));
+
+    const body = JSON.stringify({
+      action: "opened",
+      pull_request: {
+        html_url: prUrl,
+        state: "open",
+        draft: true,
+        merged_at: null,
+      },
+    });
+    const { webhookRouter } = await import("./jira.js");
+
+    const res = await webhookRouter.request("http://localhost/github", {
+      method: "POST",
+      body,
+      headers: {
+        "x-github-event": "pull_request",
+        "x-hub-signature-256": makeGithubSignature(body),
+      },
+    });
+
+    expect(res.status).toBe(200);
+    expect(updateRunStatusMock).toHaveBeenCalledWith("HYDI-85", {
+      pr_display_state: "draft",
+    });
+    expect(await res.json()).toMatchObject({
+      action: "updated",
+      pr_url: prUrl,
+      pr_display_state: "draft",
+      transitioned_to_ready: false,
+      run_count: 1,
+    });
+    consoleWarnSpy.mockRestore();
   });
 
   it("ignores signed pull_request events for unknown PRs", async () => {

@@ -1,5 +1,6 @@
 import { Hono } from "hono";
 import { createHmac, timingSafeEqual } from "node:crypto";
+import { Octokit } from "@octokit/rest";
 import * as jira from "../jira/client.js";
 import {
   getRunsByPrUrl,
@@ -14,6 +15,7 @@ import {
 } from "../jira/columns.js";
 import { syncTicketInToDo } from "../orchestration/ticket-sync.js";
 import { transitionMergedPrToDone } from "../orchestration/pr-merge.js";
+import { parseGithubPullRequestUrl } from "../github/pull-requests.js";
 import { env } from "../config/env.js";
 export { priorityNameToNumber } from "../orchestration/ticket-sync.js";
 
@@ -57,6 +59,33 @@ function derivePullRequestDisplayState(payload: {
   if (pullRequest?.state === "open" && pullRequest.draft) return "draft";
   if (pullRequest?.state === "open") return "open";
   return "closed";
+}
+
+async function transitionDraftPullRequestToReady(
+  prUrl: string,
+  projectKey: string
+): Promise<boolean> {
+  const parsed = parseGithubPullRequestUrl(prUrl);
+  if (!parsed) {
+    console.warn(`[webhook] Could not parse GitHub PR URL for ready transition: ${prUrl}`);
+    return false;
+  }
+
+  try {
+    const projectConfig = await getProjectConfig(projectKey);
+    const githubToken = projectConfig?.github_pat ?? env.GITHUB_TOKEN;
+    const github = new Octokit({ auth: githubToken });
+    await github.request("PATCH /repos/{owner}/{repo}/pulls/{pull_number}", {
+      owner: parsed.owner,
+      repo: parsed.repo,
+      pull_number: parsed.pullNumber,
+      draft: false,
+    });
+    return true;
+  } catch (err) {
+    console.warn(`[webhook] Failed to transition draft PR to ready for review: ${prUrl}`, err);
+    return false;
+  }
 }
 
 webhookRouter.post("/jira", async (c) => {
@@ -160,7 +189,17 @@ webhookRouter.post("/github", async (c) => {
     return c.json({ action: "ignored", reason: "pr not tracked" });
   }
 
-  const prDisplayState = derivePullRequestDisplayState(payload);
+  let prDisplayState = derivePullRequestDisplayState(payload);
+  let transitionedToReady = false;
+  if (payload.action === "opened" && payload.pull_request?.draft === true) {
+    transitionedToReady = await transitionDraftPullRequestToReady(
+      prUrl,
+      runs[0]!.project_key
+    );
+    if (transitionedToReady) {
+      prDisplayState = "open";
+    }
+  }
   await Promise.all(
     runs.map((run) => updateRunStatus(run.ticket_key, { pr_display_state: prDisplayState }))
   );
@@ -179,6 +218,7 @@ webhookRouter.post("/github", async (c) => {
     action: "updated",
     pr_url: prUrl,
     pr_display_state: prDisplayState,
+    transitioned_to_ready: transitionedToReady,
     run_count: runs.length,
   });
 });

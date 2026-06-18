@@ -37,18 +37,25 @@ Receives GitHub webhook payloads for pull request state updates.
 - `pull_request` events:
   - Reads `pull_request.html_url`
   - Looks up matching runs via `pr_url`
+  - If `action === "opened"` and `pull_request.draft === true`, attempts to immediately convert the PR to ready-for-review (`draft: false`) via the GitHub API.
   - Derives `pr_display_state` as:
     - `merged_at` present → `merged`
     - `state === "open"` and `draft === true` → `draft`
     - `state === "open"` → `open`
     - otherwise → `closed`
+  - When the draft→ready transition succeeds, persists `pr_display_state: "open"` immediately for matching runs.
   - Persists `pr_display_state` for all matching runs.
   - If no runs are found, returns `200` ignored.
 - Webhook updates are complemented by the monitor loop fallback:
   - Every monitor cycle (30s), succeeded runs with a persisted `pr_url` refresh GitHub PR metadata.
   - The monitor persists both `pr_has_conflicts` and `pr_display_state`, which backfills historical succeeded runs and reconciles missed webhook deliveries/drift.
 
-**Response:** `200 OK` for accepted/ignored GitHub events.
+**Response:** `200 OK` for accepted/ignored GitHub events. For accepted tracked PR events, includes:
+- `action`
+- `pr_url`
+- `pr_display_state`
+- `transitioned_to_ready` (`true` only when an `opened` draft PR was successfully converted to ready-for-review)
+- `run_count`
 
 ## Status API
 
