@@ -54,6 +54,8 @@ export function makeDispatchRun(
     pr_url: null,
     pr_has_conflicts: null,
     pr_display_state: null,
+    pr_review_running: null,
+    pr_revision_running: null,
     session_link: null,
     error: null,
     ticket_status_name: null,
