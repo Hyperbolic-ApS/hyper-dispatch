@@ -1128,4 +1128,60 @@ describe("reconcilePrActionStates", () => {
 
     expect(listWorkflowRunsForRepoMock).toHaveBeenCalledTimes(1);
   });
+
+  it("fetches workflow runs separately per token when two projects share a repo", async () => {
+    getRunsWithActivePrMock.mockResolvedValue([
+      makeDispatchRun({
+        ticket_key: "HYDI-10",
+        project_key: "HYDI",
+        status: "succeeded",
+        pr_url: "https://github.com/warp/hyper-dispatch/pull/10",
+        pr_review_running: false,
+        pr_revision_running: false,
+      }),
+      makeDispatchRun({
+        ticket_key: "TEST-11",
+        project_key: "TEST",
+        status: "succeeded",
+        pr_url: "https://github.com/warp/hyper-dispatch/pull/11",
+        pr_review_running: false,
+        pr_revision_running: false,
+      }),
+    ]);
+    getProjectConfigMock.mockImplementation(async (key: string) =>
+      key === "HYDI"
+        ? makeProjectConfig({ project_key: "HYDI", github_pat: "token-hydi" })
+        : makeProjectConfig({ project_key: "TEST", github_pat: "token-test" })
+    );
+    listWorkflowRunsForRepoMock.mockResolvedValue({ data: { workflow_runs: [] } });
+
+    const { reconcilePrActionStates } = await importMonitor();
+    await reconcilePrActionStates();
+
+    // Same owner/repo but different project tokens => two credential boundaries
+    // => two separate fetches. This guards the token-isolation grouping key.
+    expect(listWorkflowRunsForRepoMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("writes a definite false over a null flag on the first pass", async () => {
+    getRunsWithActivePrMock.mockResolvedValue([
+      makeDispatchRun({
+        ticket_key: "HYDI-92",
+        status: "succeeded",
+        pr_url: "https://github.com/warp/hyper-dispatch/pull/92",
+        pr_review_running: null,
+        pr_revision_running: null,
+      }),
+    ]);
+    getProjectConfigMock.mockResolvedValue(makeProjectConfig());
+    listWorkflowRunsForRepoMock.mockResolvedValue({ data: { workflow_runs: [] } });
+
+    const { reconcilePrActionStates } = await importMonitor();
+    await reconcilePrActionStates();
+
+    expect(updateRunStatusMock).toHaveBeenCalledWith("HYDI-92", {
+      pr_review_running: false,
+      pr_revision_running: false,
+    });
+  });
 });

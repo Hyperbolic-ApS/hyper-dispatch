@@ -30,7 +30,9 @@ const INPROGRESS_STATES = new Set([
 
 // Hardened GitHub clients, memoized per token (global + per-project overrides)
 // so rate-limit/retry/timeout handling is shared across calls with the same
-// credential boundary.
+// credential boundary. Intentionally unbounded: the key space is the set of
+// configured project tokens (single digits in practice), so growth on token
+// rotation is negligible and not worth eviction machinery.
 const githubClientByToken = new Map<string, Octokit>();
 
 function getGithubClient(token: string = env.GITHUB_TOKEN): Octokit {
@@ -224,42 +226,49 @@ export async function reconcilePrActionStates(): Promise<void> {
 
   const runByTicket = new Map(runs.map((run) => [run.ticket_key, run]));
 
-  for (const [repoKey, group] of repoGroups) {
-    let workflowRuns;
-    try {
-      workflowRuns = await getRepoWorkflowRuns(
-        getGithubClient(group.token),
-        group.owner,
-        group.repo,
-        repoKey
-      );
-    } catch (err) {
-      console.warn(
-        `[monitor] Failed to fetch workflow runs for ${group.owner}/${group.repo}:`,
-        err
-      );
-      continue;
-    }
-    for (const pr of group.prs) {
-      const { reviewRunning, revisionRunning } = computePrActionState(
-        workflowRuns,
-        { pullNumber: pr.pullNumber, branchName: pr.branchName }
-      );
-      const current = runByTicket.get(pr.ticketKey);
-      // Avoid write churn on every 30s sweep: only persist on an actual change.
-      if (
-        current &&
-        Boolean(current.pr_review_running) === reviewRunning &&
-        Boolean(current.pr_revision_running) === revisionRunning
-      ) {
-        continue;
+  // Fetch repos concurrently. Each repo isolates its own failure (logged and
+  // skipped) so one repo's GitHub error never blocks the others — Promise.allSettled
+  // gives that per-element isolation without a rejection aborting the batch.
+  await Promise.allSettled(
+    Array.from(repoGroups.entries()).map(async ([repoKey, group]) => {
+      let workflowRuns;
+      try {
+        workflowRuns = await getRepoWorkflowRuns(
+          getGithubClient(group.token),
+          group.owner,
+          group.repo,
+          repoKey
+        );
+      } catch (err) {
+        console.warn(
+          `[monitor] Failed to fetch workflow runs for ${group.owner}/${group.repo}:`,
+          err
+        );
+        return;
       }
-      await updateRunStatus(pr.ticketKey, {
-        pr_review_running: reviewRunning,
-        pr_revision_running: revisionRunning,
-      });
-    }
-  }
+      for (const pr of group.prs) {
+        const { reviewRunning, revisionRunning } = computePrActionState(
+          workflowRuns,
+          { pullNumber: pr.pullNumber, branchName: pr.branchName }
+        );
+        const current = runByTicket.get(pr.ticketKey);
+        // Avoid write churn on every 30s sweep: only persist on an actual change.
+        // Strict equality (not Boolean coercion) so the first pass over a freshly
+        // created PR writes a definite `false` instead of leaving `null` (unknown).
+        if (
+          current &&
+          current.pr_review_running === reviewRunning &&
+          current.pr_revision_running === revisionRunning
+        ) {
+          continue;
+        }
+        await updateRunStatus(pr.ticketKey, {
+          pr_review_running: reviewRunning,
+          pr_revision_running: revisionRunning,
+        });
+      }
+    })
+  );
 }
 
 /**

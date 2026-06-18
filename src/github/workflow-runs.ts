@@ -47,7 +47,10 @@ const workflowRunsCache = new Map<
   { expiresAt: number; runs: WorkflowRunLite[] }
 >();
 
-/** Test-only helper to reset the module-level cache between cases. */
+/**
+ * Reset the module-level cache between cases.
+ * @internal Exported for tests only — do not call from production code.
+ */
 export function __clearWorkflowRunsCache(): void {
   workflowRunsCache.clear();
 }
