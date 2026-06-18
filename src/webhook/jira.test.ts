@@ -11,6 +11,8 @@ const syncTicketInToDoMock = vi.fn();
 const jiraGetIssueMock = vi.fn();
 const jiraGetTransitionsMock = vi.fn();
 const jiraTransitionIssueMock = vi.fn();
+const githubGraphqlMock = vi.fn();
+const githubPullsGetMock = vi.fn();
 let githubWebhookSecret: string | undefined = "test-secret";
 
 vi.mock("../db/queries.js", () => ({
@@ -30,8 +32,20 @@ vi.mock("../jira/client.js", () => ({
   transitionIssue: jiraTransitionIssueMock,
 }));
 
+// jira.ts (GraphQL ready-for-review) and pull-requests.ts (authoritative
+// reconciliation) both obtain their client via createGithubClient, so mocking
+// the factory covers every GitHub call and avoids loading the real octokit.ts
+// (which builds a hardened client via Octokit.plugin at module load).
+vi.mock("../github/octokit.js", () => ({
+  createGithubClient: () => ({
+    graphql: githubGraphqlMock,
+    pulls: { get: githubPullsGetMock },
+  }),
+}));
+
 vi.mock("../config/env.js", () => ({
   env: {
+    GITHUB_TOKEN: "global-gh-token",
     get GITHUB_WEBHOOK_SECRET() {
       return githubWebhookSecret;
     },
@@ -51,6 +65,8 @@ describe("webhookRouter", () => {
     removeBlockerMock.mockReset();
     syncTicketInToDoMock.mockReset();
     updateRunStatusMock.mockReset();
+    githubGraphqlMock.mockReset();
+    githubPullsGetMock.mockReset();
     jiraGetIssueMock.mockReset();
     jiraGetTransitionsMock.mockReset();
     jiraTransitionIssueMock.mockReset();
@@ -301,8 +317,171 @@ describe("webhookRouter", () => {
       action: "updated",
       pr_url: pull_request.html_url,
       pr_display_state: expected,
+      transitioned_to_ready: false,
       run_count: 1,
     });
+  });
+
+  it("transitions newly opened draft PRs to ready-for-review and persists open display state", async () => {
+    const prUrl = "https://github.com/org/repo/pull/420";
+    const prNodeId = "PR_kwDOExample420";
+    getRunsByPrUrlMock.mockResolvedValue([
+      makeDispatchRun({ ticket_key: "HYDI-84", project_key: "HYDI", pr_url: prUrl }),
+    ]);
+    getProjectConfigMock.mockResolvedValue(
+      makeProjectConfig({ project_key: "HYDI", github_pat: "project-gh-token" })
+    );
+    githubGraphqlMock.mockResolvedValue({
+      markPullRequestReadyForReview: { pullRequest: { id: prNodeId, isDraft: false } },
+    });
+
+    const body = JSON.stringify({
+      action: "opened",
+      pull_request: {
+        html_url: prUrl,
+        node_id: prNodeId,
+        state: "open",
+        draft: true,
+        merged_at: null,
+      },
+    });
+    const { webhookRouter } = await import("./jira.js");
+
+    const res = await webhookRouter.request("http://localhost/github", {
+      method: "POST",
+      body,
+      headers: {
+        "x-github-event": "pull_request",
+        "x-hub-signature-256": makeGithubSignature(body),
+      },
+    });
+
+    expect(res.status).toBe(200);
+    expect(githubGraphqlMock).toHaveBeenCalledWith(
+      expect.stringContaining("markPullRequestReadyForReview"),
+      { pullRequestId: prNodeId }
+    );
+    // A successful mutation is authoritative on its own — no extra PR fetch.
+    expect(githubPullsGetMock).not.toHaveBeenCalled();
+    expect(updateRunStatusMock).toHaveBeenCalledWith("HYDI-84", {
+      pr_display_state: "open",
+    });
+    expect(await res.json()).toMatchObject({
+      action: "updated",
+      pr_url: prUrl,
+      pr_display_state: "open",
+      transitioned_to_ready: true,
+      run_count: 1,
+    });
+  });
+
+  it("keeps draft display state when ready transition fails and the PR is still a draft", async () => {
+    const prUrl = "https://github.com/org/repo/pull/421";
+    const prNodeId = "PR_kwDOExample421";
+    const consoleWarnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    getRunsByPrUrlMock.mockResolvedValue([
+      makeDispatchRun({ ticket_key: "HYDI-85", project_key: "HYDI", pr_url: prUrl }),
+    ]);
+    getProjectConfigMock.mockResolvedValue(
+      makeProjectConfig({ project_key: "HYDI", github_pat: "project-gh-token" })
+    );
+    githubGraphqlMock.mockRejectedValue(new Error("failed to mark ready for review"));
+    // Authoritative state confirms the PR genuinely is still a draft.
+    githubPullsGetMock.mockResolvedValue({
+      data: { merged_at: null, state: "open", draft: true },
+    });
+
+    const body = JSON.stringify({
+      action: "opened",
+      pull_request: {
+        html_url: prUrl,
+        node_id: prNodeId,
+        state: "open",
+        draft: true,
+        merged_at: null,
+      },
+    });
+    const { webhookRouter } = await import("./jira.js");
+
+    const res = await webhookRouter.request("http://localhost/github", {
+      method: "POST",
+      body,
+      headers: {
+        "x-github-event": "pull_request",
+        "x-hub-signature-256": makeGithubSignature(body),
+      },
+    });
+
+    expect(res.status).toBe(200);
+    expect(githubPullsGetMock).toHaveBeenCalled();
+    expect(updateRunStatusMock).toHaveBeenCalledWith("HYDI-85", {
+      pr_display_state: "draft",
+    });
+    expect(await res.json()).toMatchObject({
+      action: "updated",
+      pr_url: prUrl,
+      pr_display_state: "draft",
+      transitioned_to_ready: false,
+      run_count: 1,
+    });
+    consoleWarnSpy.mockRestore();
+  });
+
+  it("keeps open display state on redelivery but reports transitioned_to_ready false", async () => {
+    // GitHub delivers webhooks at least once. A redelivered `opened` event still
+    // carries `draft: true`, but the PR was already transitioned, so the mutation
+    // now fails. The persisted state must stay `open`, not regress to `draft` —
+    // yet `transitioned_to_ready` must be false because this pass performed no
+    // transition; it only reconciled the authoritative state.
+    const prUrl = "https://github.com/org/repo/pull/422";
+    const prNodeId = "PR_kwDOExample422";
+    const consoleWarnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    getRunsByPrUrlMock.mockResolvedValue([
+      makeDispatchRun({ ticket_key: "HYDI-86", project_key: "HYDI", pr_url: prUrl }),
+    ]);
+    getProjectConfigMock.mockResolvedValue(
+      makeProjectConfig({ project_key: "HYDI", github_pat: "project-gh-token" })
+    );
+    githubGraphqlMock.mockRejectedValue(new Error("Pull request is not in the draft state"));
+    // Authoritative state shows the PR is already ready for review (not a draft).
+    githubPullsGetMock.mockResolvedValue({
+      data: { merged_at: null, state: "open", draft: false },
+    });
+
+    const body = JSON.stringify({
+      action: "opened",
+      pull_request: {
+        html_url: prUrl,
+        node_id: prNodeId,
+        state: "open",
+        draft: true,
+        merged_at: null,
+      },
+    });
+    const { webhookRouter } = await import("./jira.js");
+
+    const res = await webhookRouter.request("http://localhost/github", {
+      method: "POST",
+      body,
+      headers: {
+        "x-github-event": "pull_request",
+        "x-hub-signature-256": makeGithubSignature(body),
+      },
+    });
+
+    expect(res.status).toBe(200);
+    expect(githubPullsGetMock).toHaveBeenCalled();
+    expect(updateRunStatusMock).toHaveBeenCalledWith("HYDI-86", {
+      pr_display_state: "open",
+    });
+    expect(await res.json()).toMatchObject({
+      action: "updated",
+      pr_url: prUrl,
+      pr_display_state: "open",
+      transitioned_to_ready: false,
+      run_count: 1,
+    });
+    consoleWarnSpy.mockRestore();
   });
 
   it("ignores signed pull_request events for unknown PRs", async () => {
