@@ -217,7 +217,10 @@ const CSS = `
   .copy-branch-btn { border: 1px solid #d1d5db; background: #fff; color: #374151; border-radius: 6px; padding: 3px 5px; line-height: 0; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; }
   .copy-branch-btn:hover { background: #f9fafb; }
   .copy-branch-btn.copied { background: #dcfce7; border-color: #86efac; color: #166534; }
-  .notice { margin-bottom: 12px; padding: 10px 12px; border-radius: 6px; font-size: 0.875rem; font-weight: 500; }
+  .notice { margin-bottom: 12px; padding: 10px 12px; border-radius: 6px; font-size: 0.875rem; font-weight: 500; display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+  .notice-message { flex: 1 1 auto; }
+  .notice-dismiss { border: none; background: transparent; color: inherit; width: 20px; height: 20px; border-radius: 999px; font-size: 16px; line-height: 1; cursor: pointer; padding: 0; display: inline-flex; align-items: center; justify-content: center; }
+  .notice-dismiss:hover { background: rgba(0, 0, 0, 0.08); }
   .notice-success { background: #dcfce7; color: #166534; border: 1px solid #86efac; }
   .notice-error { background: #fee2e2; color: #991b1b; border: 1px solid #fca5a5; }
   .row-actions-cell { text-align: right; white-space: nowrap; position: relative; width: 1%; }
@@ -717,7 +720,7 @@ dashboardRouter.get("/", async (c) => {
       <a href="/config" class="btn btn-secondary">⚙ Configure</a>
     </div>
   </div>
-  ${notice ? `<div class="notice notice-${noticeType}">${escapedNotice}</div>` : ""}
+  ${notice ? `<div class="notice notice-${noticeType}" role="status"><span class="notice-message">${escapedNotice}</span><button class="notice-dismiss" type="button" data-notice-dismiss aria-label="Dismiss notification">×</button></div>` : ""}
   <div id="dashboard-content">
     ${renderDashboardContent(view)}
   </div>
@@ -776,6 +779,12 @@ dashboardRouter.get("/", async (c) => {
     document.addEventListener("click", (event) => {
       const target = event.target instanceof HTMLElement ? event.target : null;
       if (!target) return;
+      const noticeDismissButton = target.closest("[data-notice-dismiss]");
+      if (noticeDismissButton instanceof HTMLButtonElement) {
+        const noticeEl = noticeDismissButton.closest(".notice");
+        if (noticeEl instanceof HTMLElement) noticeEl.remove();
+        return;
+      }
       const button = target.closest("[data-row-menu-button]");
       if (button instanceof HTMLButtonElement) {
         const menu = button.closest("[data-row-menu]");
