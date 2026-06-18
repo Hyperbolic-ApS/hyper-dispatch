@@ -12,6 +12,7 @@ const jiraGetIssueMock = vi.fn();
 const jiraGetTransitionsMock = vi.fn();
 const jiraTransitionIssueMock = vi.fn();
 const githubRequestMock = vi.fn();
+const githubGraphqlMock = vi.fn();
 let githubWebhookSecret: string | undefined = "test-secret";
 
 vi.mock("../db/queries.js", () => ({
@@ -34,6 +35,7 @@ vi.mock("../jira/client.js", () => ({
 vi.mock("@octokit/rest", () => ({
   Octokit: class MockOctokit {
     request = githubRequestMock;
+    graphql = githubGraphqlMock;
   },
 }));
 
@@ -60,6 +62,7 @@ describe("webhookRouter", () => {
     syncTicketInToDoMock.mockReset();
     updateRunStatusMock.mockReset();
     githubRequestMock.mockReset();
+    githubGraphqlMock.mockReset();
     jiraGetIssueMock.mockReset();
     jiraGetTransitionsMock.mockReset();
     jiraTransitionIssueMock.mockReset();
@@ -317,18 +320,22 @@ describe("webhookRouter", () => {
 
   it("transitions newly opened draft PRs to ready-for-review and persists open display state", async () => {
     const prUrl = "https://github.com/org/repo/pull/420";
+    const prNodeId = "PR_kwDOExample420";
     getRunsByPrUrlMock.mockResolvedValue([
       makeDispatchRun({ ticket_key: "HYDI-84", project_key: "HYDI", pr_url: prUrl }),
     ]);
     getProjectConfigMock.mockResolvedValue(
       makeProjectConfig({ project_key: "HYDI", github_pat: "project-gh-token" })
     );
-    githubRequestMock.mockResolvedValue({});
+    githubGraphqlMock.mockResolvedValue({
+      markPullRequestReadyForReview: { pullRequest: { id: prNodeId, isDraft: false } },
+    });
 
     const body = JSON.stringify({
       action: "opened",
       pull_request: {
         html_url: prUrl,
+        node_id: prNodeId,
         state: "open",
         draft: true,
         merged_at: null,
@@ -346,15 +353,12 @@ describe("webhookRouter", () => {
     });
 
     expect(res.status).toBe(200);
-    expect(githubRequestMock).toHaveBeenCalledWith(
-      "PATCH /repos/{owner}/{repo}/pulls/{pull_number}",
-      {
-        owner: "org",
-        repo: "repo",
-        pull_number: 420,
-        draft: false,
-      }
+    expect(githubGraphqlMock).toHaveBeenCalledWith(
+      expect.stringContaining("markPullRequestReadyForReview"),
+      { pullRequestId: prNodeId }
     );
+    // The unsupported REST PATCH draft=false contract must not be used.
+    expect(githubRequestMock).not.toHaveBeenCalled();
     expect(updateRunStatusMock).toHaveBeenCalledWith("HYDI-84", {
       pr_display_state: "open",
     });
@@ -369,6 +373,7 @@ describe("webhookRouter", () => {
 
   it("keeps draft display state when ready transition fails for opened draft PRs", async () => {
     const prUrl = "https://github.com/org/repo/pull/421";
+    const prNodeId = "PR_kwDOExample421";
     const consoleWarnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     getRunsByPrUrlMock.mockResolvedValue([
       makeDispatchRun({ ticket_key: "HYDI-85", project_key: "HYDI", pr_url: prUrl }),
@@ -376,12 +381,13 @@ describe("webhookRouter", () => {
     getProjectConfigMock.mockResolvedValue(
       makeProjectConfig({ project_key: "HYDI", github_pat: "project-gh-token" })
     );
-    githubRequestMock.mockRejectedValue(new Error("failed to patch PR"));
+    githubGraphqlMock.mockRejectedValue(new Error("failed to mark ready for review"));
 
     const body = JSON.stringify({
       action: "opened",
       pull_request: {
         html_url: prUrl,
+        node_id: prNodeId,
         state: "open",
         draft: true,
         merged_at: null,

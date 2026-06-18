@@ -37,7 +37,7 @@ Receives GitHub webhook payloads for pull request state updates.
 - `pull_request` events:
   - Reads `pull_request.html_url`
   - Looks up matching runs via `pr_url`
-  - If `action === "opened"` and `pull_request.draft === true`, attempts to immediately convert the PR to ready-for-review (`draft: false`) via the GitHub API.
+  - If `action === "opened"` and `pull_request.draft === true`, attempts to immediately mark the PR ready-for-review via the GitHub GraphQL `markPullRequestReadyForReview` mutation (keyed by `pull_request.node_id`). The REST "update a pull request" endpoint cannot change a PR's draft state, so GraphQL is required.
   - Derives `pr_display_state` as:
     - `merged_at` present → `merged`
     - `state === "open"` and `draft === true` → `draft`

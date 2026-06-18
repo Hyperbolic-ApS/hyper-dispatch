@@ -15,7 +15,6 @@ import {
 } from "../jira/columns.js";
 import { syncTicketInToDo } from "../orchestration/ticket-sync.js";
 import { transitionMergedPrToDone } from "../orchestration/pr-merge.js";
-import { parseGithubPullRequestUrl } from "../github/pull-requests.js";
 import { env } from "../config/env.js";
 export { priorityNameToNumber } from "../orchestration/ticket-sync.js";
 
@@ -61,25 +60,33 @@ function derivePullRequestDisplayState(payload: {
   return "closed";
 }
 
+// GitHub's REST "Update a pull request" endpoint does not support changing the
+// `draft` field, so a draft PR can only be marked ready for review through the
+// GraphQL `markPullRequestReadyForReview` mutation (the same capability used by
+// `gh pr ready`). It takes the PR's GraphQL node ID, which GitHub includes on
+// the webhook payload as `pull_request.node_id`.
+const MARK_READY_FOR_REVIEW_MUTATION = `
+  mutation MarkPullRequestReadyForReview($pullRequestId: ID!) {
+    markPullRequestReadyForReview(input: { pullRequestId: $pullRequestId }) {
+      pullRequest {
+        id
+        isDraft
+      }
+    }
+  }
+`;
+
 async function transitionDraftPullRequestToReady(
   prUrl: string,
+  pullRequestNodeId: string,
   projectKey: string
 ): Promise<boolean> {
-  const parsed = parseGithubPullRequestUrl(prUrl);
-  if (!parsed) {
-    console.warn(`[webhook] Could not parse GitHub PR URL for ready transition: ${prUrl}`);
-    return false;
-  }
-
   try {
     const projectConfig = await getProjectConfig(projectKey);
     const githubToken = projectConfig?.github_pat ?? env.GITHUB_TOKEN;
     const github = new Octokit({ auth: githubToken });
-    await github.request("PATCH /repos/{owner}/{repo}/pulls/{pull_number}", {
-      owner: parsed.owner,
-      repo: parsed.repo,
-      pull_number: parsed.pullNumber,
-      draft: false,
+    await github.graphql(MARK_READY_FOR_REVIEW_MUTATION, {
+      pullRequestId: pullRequestNodeId,
     });
     return true;
   } catch (err) {
@@ -158,6 +165,7 @@ webhookRouter.post("/github", async (c) => {
     action?: string;
     pull_request?: {
       html_url?: string;
+      node_id?: string;
       merged_at?: string | null;
       merged?: boolean;
       state?: string;
@@ -192,10 +200,18 @@ webhookRouter.post("/github", async (c) => {
   let prDisplayState = derivePullRequestDisplayState(payload);
   let transitionedToReady = false;
   if (payload.action === "opened" && payload.pull_request?.draft === true) {
-    transitionedToReady = await transitionDraftPullRequestToReady(
-      prUrl,
-      runs[0]!.project_key
-    );
+    const pullRequestNodeId = payload.pull_request?.node_id;
+    if (pullRequestNodeId) {
+      transitionedToReady = await transitionDraftPullRequestToReady(
+        prUrl,
+        pullRequestNodeId,
+        runs[0]!.project_key
+      );
+    } else {
+      console.warn(
+        `[webhook] Missing pull_request.node_id; cannot transition draft PR to ready for review: ${prUrl}`
+      );
+    }
     if (transitionedToReady) {
       prDisplayState = "open";
     }
