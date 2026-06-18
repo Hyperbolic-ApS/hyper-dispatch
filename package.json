@@ -2,6 +2,9 @@
   "name": "hyper-dispatch",
   "version": "1.0.0",
   "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
   "main": "dist/index.js",
   "directories": {
     "doc": "docs"

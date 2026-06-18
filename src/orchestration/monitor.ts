@@ -153,12 +153,20 @@ async function transitionMergedPrsToDone(): Promise<void> {
         state: pullRequest.state,
         draft: pullRequest.draft,
       });
+      const isTerminalPr =
+        prDisplayState === "merged" || prDisplayState === "closed";
       // Reconcile PR conflict/display-state metadata for every succeeded run,
       // regardless of Jira status, so historical runs (including those already
-      // in Done) get backfilled.
+      // in Done) get backfilled. When the PR is terminal (merged/closed), also
+      // clear the action-state flags: getRunsWithActivePr no longer returns the
+      // run, so reconcilePrActionStates won't refresh them — without this they'd
+      // retain a stale (possibly true) value indefinitely.
       await updateRunStatus(run.ticket_key, {
         pr_has_conflicts: hasMergeConflicts,
         pr_display_state: prDisplayState,
+        ...(isTerminalPr
+          ? { pr_review_running: false, pr_revision_running: false }
+          : {}),
       });
 
       if (!pullRequest.merged_at) continue;
@@ -239,10 +247,10 @@ export async function reconcilePrActionStates(): Promise<void> {
 
   const runByTicket = new Map(runs.map((run) => [run.ticket_key, run]));
 
-  // Fetch repos concurrently. Each repo isolates its own failure (logged and
-  // skipped) so one repo's GitHub error never blocks the others — Promise.allSettled
-  // gives that per-element isolation without a rejection aborting the batch.
-  const results = await Promise.allSettled(
+  // Fetch repos concurrently. getRepoWorkflowRuns failures are caught per-repo
+  // and per-PR writes are caught individually below, so a single failure never
+  // blocks the others; allSettled guarantees that isolation at the batch level.
+  await Promise.allSettled(
     Array.from(repoGroups.entries()).map(async ([repoKey, group]) => {
       let workflowRuns;
       try {
@@ -275,25 +283,22 @@ export async function reconcilePrActionStates(): Promise<void> {
         ) {
           continue;
         }
-        await updateRunStatus(pr.ticketKey, {
-          pr_review_running: reviewRunning,
-          pr_revision_running: revisionRunning,
-        });
+        try {
+          await updateRunStatus(pr.ticketKey, {
+            pr_review_running: reviewRunning,
+            pr_revision_running: revisionRunning,
+          });
+        } catch (err) {
+          // Isolate per-PR write failures so one bad write doesn't skip the
+          // remaining PRs in this group (they self-heal on the next sweep).
+          console.warn(
+            `[monitor] Failed to persist PR action-state for ${pr.ticketKey}:`,
+            err
+          );
+        }
       }
     })
   );
-
-  // getRepoWorkflowRuns errors are already caught per-repo above; this surfaces
-  // updateRunStatus (DB write) rejections, which allSettled would otherwise
-  // swallow — so a DB issue during the sweep is observable rather than silent.
-  for (const result of results) {
-    if (result.status === "rejected") {
-      console.error(
-        "[monitor] reconcilePrActionStates failed for a repo group:",
-        result.reason
-      );
-    }
-  }
 }
 
 /**

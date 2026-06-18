@@ -772,6 +772,8 @@ describe("checkRuns", () => {
     expect(updateRunStatusMock).toHaveBeenCalledWith("HYDI-14", {
       pr_has_conflicts: false,
       pr_display_state: "merged",
+      pr_review_running: false,
+      pr_revision_running: false,
     });
     // ...but the Jira transition is gated on the Done check.
     expect(jiraTransitionIssueMock).not.toHaveBeenCalled();
@@ -889,6 +891,8 @@ describe("checkRuns", () => {
     expect(updateRunStatusMock).toHaveBeenCalledWith("HYDI-22", {
       pr_has_conflicts: false,
       pr_display_state: "closed",
+      pr_review_running: false,
+      pr_revision_running: false,
     });
     expect(jiraTransitionIssueMock).not.toHaveBeenCalled();
   });
@@ -925,6 +929,8 @@ describe("checkRuns", () => {
     expect(updateRunStatusMock).toHaveBeenCalledWith("HYDI-17", {
       pr_has_conflicts: false,
       pr_display_state: "merged",
+      pr_review_running: false,
+      pr_revision_running: false,
     });
 
     expect(jiraTransitionIssueMock).toHaveBeenCalledWith("HYDI-17", "200");
@@ -1185,13 +1191,13 @@ describe("reconcilePrActionStates", () => {
     });
   });
 
-  it("logs rejected repo groups without blocking the others", async () => {
+  it("continues to the next PR in a repo group when one PR's write fails", async () => {
     getRunsWithActivePrMock.mockResolvedValue([
       makeDispatchRun({
         ticket_key: "HYDI-A",
         project_key: "HYDI",
         status: "succeeded",
-        pr_url: "https://github.com/warp/repo-a/pull/1",
+        pr_url: "https://github.com/warp/hyper-dispatch/pull/1",
         pr_review_running: null,
         pr_revision_running: null,
       }),
@@ -1199,15 +1205,15 @@ describe("reconcilePrActionStates", () => {
         ticket_key: "HYDI-B",
         project_key: "HYDI",
         status: "succeeded",
-        pr_url: "https://github.com/warp/repo-b/pull/2",
+        pr_url: "https://github.com/warp/hyper-dispatch/pull/2",
         pr_review_running: null,
         pr_revision_running: null,
       }),
     ]);
     getProjectConfigMock.mockResolvedValue(makeProjectConfig());
     listWorkflowRunsForRepoMock.mockResolvedValue({ data: { workflow_runs: [] } });
-    // One repo group's DB write fails; the other must still be processed, and
-    // the rejection must be logged (not silently swallowed by allSettled).
+    // First PR's DB write fails; the second PR in the SAME group must still be
+    // attempted, and the failure must be logged (not swallowed).
     updateRunStatusMock.mockImplementation(async (ticketKey: string) => {
       if (ticketKey === "HYDI-A") throw new Error("db down");
       return undefined;
@@ -1216,11 +1222,11 @@ describe("reconcilePrActionStates", () => {
     const { reconcilePrActionStates } = await importMonitor();
     await reconcilePrActionStates();
 
-    expect(errorSpy).toHaveBeenCalledWith(
-      "[monitor] reconcilePrActionStates failed for a repo group:",
+    expect(warnSpy).toHaveBeenCalledWith(
+      "[monitor] Failed to persist PR action-state for HYDI-A:",
       expect.any(Error)
     );
-    // Both groups were attempted despite one failing.
+    // Both PRs in the group were attempted despite the first failing.
     expect(updateRunStatusMock).toHaveBeenCalledTimes(2);
   });
 });
