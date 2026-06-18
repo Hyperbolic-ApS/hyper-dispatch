@@ -197,3 +197,27 @@ export async function searchIssuesInStatus(
 
   return issues;
 }
+
+/**
+ * Add a plain-text comment to a Jira issue using Atlassian Document Format.
+ */
+export async function addCommentToIssue(
+  issueKey: string,
+  comment: string
+): Promise<void> {
+  await jiraFetch<void>(`/rest/api/3/issue/${issueKey}/comment`, {
+    method: "POST",
+    body: JSON.stringify({
+      body: {
+        type: "doc",
+        version: 1,
+        content: [
+          {
+            type: "paragraph",
+            content: [{ type: "text", text: comment }],
+          },
+        ],
+      },
+    }),
+  });
+}
