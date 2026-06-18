@@ -11,6 +11,7 @@ const syncTicketInToDoMock = vi.fn();
 const jiraGetIssueMock = vi.fn();
 const jiraGetTransitionsMock = vi.fn();
 const jiraTransitionIssueMock = vi.fn();
+const handleGithubRevisionWebhookMock = vi.fn();
 let githubWebhookSecret: string | undefined = "test-secret";
 
 vi.mock("../db/queries.js", () => ({
@@ -28,6 +29,9 @@ vi.mock("../jira/client.js", () => ({
   getIssue: jiraGetIssueMock,
   getTransitions: jiraGetTransitionsMock,
   transitionIssue: jiraTransitionIssueMock,
+}));
+vi.mock("../orchestration/revision.js", () => ({
+  handleGithubRevisionWebhook: handleGithubRevisionWebhookMock,
 }));
 
 vi.mock("../config/env.js", () => ({
@@ -54,6 +58,7 @@ describe("webhookRouter", () => {
     jiraGetIssueMock.mockReset();
     jiraGetTransitionsMock.mockReset();
     jiraTransitionIssueMock.mockReset();
+    handleGithubRevisionWebhookMock.mockReset();
   });
   it("returns 400 for invalid JSON", async () => {
     const { webhookRouter } = await import("./jira.js");
@@ -232,6 +237,80 @@ describe("webhookRouter", () => {
 
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ action: "pong" });
+  });
+
+  it("routes signed pull_request_review events to revision orchestration", async () => {
+    handleGithubRevisionWebhookMock.mockResolvedValue({
+      action: "spawned",
+      mode: "auto_review_submitted",
+      ticketKey: "HYDI-44",
+      runId: "run_123",
+      actionItemCount: 1,
+    });
+    const body = JSON.stringify({
+      action: "submitted",
+      pull_request: {
+        number: 44,
+        html_url: "https://github.com/org/repo/pull/44",
+        head: { ref: "agent/HYDI-44-pr-revision-webhook" },
+      },
+      review: { id: 123, state: "COMMENTED", body: "[REV-001] fix" },
+      repository: { owner: { login: "org" }, name: "repo" },
+    });
+    const { webhookRouter } = await import("./jira.js");
+
+    const res = await webhookRouter.request("http://localhost/github", {
+      method: "POST",
+      body,
+      headers: {
+        "x-github-event": "pull_request_review",
+        "x-hub-signature-256": makeGithubSignature(body),
+      },
+    });
+
+    expect(res.status).toBe(200);
+    expect(handleGithubRevisionWebhookMock).toHaveBeenCalledWith({
+      event: "pull_request_review",
+      payload: JSON.parse(body),
+    });
+    expect(await res.json()).toMatchObject({
+      action: "spawned",
+      mode: "auto_review_submitted",
+      ticketKey: "HYDI-44",
+    });
+  });
+
+  it("routes signed issue_comment events to revision orchestration", async () => {
+    handleGithubRevisionWebhookMock.mockResolvedValue({
+      action: "ignored",
+      reason: "issue comment has no /revise command",
+    });
+    const body = JSON.stringify({
+      action: "created",
+      issue: { number: 44, pull_request: { html_url: "https://github.com/org/repo/pull/44" } },
+      comment: { body: "thanks!" },
+      repository: { owner: { login: "org" }, name: "repo" },
+    });
+    const { webhookRouter } = await import("./jira.js");
+
+    const res = await webhookRouter.request("http://localhost/github", {
+      method: "POST",
+      body,
+      headers: {
+        "x-github-event": "issue_comment",
+        "x-hub-signature-256": makeGithubSignature(body),
+      },
+    });
+
+    expect(res.status).toBe(200);
+    expect(handleGithubRevisionWebhookMock).toHaveBeenCalledWith({
+      event: "issue_comment",
+      payload: JSON.parse(body),
+    });
+    expect(await res.json()).toEqual({
+      action: "ignored",
+      reason: "issue comment has no /revise command",
+    });
   });
 
   it.each([

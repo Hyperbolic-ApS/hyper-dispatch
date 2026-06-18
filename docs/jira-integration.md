@@ -62,6 +62,14 @@ When a worker run completes successfully, HyperDispatch stores the PR URL artifa
 When GitHub sends a signed `pull_request` webhook with `action: "closed"` and `pull_request.merged: true`, HyperDispatch immediately transitions the matching Jira issue to `Done` and unblocks dependent runs.
 The monitor still polls GitHub for `succeeded` runs with PR URLs as a backfill path and uses the same idempotent transition helper, so duplicate webhook/monitor observations remain safe. To keep this sweep bounded as succeeded runs accumulate, the monitor skips the GitHub re-fetch for runs already in a terminal PR display state (`merged`/`closed`): their conflict/display metadata no longer changes and the Done transition was already attempted in the cycle that first observed the terminal state.
 
+## PR Review Revision Triggers
+
+Signed GitHub webhook events also drive in-app PR revision runs:
+- `pull_request_review` with `action: "submitted"` triggers automatic revision analysis.
+- Submitted review content is scanned for actionable items (`REV-###` IDs / action-list entries); if none are present, no Oz revision run is spawned.
+- `issue_comment` with `/revise ...` triggers manual revision; HyperDispatch still reads ticket context but forwards only the explicit `/revise` instruction text to the revision run.
+- `pull_request_review_comment` events are ignored for spawning so inline-comment replies/subcomments do not create duplicate revision runs.
+
 ## Board Validation
 
 The validator checks:

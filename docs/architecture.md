@@ -18,7 +18,7 @@ Jira Automation (webhook) → HyperDispatch → Oz Cloud Agents → PRs
 
 | Component | Responsibility |
 |---|---|
-| Webhook Receiver | Ingests Jira transition events and signed GitHub pull-request events, then applies configured automation |
+| Webhook Receiver | Ingests Jira transition events plus signed GitHub `pull_request`, `pull_request_review`, and `issue_comment` events, then applies configured automation (including in-app PR revision triggering) |
 | Dependency Resolver | Checks `issuelinks` for blocking relationships, detects cycles |
 | Scheduler | Enforces concurrency cap, priority ordering, non-overlapping cycles, and atomic dispatch claims; also persists `ticket_status_name` / `ticket_status_category` for each live issue during reconcile so the dashboard can render ticket status without calling Jira |
 | Agent Spawner | Constructs prompt, selects model/skill/environment, calls Oz SDK |

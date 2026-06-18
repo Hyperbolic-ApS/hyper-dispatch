@@ -41,33 +41,22 @@ When reading the per-ticket Jira custom field, HyperDispatch accepts either a di
 
 ## PR Review Feedback Loop
 
-When actionable feedback is available on an agent-created PR, a GitHub Actions workflow can spawn a new Oz agent to address that feedback.
-
-Workflow file: `.github/workflows/agent-revision.yml`
+HyperDispatch handles PR revision triggering directly in application code via the signed `POST /webhook/github` endpoint (not a standalone `agent-revision.yml` workflow).
 
 ### Trigger conditions
 
-- **Automatic loop trigger**: a `workflow_run` event for `Oz PR Review Commenting` completes successfully.
-- **Manual trigger**: an `issue_comment` event is created on the PR containing `/revise`.
-- The PR branch name starts with `agent/` and includes a Jira key (`agent/{ticket-key}` with optional `-{short-descriptor}` suffix).
+- **Automatic revision trigger**: `pull_request_review` with `action=submitted` on tracked PRs.
+- **Manual trigger**: `issue_comment` with `/revise` on tracked PRs.
+- The PR branch must match `agent/{ticket-key}` or `agent/{ticket-key}-{short-descriptor}` so the ticket key can be resolved.
+- `pull_request_review_comment` events are intentionally ignored for spawning; this prevents duplicate runs from inline-comment replies/subcomments.
 
 ### Behavior
 
-1. Extracts the Jira ticket key from the branch name (`agent/{ticket-key}` or `agent/{ticket-key}-{short-descriptor}` → `{ticket-key}`).
-2. For automatic triggers, resolves the PR from the completed review workflow run and collects the latest automated review summary and inline comments.
-3. Applies a severity gate for automatic triggers: only runs revision when detected severity is at or above `REVISION_MIN_SEVERITY` (default `important`).
-4. For manual `/revise` triggers, bypasses the severity gate and includes the manual instruction plus latest automated review feedback (if present).
-5. Spawns an Oz agent via `warpdotdev/oz-agent-action@v1` with PR URL, branch, trigger metadata, and aggregated feedback.
-6. The agent commits its changes directly to the existing PR branch and does **not** open a new PR.
-
-### Setup
-
-To use this workflow in a target repo, copy `.github/workflows/agent-revision.yml` into the repo and configure:
-
-- **Required secret**: `WARP_API_KEY` — Warp API key for spawning agents.
-- **Optional var**: `WARP_AGENT_PROFILE` — Oz agent profile (uses the Oz platform default if unset).
-- **Optional var**: `REVISION_MIN_SEVERITY` — `none|minor|important|critical` (default `important`) for automatic review-triggered revisions.
-- **Optional var**: `REVISION_REVIEW_BOT_LOGIN` — GitHub login treated as the automated reviewer (default `github-actions[bot]`).
+1. Resolves the tracked run by PR URL and project config, then extracts the ticket key from the PR branch naming convention.
+2. For submitted reviews, loads review body + inline comments and detects action items from `REV-###` references / action-list entries.
+3. Spawns a revision run **only when action items are present**; no severity threshold is applied.
+4. For manual `/revise ...` comments, HyperDispatch still reads the ticket but passes only the explicit `/revise` instruction to the revision agent.
+5. Spawns an Oz run against the existing PR branch with the same revision prompt contract used previously in `agent-revision.yml` (read feedback, implement fixes, test, commit, push existing branch, no new PR).
 
 ## Automated PR Review Commenting
 
