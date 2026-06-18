@@ -236,6 +236,14 @@ const CSS = `
   .pagination a:hover { background: #f9fafb; text-decoration: none; }
   .pagination .disabled { padding: 6px 12px; border: 1px solid #e5e7eb; border-radius: 6px; color: #9ca3af; background: #f9fafb; }
   .page-info { font-weight: 500; }
+  .agent-status-cell { display: inline-flex; align-items: center; gap: 6px; }
+  .error-token-wrap { position: relative; display: inline-flex; align-items: center; }
+  .error-token { width: 16px; height: 16px; border: 0; border-radius: 999px; background: #dc2626; color: #fff; font-size: 0.68rem; font-weight: 700; line-height: 1; display: inline-flex; align-items: center; justify-content: center; cursor: pointer; padding: 0; }
+  .error-token:focus-visible { outline: 2px solid #111827; outline-offset: 2px; }
+  .error-tooltip { display: none; position: absolute; top: 50%; left: calc(100% + 8px); transform: translateY(-50%); background: #111827; color: #fff; border-radius: 6px; padding: 6px 8px; font-size: 0.75rem; line-height: 1.3; box-shadow: 0 8px 20px rgba(0,0,0,0.18); width: max-content; max-width: 320px; z-index: 40; white-space: normal; }
+  .error-token-wrap:hover .error-tooltip,
+  .error-token-wrap:focus-within .error-tooltip,
+  .error-token-wrap[data-open="true"] .error-tooltip { display: block; }
 `;
 
 dashboardRouter.post("/:ticketKey/delete", async (c) => {
@@ -588,12 +596,19 @@ function renderDashboardContent(view: DashboardView): string {
       </div>
     </div>`;
 
+    const errorToken = run.error
+      ? `<span class="error-token-wrap" data-error-token>
+          <button class="error-token" type="button" data-error-token-button aria-label="Show error for ${run.ticket_key}" aria-expanded="false">!</button>
+          <span class="error-tooltip" role="tooltip">${escapeHtml(run.error)}</span>
+        </span>`
+      : "";
+
     return `<tr>
       <td><a href="${ticketUrl}" target="_blank">${run.ticket_key}</a></td>
       <td>${run.project_key}</td>
       <td>${run.summary ? run.summary.slice(0, 80) : "-"}</td>
       <td>${ticketStatusBadge(run.ticket_status_name, run.ticket_status_category)}</td>
-      <td>${statusBadge(run.status)}</td>
+      <td><span class="agent-status-cell">${statusBadge(run.status)}${errorToken}</span></td>
       <td>${formatSpawnedAtDate(run.spawned_at)}</td>
       <td>${runtime}</td>
       <td>
@@ -808,6 +823,49 @@ dashboardRouter.get("/", async (c) => {
         if (openMenu.contains(target)) continue;
         openMenu.classList.remove("open");
         const openButton = openMenu.querySelector("[data-row-menu-button]");
+        if (openButton instanceof HTMLButtonElement) {
+          openButton.setAttribute("aria-expanded", "false");
+        }
+      }
+    });
+    document.addEventListener("click", (event) => {
+      const target = event.target instanceof HTMLElement ? event.target : null;
+      if (!target) return;
+      const button = target.closest("[data-error-token-button]");
+      if (button instanceof HTMLButtonElement) {
+        const token = button.closest("[data-error-token]");
+        if (!(token instanceof HTMLElement)) return;
+        const isOpen = token.getAttribute("data-open") === "true";
+        for (const openToken of document.querySelectorAll("[data-error-token][data-open='true']")) {
+          if (!(openToken instanceof HTMLElement)) continue;
+          openToken.setAttribute("data-open", "false");
+          const openButton = openToken.querySelector("[data-error-token-button]");
+          if (openButton instanceof HTMLButtonElement) {
+            openButton.setAttribute("aria-expanded", "false");
+          }
+        }
+        if (!isOpen) {
+          token.setAttribute("data-open", "true");
+          button.setAttribute("aria-expanded", "true");
+        }
+        return;
+      }
+      for (const openToken of document.querySelectorAll("[data-error-token][data-open='true']")) {
+        if (!(openToken instanceof HTMLElement)) continue;
+        if (openToken.contains(target)) continue;
+        openToken.setAttribute("data-open", "false");
+        const openButton = openToken.querySelector("[data-error-token-button]");
+        if (openButton instanceof HTMLButtonElement) {
+          openButton.setAttribute("aria-expanded", "false");
+        }
+      }
+    });
+    document.addEventListener("keydown", (event) => {
+      if (event.key !== "Escape") return;
+      for (const openToken of document.querySelectorAll("[data-error-token][data-open='true']")) {
+        if (!(openToken instanceof HTMLElement)) continue;
+        openToken.setAttribute("data-open", "false");
+        const openButton = openToken.querySelector("[data-error-token-button]");
         if (openButton instanceof HTMLButtonElement) {
           openButton.setAttribute("aria-expanded", "false");
         }
