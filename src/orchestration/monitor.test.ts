@@ -19,6 +19,8 @@ const {
   ozCancelMock,
   ozApiConstructorMock,
   githubPullGetMock,
+  listWorkflowRunsForRepoMock,
+  getRunsWithActivePrMock,
 } = vi.hoisted(() => ({
   getRunsByStatusMock: vi.fn(),
   updateRunStatusMock: vi.fn(),
@@ -32,6 +34,8 @@ const {
   ozCancelMock: vi.fn(),
   ozApiConstructorMock: vi.fn(),
   githubPullGetMock: vi.fn(),
+  listWorkflowRunsForRepoMock: vi.fn(),
+  getRunsWithActivePrMock: vi.fn(),
 }));
 
 vi.mock("../config/env.js", () => ({
@@ -49,6 +53,7 @@ vi.mock("../config/env.js", () => ({
 
 vi.mock("../db/queries.js", () => ({
   getRunsByStatus: getRunsByStatusMock,
+  getRunsWithActivePr: getRunsWithActivePrMock,
   updateRunStatus: updateRunStatusMock,
   getProjectConfig: getProjectConfigMock,
   getRunsBlockedBy: getRunsBlockedByMock,
@@ -75,12 +80,15 @@ vi.mock("oz-agent-sdk", () => ({
   },
 }));
 
-vi.mock("@octokit/rest", () => ({
-  Octokit: class MockOctokit {
-    pulls = {
+vi.mock("../github/octokit.js", () => ({
+  createGithubClient: () => ({
+    pulls: {
       get: githubPullGetMock,
-    };
-  },
+    },
+    actions: {
+      listWorkflowRunsForRepo: listWorkflowRunsForRepoMock,
+    },
+  }),
 }));
 
 async function importMonitor() {
@@ -110,6 +118,10 @@ beforeEach(() => {
   ozCancelMock.mockReset();
   ozApiConstructorMock.mockReset();
   githubPullGetMock.mockReset();
+  listWorkflowRunsForRepoMock.mockReset();
+  listWorkflowRunsForRepoMock.mockResolvedValue({ data: { workflow_runs: [] } });
+  getRunsWithActivePrMock.mockReset();
+  getRunsWithActivePrMock.mockResolvedValue([]);
 });
 
 afterEach(() => {
@@ -1035,5 +1047,85 @@ describe("checkRuns", () => {
       pr_has_conflicts: false,
       pr_display_state: "draft",
     });
+  });
+});
+
+describe("reconcilePrActionStates", () => {
+  it("persists review/revision flags resolved from workflow runs for active PRs", async () => {
+    getRunsWithActivePrMock.mockResolvedValue([
+      makeDispatchRun({
+        ticket_key: "HYDI-90",
+        project_key: "HYDI",
+        status: "succeeded",
+        pr_url: "https://github.com/warp/hyper-dispatch/pull/90",
+        pr_review_running: null,
+        pr_revision_running: null,
+      }),
+    ]);
+    getProjectConfigMock.mockResolvedValue(makeProjectConfig());
+    listWorkflowRunsForRepoMock.mockResolvedValue({
+      data: {
+        workflow_runs: [
+          {
+            name: "Oz PR Review Commenting",
+            status: "in_progress",
+            pull_requests: [{ number: 90 }],
+          },
+        ],
+      },
+    });
+
+    const { reconcilePrActionStates } = await importMonitor();
+    await reconcilePrActionStates();
+
+    expect(updateRunStatusMock).toHaveBeenCalledWith("HYDI-90", {
+      pr_review_running: true,
+      pr_revision_running: false,
+    });
+  });
+
+  it("does not write when the resolved flags are unchanged", async () => {
+    getRunsWithActivePrMock.mockResolvedValue([
+      makeDispatchRun({
+        ticket_key: "HYDI-91",
+        status: "succeeded",
+        pr_url: "https://github.com/warp/hyper-dispatch/pull/91",
+        pr_review_running: false,
+        pr_revision_running: false,
+      }),
+    ]);
+    getProjectConfigMock.mockResolvedValue(makeProjectConfig());
+    listWorkflowRunsForRepoMock.mockResolvedValue({ data: { workflow_runs: [] } });
+
+    const { reconcilePrActionStates } = await importMonitor();
+    await reconcilePrActionStates();
+
+    expect(updateRunStatusMock).not.toHaveBeenCalled();
+  });
+
+  it("fetches workflow runs once per repo when multiple PRs share it", async () => {
+    getRunsWithActivePrMock.mockResolvedValue([
+      makeDispatchRun({
+        ticket_key: "HYDI-1",
+        status: "succeeded",
+        pr_url: "https://github.com/warp/hyper-dispatch/pull/1",
+        pr_review_running: false,
+        pr_revision_running: false,
+      }),
+      makeDispatchRun({
+        ticket_key: "HYDI-2",
+        status: "succeeded",
+        pr_url: "https://github.com/warp/hyper-dispatch/pull/2",
+        pr_review_running: false,
+        pr_revision_running: false,
+      }),
+    ]);
+    getProjectConfigMock.mockResolvedValue(makeProjectConfig());
+    listWorkflowRunsForRepoMock.mockResolvedValue({ data: { workflow_runs: [] } });
+
+    const { reconcilePrActionStates } = await importMonitor();
+    await reconcilePrActionStates();
+
+    expect(listWorkflowRunsForRepoMock).toHaveBeenCalledTimes(1);
   });
 });

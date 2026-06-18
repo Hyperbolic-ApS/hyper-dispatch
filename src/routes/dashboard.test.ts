@@ -11,9 +11,6 @@ const deleteRunMock = vi.fn();
 const annotateRunsWithProdDeploymentStatusMock = vi.fn();
 const parseGithubPullRequestUrlMock = vi.fn();
 const getPullRequestStateMock = vi.fn();
-const listWorkflowRunsForRepoMock = vi.fn();
-const octokitAuthTokens: string[] = [];
-const workflowRunListRequests: Array<Record<string, unknown>> = [];
 
 vi.mock("../db/config-queries.js", () => ({
   getAllDispatchRuns: getAllDispatchRunsMock,
@@ -31,19 +28,6 @@ vi.mock("../github/pull-requests.js", () => ({
   parseGithubPullRequestUrl: parseGithubPullRequestUrlMock,
   getPullRequestState: getPullRequestStateMock,
 }));
-vi.mock("@octokit/rest", () => ({
-  Octokit: class MockOctokit {
-    constructor(config?: { auth?: string }) {
-      octokitAuthTokens.push(config?.auth ?? "");
-    }
-    actions = {
-      listWorkflowRunsForRepo: (params: Record<string, unknown>) => {
-        workflowRunListRequests.push(params);
-        return listWorkflowRunsForRepoMock(params);
-      },
-    };
-  },
-}));
 vi.mock("../coolify/prod-deployment.js", () => ({
   annotateRunsWithProdDeploymentStatus: annotateRunsWithProdDeploymentStatusMock,
 }));
@@ -51,15 +35,12 @@ vi.mock("../coolify/prod-deployment.js", () => ({
 describe("dashboardRouter", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    octokitAuthTokens.length = 0;
-    workflowRunListRequests.length = 0;
     getDispatchRunsPageMock.mockResolvedValue([]);
     countDispatchRunsMock.mockResolvedValue(0);
     getStatusCountsMock.mockResolvedValue([]);
     getDistinctRunProjectKeysMock.mockResolvedValue([]);
     listProjectConfigsMock.mockResolvedValue([]);
     getAllDispatchRunsMock.mockResolvedValue([]);
-    listWorkflowRunsForRepoMock.mockResolvedValue({ data: { workflow_runs: [] } });
     annotateRunsWithProdDeploymentStatusMock.mockImplementation(async (runs: unknown[]) =>
       runs.map((run) => ({ ...(run as object), deployed_to_prod: null }))
     );
@@ -249,7 +230,7 @@ describe("dashboardRouter", () => {
     expect(html).toContain("no queued tasks available");
   });
 
-  // ─── PR status badges (cached workflow-run enrichment) ─────────────────────
+  // ─── PR status badges (from persisted columns) ─────────────────────────────
 
   it("renders PR Status and preserves merge conflict fallback when no action is running", async () => {
     getDispatchRunsPageMock.mockResolvedValue([
@@ -259,13 +240,6 @@ describe("dashboardRouter", () => {
         pr_has_conflicts: true,
       }),
     ]);
-    listWorkflowRunsForRepoMock.mockResolvedValue({
-      data: {
-        workflow_runs: [
-          { name: "Oz PR Review Commenting", status: "completed", pull_requests: [{ number: 42 }] },
-        ],
-      },
-    });
 
     const { dashboardRouter } = await import("./dashboard.js");
     const res = await dashboardRouter.request("http://localhost/");
@@ -276,21 +250,15 @@ describe("dashboardRouter", () => {
     expect(html).toContain("Merge conflicts");
   });
 
-  it("shows review running PR status when the review workflow is in progress", async () => {
+  it("shows review running PR status from the persisted pr_review_running column", async () => {
     getDispatchRunsPageMock.mockResolvedValue([
       makeDispatchRun({
         status: "succeeded",
         pr_url: "https://github.com/warp/hyper-dispatch/pull/43",
         pr_has_conflicts: false,
+        pr_review_running: true,
       }),
     ]);
-    listWorkflowRunsForRepoMock.mockResolvedValue({
-      data: {
-        workflow_runs: [
-          { name: "Oz PR Review Commenting", status: "in_progress", pull_requests: [{ number: 43 }] },
-        ],
-      },
-    });
 
     const { dashboardRouter } = await import("./dashboard.js");
     const res = await dashboardRouter.request("http://localhost/");
@@ -300,21 +268,15 @@ describe("dashboardRouter", () => {
     expect(html).not.toContain("No conflicts");
   });
 
-  it("shows revision running PR status when the revision workflow is in progress", async () => {
+  it("shows revision running PR status from the persisted pr_revision_running column", async () => {
     getDispatchRunsPageMock.mockResolvedValue([
       makeDispatchRun({
         status: "succeeded",
         pr_url: "https://github.com/warp/hyper-dispatch/pull/44",
         pr_has_conflicts: false,
+        pr_revision_running: true,
       }),
     ]);
-    listWorkflowRunsForRepoMock.mockResolvedValue({
-      data: {
-        workflow_runs: [
-          { name: "Agent Revision on Review Feedback", status: "queued", pull_requests: [{ number: 44 }] },
-        ],
-      },
-    });
 
     const { dashboardRouter } = await import("./dashboard.js");
     const res = await dashboardRouter.request("http://localhost/");
@@ -323,129 +285,57 @@ describe("dashboardRouter", () => {
     expect(html).toContain("Revision running");
   });
 
-  it("issues one workflow-run fetch per repo, not per PR", async () => {
-    getDispatchRunsPageMock.mockResolvedValue([
-      makeDispatchRun({ ticket_key: "HYDI-60", status: "succeeded", pr_url: "https://github.com/warp/hyper-dispatch/pull/60" }),
-      makeDispatchRun({ ticket_key: "HYDI-61", status: "succeeded", pr_url: "https://github.com/warp/hyper-dispatch/pull/61" }),
-    ]);
-
-    const { dashboardRouter } = await import("./dashboard.js");
-    await dashboardRouter.request("http://localhost/");
-
-    expect(workflowRunListRequests).toHaveLength(1);
-    expect(workflowRunListRequests[0]).toEqual({
-      owner: "warp",
-      repo: "hyper-dispatch",
-      per_page: 100,
-      page: 1,
-    });
-    // No `event` filter — adding one would silently hide non-PR-triggered runs.
-    expect(workflowRunListRequests[0]).not.toHaveProperty("event");
-  });
-
-  it("detects review running via head_branch when pull_requests is empty", async () => {
+  it("shows review + revision running when both persisted columns are set", async () => {
     getDispatchRunsPageMock.mockResolvedValue([
       makeDispatchRun({
-        ticket_key: "HYDI-76",
         status: "succeeded",
-        pr_url: "https://github.com/warp/hyper-dispatch/pull/76",
+        pr_url: "https://github.com/warp/hyper-dispatch/pull/45",
         pr_has_conflicts: false,
+        pr_review_running: true,
+        pr_revision_running: true,
       }),
     ]);
-    listWorkflowRunsForRepoMock.mockResolvedValue({
-      data: {
-        workflow_runs: [
-          {
-            name: "Oz PR Review Commenting",
-            status: "in_progress",
-            pull_requests: [],
-            head_branch: "agent/HYDI-76",
-          },
-        ],
-      },
-    });
 
     const { dashboardRouter } = await import("./dashboard.js");
     const res = await dashboardRouter.request("http://localhost/");
     const html = await res.text();
 
-    expect(html).toContain("Review running");
+    expect(html).toContain("Review + revision running");
   });
 
-  it("detects revision running via head_branch when pull_requests is empty", async () => {
+  it("ignores stale running flags once the PR is merged", async () => {
     getDispatchRunsPageMock.mockResolvedValue([
       makeDispatchRun({
-        ticket_key: "HYDI-77",
         status: "succeeded",
-        pr_url: "https://github.com/warp/hyper-dispatch/pull/77",
-        pr_has_conflicts: false,
+        pr_url: "https://github.com/warp/hyper-dispatch/pull/47",
+        pr_display_state: "merged",
+        pr_review_running: true,
       }),
     ]);
-    listWorkflowRunsForRepoMock.mockResolvedValue({
-      data: {
-        workflow_runs: [
-          {
-            name: "Agent Revision on Review Feedback",
-            status: "in_progress",
-            pull_requests: [],
-            head_branch: "agent/HYDI-77",
-          },
-        ],
-      },
-    });
 
     const { dashboardRouter } = await import("./dashboard.js");
     const res = await dashboardRouter.request("http://localhost/");
     const html = await res.text();
 
-    expect(html).toContain("Revision running");
+    expect(html).not.toContain("Review running");
   });
 
-  it("separates workflow-run fetches by token when two projects share the same repo", async () => {
+  it("performs no live GitHub workflow lookups on the render path", async () => {
     getDispatchRunsPageMock.mockResolvedValue([
-      makeDispatchRun({ ticket_key: "HYDI-80", project_key: "HYDI", status: "succeeded", pr_url: "https://github.com/warp/hyper-dispatch/pull/80" }),
-      makeDispatchRun({ ticket_key: "TEST-81", project_key: "TEST", status: "succeeded", pr_url: "https://github.com/warp/hyper-dispatch/pull/81" }),
+      makeDispatchRun({
+        status: "succeeded",
+        pr_url: "https://github.com/warp/hyper-dispatch/pull/46",
+        pr_review_running: true,
+      }),
     ]);
-    listProjectConfigsMock.mockResolvedValue([
-      { project_key: "HYDI", github_pat: "token-hydi", active: true },
-      { project_key: "TEST", github_pat: "token-test", active: true },
-    ]);
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
 
     const { dashboardRouter } = await import("./dashboard.js");
     const res = await dashboardRouter.request("http://localhost/");
+    await res.text();
 
-    expect(res.status).toBe(200);
-    expect(octokitAuthTokens).toEqual(expect.arrayContaining(["token-hydi", "token-test"]));
-    expect(workflowRunListRequests).toHaveLength(2);
-  });
-
-  it("follows workflow-run pagination and finds in-flight runs on later pages", async () => {
-    getDispatchRunsPageMock.mockResolvedValue([
-      makeDispatchRun({ ticket_key: "HYDI-90", status: "succeeded", pr_url: "https://github.com/warp/hyper-dispatch/pull/90", pr_has_conflicts: false }),
-    ]);
-    const firstPageRuns = Array.from({ length: 100 }, (_, i) => ({
-      name: "Oz PR Review Commenting",
-      status: "completed",
-      pull_requests: [{ number: i + 1000 }],
-      head_branch: `agent/OTHER-${i}`,
-    }));
-    listWorkflowRunsForRepoMock
-      .mockResolvedValueOnce({ data: { workflow_runs: firstPageRuns } })
-      .mockResolvedValueOnce({
-        data: {
-          workflow_runs: [
-            { name: "Oz PR Review Commenting", status: "in_progress", pull_requests: [], head_branch: "agent/HYDI-90" },
-          ],
-        },
-      });
-
-    const { dashboardRouter } = await import("./dashboard.js");
-    const res = await dashboardRouter.request("http://localhost/");
-    const html = await res.text();
-
-    expect(html).toContain("Review running");
-    expect(workflowRunListRequests[0]).toMatchObject({ page: 1, per_page: 100 });
-    expect(workflowRunListRequests[1]).toMatchObject({ page: 2, per_page: 100 });
+    expect(fetchSpy).not.toHaveBeenCalled();
+    fetchSpy.mockRestore();
   });
 
   // ─── PR link suffixes (from persisted pr_display_state) ────────────────────

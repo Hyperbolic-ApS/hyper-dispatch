@@ -1,5 +1,4 @@
 import { Hono } from "hono";
-import { Octokit } from "@octokit/rest";
 import {
   getAllDispatchRuns,
   getDispatchRunsPage,
@@ -120,17 +119,6 @@ type PrActionState = {
   reviewRunning: boolean;
   revisionRunning: boolean;
 };
-
-const REVIEW_WORKFLOW_NAME = "Oz PR Review Commenting";
-const REVISION_WORKFLOW_NAME = "Agent Revision on Review Feedback";
-const IN_FLIGHT_WORKFLOW_STATUSES = new Set([
-  "queued",
-  "in_progress",
-  "pending",
-  "waiting",
-  "requested",
-  "action_required",
-]);
 
 function prStatusBadge(
   hasConflicts: boolean | null,
@@ -314,57 +302,6 @@ dashboardRouter.post("/:ticketKey/delete", async (c) => {
   );
 });
 
-// ─── GitHub workflow-run cache ───────────────────────────────────────────────
-type WorkflowRunLite = {
-  name?: string | null;
-  status?: string | null;
-  head_branch?: string | null;
-  pull_requests?: Array<{ number?: number }> | null;
-};
-
-// Short-TTL in-process cache of a repo's workflow runs, keyed by repo + token.
-// Without this, every dashboard refresh re-paginated the entire repo workflow
-// history. Shared across requests so concurrent tabs/refreshes reuse one fetch.
-const WORKFLOW_RUNS_CACHE_TTL_MS = 10_000;
-const workflowRunsCache = new Map<
-  string,
-  { expiresAt: number; runs: WorkflowRunLite[] }
->();
-
-async function getRepoWorkflowRuns(
-  client: Octokit,
-  owner: string,
-  repo: string,
-  cacheKey: string
-): Promise<WorkflowRunLite[]> {
-  const cached = workflowRunsCache.get(cacheKey);
-  if (cached && cached.expiresAt > Date.now()) {
-    return cached.runs;
-  }
-  const runs: WorkflowRunLite[] = [];
-  for (let page = 1; ; page += 1) {
-    const { data } = await client.actions.listWorkflowRunsForRepo({
-      owner,
-      repo,
-      per_page: 100,
-      page,
-    });
-    runs.push(...(data.workflow_runs ?? []));
-    if ((data.workflow_runs ?? []).length < 100) break;
-  }
-  const now = Date.now();
-  workflowRunsCache.set(cacheKey, {
-    expiresAt: now + WORKFLOW_RUNS_CACHE_TTL_MS,
-    runs,
-  });
-  // Prune expired entries so the cache stays bounded across token rotations and
-  // project churn over a long-lived server process.
-  for (const [key, entry] of workflowRunsCache) {
-    if (entry.expiresAt <= now) workflowRunsCache.delete(key);
-  }
-  return runs;
-}
-
 interface DashboardQuery {
   hideDone: boolean;
   selectedProject: string;
@@ -398,7 +335,6 @@ interface DashboardView {
   counts: Record<string, number>;
   totalBlocked: number;
   projects: string[];
-  actionStateByPr: Map<string, PrActionState>;
 }
 
 // Loads exactly one page of runs plus the aggregates needed to render the view.
@@ -455,74 +391,17 @@ async function loadDashboardView(query: DashboardQuery): Promise<DashboardView> 
   }
   const totalBlocked = (counts.blocked ?? 0) + (counts.blocked_cycle ?? 0);
 
-  // Resolve PR action-state badges for this page's PRs only, grouped by repo + token
-  // so each configured credential boundary is respected. Workflow runs are cached.
-  const configByProjectKey = new Map(
-    configs.map((config) => [config.project_key, config])
-  );
-  const githubClientByToken = new Map<string, Octokit>();
-  const actionStateByPr = new Map<string, PrActionState>();
-  const repoGroups = new Map<
-    string,
-    { owner: string; repo: string; token: string; prs: { prKey: string; pullNumber: number; branchName: string }[] }
-  >();
-  for (const run of runs) {
-    if (!run.pr_url) continue;
-    const parsedPr = parseGithubPullRequestUrl(run.pr_url);
-    if (!parsedPr) continue;
-    const prKey = `${parsedPr.owner}/${parsedPr.repo}#${parsedPr.pullNumber}`;
-    const config = configByProjectKey.get(run.project_key);
-    const githubToken = config ? resolveProjectTokens(config).githubToken : env.GITHUB_TOKEN;
-    const repoKey = `${parsedPr.owner}/${parsedPr.repo}::${githubToken}`;
-    let group = repoGroups.get(repoKey);
-    if (!group) {
-      group = { owner: parsedPr.owner, repo: parsedPr.repo, token: githubToken, prs: [] };
-      repoGroups.set(repoKey, group);
-    }
-    if (!group.prs.some((p) => p.prKey === prKey)) {
-      group.prs.push({ prKey, pullNumber: parsedPr.pullNumber, branchName: `agent/${run.ticket_key}` });
-    }
-  }
-
-  await Promise.all(
-    Array.from(repoGroups.entries()).map(async ([repoKey, { owner, repo, token, prs }]) => {
-      let githubClient = githubClientByToken.get(token);
-      if (!githubClient) {
-        githubClient = new Octokit({ auth: token });
-        githubClientByToken.set(token, githubClient);
-      }
-      try {
-        const workflowRuns = await getRepoWorkflowRuns(githubClient, owner, repo, repoKey);
-        for (const pr of prs) {
-          const reviewRunning = workflowRuns.some(
-            (wfRun) =>
-              wfRun.name === REVIEW_WORKFLOW_NAME &&
-              IN_FLIGHT_WORKFLOW_STATUSES.has(wfRun.status ?? "") &&
-              ((wfRun.pull_requests ?? []).some((p) => p.number === pr.pullNumber) ||
-                wfRun.head_branch === pr.branchName)
-          );
-          const revisionRunning = workflowRuns.some(
-            (wfRun) =>
-              wfRun.name === REVISION_WORKFLOW_NAME &&
-              IN_FLIGHT_WORKFLOW_STATUSES.has(wfRun.status ?? "") &&
-              ((wfRun.pull_requests ?? []).some((p) => p.number === pr.pullNumber) ||
-                wfRun.head_branch === pr.branchName)
-          );
-          actionStateByPr.set(pr.prKey, { reviewRunning, revisionRunning });
-        }
-      } catch {
-        // Best effort only — dashboard should still render if GitHub is unavailable.
-      }
-    })
-  );
-
-  return { query, runs, total, limit, counts, totalBlocked, projects, actionStateByPr };
+  // PR review/revision action-state is resolved out-of-band by the monitor loop
+  // and persisted to dispatch_runs (pr_review_running / pr_revision_running), so
+  // this render performs zero live GitHub calls regardless of how many PRs are on
+  // the page.
+  return { query, runs, total, limit, counts, totalBlocked, projects };
 }
 
 // Renders the dynamic dashboard section (stats bar + table + pagination). Shared by
 // the full page and the /fragment endpoint so the client poll can swap it in place.
 function renderDashboardContent(view: DashboardView): string {
-  const { runs, counts, totalBlocked, total, limit, actionStateByPr } = view;
+  const { runs, counts, totalBlocked, total, limit } = view;
   const { hideDone, selectedProject, selectedStatus, page, deleteFailedKey } = view.query;
   const escapedSelectedProject = escapeHtml(selectedProject);
 
@@ -569,8 +448,6 @@ function renderDashboardContent(view: DashboardView): string {
               return `<a href="${run.pr_url}" target="_blank">${prLabel}${prSuffix}</a>`;
             })()
           : "-";
-    const parsedPr = run.pr_url ? parseGithubPullRequestUrl(run.pr_url) : null;
-    const prKey = parsedPr ? `${parsedPr.owner}/${parsedPr.repo}#${parsedPr.pullNumber}` : null;
     const showForceDelete = run.ticket_key === deleteFailedKey;
     const rowActions = `<div class="row-menu" data-row-menu>
       <button class="row-menu-btn" type="button" data-row-menu-button aria-label="Open actions for ${run.ticket_key}" aria-expanded="false">⋮</button>
@@ -603,7 +480,18 @@ function renderDashboardContent(view: DashboardView): string {
       <td>${prStatusBadge(
         run.pr_has_conflicts,
         Boolean(run.pr_url),
-        prKey ? actionStateByPr.get(prKey) ?? null : null
+        // Running badges only apply to non-terminal PRs. The monitor stops
+        // refreshing these flags once a PR is merged/closed (it leaves the
+        // active-PR set), so gate on display state to avoid showing a stale
+        // "Review running" on a merged PR.
+        run.pr_url &&
+          run.pr_display_state !== "merged" &&
+          run.pr_display_state !== "closed"
+          ? {
+              reviewRunning: Boolean(run.pr_review_running),
+              revisionRunning: Boolean(run.pr_revision_running),
+            }
+          : null
       )}</td>
       ${showProdDeploymentColumn ? `<td>${prodDeploymentBadge(run.deployed_to_prod)}</td>` : ""}
       <td>${actionLink}${blockedByHtml}</td>

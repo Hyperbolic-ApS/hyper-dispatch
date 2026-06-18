@@ -18,6 +18,8 @@ export interface DispatchRun {
   pr_url: string | null;
   pr_has_conflicts: boolean | null;
   pr_display_state: "open" | "draft" | "merged" | "closed" | null;
+  pr_review_running: boolean | null;
+  pr_revision_running: boolean | null;
   session_link: string | null;
   error: string | null;
   ticket_status_name: string | null;
@@ -74,6 +76,22 @@ export async function getRunsByPrUrl(prUrl: string): Promise<DispatchRun[]> {
     SELECT *
     FROM dispatch_runs
     WHERE pr_url = ${prUrl}
+    ORDER BY created_at DESC
+  `;
+}
+
+/**
+ * Runs that have a PR whose display state is still active (open/draft) or not yet
+ * known. Used by the monitor to resolve review/revision action-state out-of-band
+ * so the dashboard never makes live GitHub calls on its render path. Merged/closed
+ * PRs are excluded because their CI workflows are no longer in-flight.
+ */
+export async function getRunsWithActivePr(): Promise<DispatchRun[]> {
+  return sql<DispatchRun[]>`
+    SELECT *
+    FROM dispatch_runs
+    WHERE pr_url IS NOT NULL
+      AND (pr_display_state IS NULL OR pr_display_state IN ('open', 'draft'))
     ORDER BY created_at DESC
   `;
 }
@@ -184,7 +202,7 @@ export async function getRunsBlockedBy(ticketKey: string): Promise<DispatchRun[]
  */
 export async function updateRunStatus(
   ticketKey: string,
-  updates: Partial<Pick<DispatchRun, "status" | "blocked_by" | "run_id" | "model" | "spawned_at" | "completed_at" | "pr_url" | "pr_has_conflicts" | "pr_display_state" | "session_link" | "error">>
+  updates: Partial<Pick<DispatchRun, "status" | "blocked_by" | "run_id" | "model" | "spawned_at" | "completed_at" | "pr_url" | "pr_has_conflicts" | "pr_display_state" | "pr_review_running" | "pr_revision_running" | "session_link" | "error">>
 ): Promise<DispatchRun | null> {
   const rows = await sql<DispatchRun[]>`
     UPDATE dispatch_runs
@@ -197,6 +215,8 @@ export async function updateRunStatus(
       pr_url       = ${updates.pr_url        != null ? updates.pr_url        : sql`pr_url`},
       pr_has_conflicts = ${updates.pr_has_conflicts !== undefined ? updates.pr_has_conflicts : sql`pr_has_conflicts`},
       pr_display_state = ${updates.pr_display_state !== undefined ? updates.pr_display_state : sql`pr_display_state`},
+      pr_review_running = ${updates.pr_review_running !== undefined ? updates.pr_review_running : sql`pr_review_running`},
+      pr_revision_running = ${updates.pr_revision_running !== undefined ? updates.pr_revision_running : sql`pr_revision_running`},
       session_link = ${updates.session_link  != null ? updates.session_link  : sql`session_link`},
       error        = ${updates.error         != null ? updates.error         : sql`error`},
       blocked_by   = ${updates.blocked_by !== undefined ? updates.blocked_by : sql`blocked_by`},
