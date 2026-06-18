@@ -17,6 +17,7 @@ import {
   getRepoWorkflowRuns,
   computePrActionState,
 } from "../github/workflow-runs.js";
+import { buildAgentBranchName } from "./branch-name.js";
 
 const MONITOR_INTERVAL_MS = 30_000;
 
@@ -241,7 +242,7 @@ export async function reconcilePrActionStates(): Promise<void> {
     group.prs.push({
       ticketKey: run.ticket_key,
       pullNumber: parsed.pullNumber,
-      branchName: `agent/${run.ticket_key}`,
+      branchName: buildAgentBranchName(run.ticket_key, run.summary),
     });
   }
 

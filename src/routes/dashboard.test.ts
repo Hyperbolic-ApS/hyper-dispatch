@@ -73,9 +73,28 @@ describe("dashboardRouter", () => {
 
     expect(res.status).toBe(200);
     expect(html).toContain(">HYDI-1</a>");
+    expect(html).toContain("<code>agent/HYDI-1-default-fixture-summary</code>");
     // Ticket-status badge text comes straight from the persisted column.
     expect(html).toContain(">In Progress</span>");
     expect(html).toContain("Agent Status");
+  });
+
+  it("falls back to ticket-only branch name when summary slug normalizes to empty", async () => {
+    getDispatchRunsPageMock.mockResolvedValue([
+      makeDispatchRun({
+        ticket_key: "HYDI-101",
+        summary: "!!!",
+        status: "running",
+      }),
+    ]);
+
+    const { dashboardRouter } = await import("./dashboard.js");
+    const res = await dashboardRouter.request("http://localhost/");
+    const html = await res.text();
+
+    expect(res.status).toBe(200);
+    expect(html).toContain("<code>agent/HYDI-101</code>");
+    expect(html).not.toContain("<code>agent/HYDI-101-</code>");
   });
 
   it("does not run prod-deployment enrichment while its column is hidden", async () => {

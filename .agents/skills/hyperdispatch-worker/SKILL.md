@@ -20,7 +20,11 @@ If any of these are missing, do your best with what's available. The ticket key 
 
 ```sh
 SUMMARY_SLUG=$(printf '%s' "{summary}" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9]+/-/g; s/^-+|-+$//g; s/-+/-/g' | cut -d- -f1-3)
-BRANCH_NAME="agent/{ticket-key}-${SUMMARY_SLUG}"
+if [ -n "$SUMMARY_SLUG" ]; then
+  BRANCH_NAME="agent/{ticket-key}-${SUMMARY_SLUG}"
+else
+  BRANCH_NAME="agent/{ticket-key}"
+fi
 git checkout -b "$BRANCH_NAME"
 ```
 
@@ -35,6 +39,7 @@ Examples:
 - ❌ `agent/PROJ-123-add-short-descriptive-text-to-branch-name`
 
 This convention is required — the PR review feedback loop depends on extracting `{ticket-key}` from the branch name.
+If the normalized summary slug is empty (for example, punctuation-only summaries), fall back to `agent/{ticket-key}` (no trailing hyphen).
 
 ## 3. Investigate
 
