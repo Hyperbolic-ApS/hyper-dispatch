@@ -1184,4 +1184,43 @@ describe("reconcilePrActionStates", () => {
       pr_revision_running: false,
     });
   });
+
+  it("logs rejected repo groups without blocking the others", async () => {
+    getRunsWithActivePrMock.mockResolvedValue([
+      makeDispatchRun({
+        ticket_key: "HYDI-A",
+        project_key: "HYDI",
+        status: "succeeded",
+        pr_url: "https://github.com/warp/repo-a/pull/1",
+        pr_review_running: null,
+        pr_revision_running: null,
+      }),
+      makeDispatchRun({
+        ticket_key: "HYDI-B",
+        project_key: "HYDI",
+        status: "succeeded",
+        pr_url: "https://github.com/warp/repo-b/pull/2",
+        pr_review_running: null,
+        pr_revision_running: null,
+      }),
+    ]);
+    getProjectConfigMock.mockResolvedValue(makeProjectConfig());
+    listWorkflowRunsForRepoMock.mockResolvedValue({ data: { workflow_runs: [] } });
+    // One repo group's DB write fails; the other must still be processed, and
+    // the rejection must be logged (not silently swallowed by allSettled).
+    updateRunStatusMock.mockImplementation(async (ticketKey: string) => {
+      if (ticketKey === "HYDI-A") throw new Error("db down");
+      return undefined;
+    });
+
+    const { reconcilePrActionStates } = await importMonitor();
+    await reconcilePrActionStates();
+
+    expect(errorSpy).toHaveBeenCalledWith(
+      "[monitor] reconcilePrActionStates failed for a repo group:",
+      expect.any(Error)
+    );
+    // Both groups were attempted despite one failing.
+    expect(updateRunStatusMock).toHaveBeenCalledTimes(2);
+  });
 });

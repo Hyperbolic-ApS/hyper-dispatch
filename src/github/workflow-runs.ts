@@ -19,6 +19,8 @@ const IN_FLIGHT_WORKFLOW_STATUSES = new Set([
   "pending",
   "waiting",
   "requested",
+  // Intentionally included: surface the badge proactively while a run is pending
+  // maintainer approval (e.g. fork PRs), even though it has not started executing.
   "action_required",
 ]);
 

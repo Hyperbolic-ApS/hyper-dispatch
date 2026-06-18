@@ -229,7 +229,7 @@ export async function reconcilePrActionStates(): Promise<void> {
   // Fetch repos concurrently. Each repo isolates its own failure (logged and
   // skipped) so one repo's GitHub error never blocks the others — Promise.allSettled
   // gives that per-element isolation without a rejection aborting the batch.
-  await Promise.allSettled(
+  const results = await Promise.allSettled(
     Array.from(repoGroups.entries()).map(async ([repoKey, group]) => {
       let workflowRuns;
       try {
@@ -269,6 +269,18 @@ export async function reconcilePrActionStates(): Promise<void> {
       }
     })
   );
+
+  // getRepoWorkflowRuns errors are already caught per-repo above; this surfaces
+  // updateRunStatus (DB write) rejections, which allSettled would otherwise
+  // swallow — so a DB issue during the sweep is observable rather than silent.
+  for (const result of results) {
+    if (result.status === "rejected") {
+      console.error(
+        "[monitor] reconcilePrActionStates failed for a repo group:",
+        result.reason
+      );
+    }
+  }
 }
 
 /**
