@@ -720,6 +720,32 @@ describe("dashboardRouter", () => {
     expect(html).not.toContain("<td><b>PRJ</b></td>");
   });
 
+  it("escapes session_link and pr_url href attributes in rendered links", async () => {
+    getDispatchRunsPageMock.mockResolvedValue([
+      makeDispatchRun({
+        ticket_key: "HYDI-97",
+        status: "running",
+        session_link: "https://oz.warp.dev/runs/abc?a=1&b=2",
+      }),
+      makeDispatchRun({
+        ticket_key: "HYDI-98",
+        status: "succeeded",
+        pr_url: "https://github.com/org/repo/pull/98?a=1&b=2",
+      }),
+    ]);
+    parseGithubPullRequestUrlMock.mockReturnValue({ owner: "org", repo: "repo", pullNumber: 98 });
+
+    const { dashboardRouter } = await import("./dashboard.js");
+    const res = await dashboardRouter.request("http://localhost/");
+    const html = await res.text();
+
+    expect(res.status).toBe(200);
+    expect(html).toContain('href="https://oz.warp.dev/runs/abc?a=1&amp;b=2" target="_blank">Open</a>');
+    expect(html).toContain(
+      'href="https://github.com/org/repo/pull/98?a=1&amp;b=2" target="_blank">PR #98</a>'
+    );
+  });
+
   // ─── Polling script (replaces full-page meta refresh) ──────────────────────
 
   it("uses client-side polling of the fragment instead of a full-page meta refresh", async () => {

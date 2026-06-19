@@ -459,12 +459,15 @@ function renderDashboardContent(view: DashboardView): string {
     const escapedTicketKey = escapeHtml(run.ticket_key);
     const escapedProjectKey = escapeHtml(run.project_key);
     const encodedTicketKey = encodeURIComponent(run.ticket_key).replace(/'/g, "%27");
+    const escapedEncodedTicketKey = escapeHtml(encodedTicketKey);
     const ticketUrl = `${env.JIRA_SITE_URL}/browse/${encodedTicketKey}`;
     const escapedTicketUrl = escapeHtml(ticketUrl);
     const branchName = buildAgentBranchName(run.ticket_key, run.summary);
     const runtime = formatDuration(run.spawned_at, run.completed_at);
+    const escapedSessionLink = run.session_link ? escapeHtml(run.session_link) : null;
+    const escapedPrUrl = run.pr_url ? escapeHtml(run.pr_url) : null;
     const ozTaskLink = run.session_link
-      ? `<a href="${run.session_link}" target="_blank">Open</a>`
+      ? `<a href="${escapedSessionLink}" target="_blank">Open</a>`
       : "-";
     const blockedByHtml =
       run.blocked_by && run.blocked_by.length > 0
@@ -472,7 +475,7 @@ function renderDashboardContent(view: DashboardView): string {
         : "";
     const actionLink =
       run.status === "running" && run.session_link
-        ? `<a href="${run.session_link}" target="_blank">Session</a>`
+        ? `<a href="${escapedSessionLink}" target="_blank">Session</a>`
         : run.status === "succeeded" && run.pr_url
           ? (() => {
               const parsedPr = parseGithubPullRequestUrl(run.pr_url ?? "");
@@ -486,14 +489,14 @@ function renderDashboardContent(view: DashboardView): string {
                     : prDisplayState === "closed"
                       ? " (Closed)"
                       : "";
-              return `<a href="${run.pr_url}" target="_blank">${prLabel}${prSuffix}</a>`;
+              return `<a href="${escapedPrUrl}" target="_blank">${prLabel}${prSuffix}</a>`;
             })()
           : "-";
     const showForceDelete = run.ticket_key === deleteFailedKey;
     const rowActions = `<div class="row-menu" data-row-menu>
       <button class="row-menu-btn" type="button" data-row-menu-button aria-label="Open actions for ${escapedTicketKey}" aria-expanded="false">⋮</button>
       <div class="row-menu-list" role="menu">
-        <form method="POST" action="/dashboard/${encodedTicketKey}/delete" style="margin:0;">
+        <form method="POST" action="/dashboard/${escapedEncodedTicketKey}/delete" style="margin:0;">
           ${selectedProject ? `<input type="hidden" name="project" value="${escapedSelectedProject}">` : ""}
           ${hideDone ? '<input type="hidden" name="hideDone" value="1">' : ""}
           ${selectedStatus ? `<input type="hidden" name="status" value="${escapeHtml(selectedStatus)}">` : ""}
