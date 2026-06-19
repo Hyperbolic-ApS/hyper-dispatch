@@ -449,6 +449,23 @@ describe("dashboardRouter", () => {
         pr_review_running: true,
         pr_revision_running: true,
       }),
+      makeDispatchRun({
+        ticket_key: "HYDI-92",
+        status: "succeeded",
+        pr_url: "https://github.com/warp/hyper-dispatch/pull/92",
+        pr_has_conflicts: false,
+      }),
+      makeDispatchRun({
+        ticket_key: "HYDI-93",
+        status: "succeeded",
+        pr_url: "https://github.com/warp/hyper-dispatch/pull/93",
+      }),
+      makeDispatchRun({
+        ticket_key: "HYDI-94",
+        status: "succeeded",
+        pr_url: "https://github.com/warp/hyper-dispatch/pull/94",
+        pr_revision_running: true,
+      }),
     ]);
 
     const { dashboardRouter } = await import("./dashboard.js");
@@ -462,6 +479,18 @@ describe("dashboardRouter", () => {
     );
     expect(html).toMatch(
       /<span style="(?=[^"]*white-space:\s*nowrap)(?=[^"]*background:#ef4444;color:#fff)[^"]*">Merge conflicts<\/span>/i
+    );
+    expect(html).toMatch(
+      /<span style="(?=[^"]*white-space:\s*nowrap)(?=[^"]*background:#22c55e;color:#fff)[^"]*">No conflicts<\/span>/i
+    );
+    expect(html).toMatch(
+      /<span style="(?=[^"]*white-space:\s*nowrap)(?=[^"]*background:#e5e7eb;color:#111)[^"]*">Unknown<\/span>/i
+    );
+    expect(html).toMatch(
+      /<span style="(?=[^"]*white-space:\s*nowrap)(?=[^"]*background:#2563eb;color:#fff)[^"]*">Review running<\/span>/i
+    );
+    expect(html).toMatch(
+      /<span style="(?=[^"]*white-space:\s*nowrap)(?=[^"]*background:#ea580c;color:#fff)[^"]*">Revision running<\/span>/i
     );
     expect(html).toMatch(
       /<span style="(?=[^"]*white-space:\s*nowrap)(?=[^"]*background:#7c3aed;color:#fff)[^"]*">Review \+ revision running<\/span>/i
@@ -629,6 +658,24 @@ describe("dashboardRouter", () => {
     expect(res.status).toBe(200);
     expect(html).toContain("&lt;img src=x onerror=alert(1)&gt;");
     expect(html).not.toContain("<img src=x onerror=alert(1)>");
+  });
+
+  it("escapes blocked-by ticket values sourced from persisted Jira data", async () => {
+    getDispatchRunsPageMock.mockResolvedValue([
+      makeDispatchRun({
+        ticket_key: "HYDI-95",
+        status: "blocked",
+        blocked_by: ["<script>alert(1)</script>"],
+      }),
+    ]);
+
+    const { dashboardRouter } = await import("./dashboard.js");
+    const res = await dashboardRouter.request("http://localhost/");
+    const html = await res.text();
+
+    expect(res.status).toBe(200);
+    expect(html).toContain("Blocked by: &lt;script&gt;alert(1)&lt;/script&gt;");
+    expect(html).not.toContain("Blocked by: <script>alert(1)</script>");
   });
 
   // ─── Polling script (replaces full-page meta refresh) ──────────────────────

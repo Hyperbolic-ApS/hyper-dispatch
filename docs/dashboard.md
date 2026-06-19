@@ -44,6 +44,7 @@ Displays all tracked dispatch runs in a table with:
   - `Force delete` (POST body `force=1`) skips the GitHub PR check entirely and removes the run regardless of PR state, after a browser confirmation prompt. It only deletes the local `dispatch_runs` record; it does not touch the PR or GitHub.
     - It is shown (stacked beneath `Delete`) only for a row whose normal `Delete` was just declined: the failed attempt redirects back with `deleteFailed=<ticket>`, which gates the button. A successful delete or any other navigation clears it.
 - Blocked-by info (for blocked entries)
+  - Blocked-by ticket values are HTML-escaped before rendering, so markup-like content is displayed as text instead of interpreted HTML
 - Header filter toggle to hide/show rows whose Jira ticket status category is `Done`
 - Header project dropdown to filter rows by project key (shows `All Projects` by default)
 - Clickable status stat tags (`Running`, `Queued`, `Blocked`, `Succeeded`, `Failed`, `Stale`) that apply a status filter to the current dashboard view

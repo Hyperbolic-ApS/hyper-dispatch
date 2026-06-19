@@ -464,7 +464,7 @@ function renderDashboardContent(view: DashboardView): string {
       : "-";
     const blockedByHtml =
       run.blocked_by && run.blocked_by.length > 0
-        ? `<div class="blocked-by">Blocked by: ${run.blocked_by.join(", ")}</div>`
+        ? `<div class="blocked-by">Blocked by: ${run.blocked_by.map(escapeHtml).join(", ")}</div>`
         : "";
     const actionLink =
       run.status === "running" && run.session_link
