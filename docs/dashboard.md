@@ -28,6 +28,7 @@ Displays all tracked dispatch runs in a table with:
 - PR status badge (`Review running`, `Revision running`, or `Review + revision running` when those actions are active; otherwise `Merge conflicts`, `No conflicts`, or `Unknown` once a PR exists) — read from the persisted `pr_review_running` / `pr_revision_running` columns, never from a live GitHub call on render
   - PR status tokens are rendered as no-wrap badges, so long labels (for example `Review + revision running`) do not word-wrap
 - Production deployment badge from Coolify (`Deployed`, `Not deployed`, or `Unknown`) is currently hidden from the dashboard table while feature wiring is retained in code for quick re-enablement
+  - Production deployment tokens are rendered as no-wrap badges (matching the other status columns) when the column is enabled
 - Session link (clickable, for live runs — opens Oz session)
 - PR link with PR number (for completed runs, e.g. `PR #123` when parseable)
   - Non-open PRs include a status suffix in the link text: `(Merged)`, `(Draft)`, or `(Closed)` based on persisted `dispatch_runs.pr_display_state`

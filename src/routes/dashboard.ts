@@ -162,12 +162,12 @@ function prStatusBadge(
 
 function prodDeploymentBadge(deployedToProd: boolean | null): string {
   if (deployedToProd === true) {
-    return '<span style="padding:2px 8px;border-radius:4px;font-size:0.75rem;font-weight:600;background:#22c55e;color:#fff">Deployed</span>';
+    return '<span style="padding:2px 8px;border-radius:4px;font-size:0.75rem;font-weight:600;display:inline-flex;align-items:center;white-space:nowrap;background:#22c55e;color:#fff">Deployed</span>';
   }
   if (deployedToProd === false) {
-    return '<span style="padding:2px 8px;border-radius:4px;font-size:0.75rem;font-weight:600;background:#f97316;color:#fff">Not deployed</span>';
+    return '<span style="padding:2px 8px;border-radius:4px;font-size:0.75rem;font-weight:600;display:inline-flex;align-items:center;white-space:nowrap;background:#f97316;color:#fff">Not deployed</span>';
   }
-  return '<span style="padding:2px 8px;border-radius:4px;font-size:0.75rem;font-weight:600;background:#e5e7eb;color:#111">Unknown</span>';
+  return '<span style="padding:2px 8px;border-radius:4px;font-size:0.75rem;font-weight:600;display:inline-flex;align-items:center;white-space:nowrap;background:#e5e7eb;color:#111">Unknown</span>';
 }
 
 const showProdDeploymentColumn = false;
@@ -247,6 +247,7 @@ const CSS = `
   .pagination .disabled { padding: 6px 12px; border: 1px solid #e5e7eb; border-radius: 6px; color: #9ca3af; background: #f9fafb; }
   .page-info { font-weight: 500; }
   .agent-status-cell { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+  .ticket-status-cell { display: inline-flex; align-items: center; white-space: nowrap; }
   .pr-status-cell { display: inline-flex; align-items: center; white-space: nowrap; }
   .error-token-wrap { position: relative; display: inline-flex; align-items: center; }
   .error-token { width: 16px; height: 16px; border: 0; border-radius: 999px; background: #dc2626; color: #fff; font-size: 0.68rem; font-weight: 700; line-height: 1; display: inline-flex; align-items: center; justify-content: center; cursor: pointer; padding: 0; }
@@ -507,7 +508,7 @@ function renderDashboardContent(view: DashboardView): string {
       <td><a href="${ticketUrl}" target="_blank">${run.ticket_key}</a></td>
       <td>${run.project_key}</td>
       <td>${run.summary ? run.summary.slice(0, 80) : "-"}</td>
-      <td>${ticketStatusBadge(run.ticket_status_name, run.ticket_status_category)}</td>
+      <td><span class="ticket-status-cell">${ticketStatusBadge(run.ticket_status_name, run.ticket_status_category)}</span></td>
       <td><span class="agent-status-cell">${statusBadge(run.status)}${errorToken}</span></td>
       <td>${formatSpawnedAtDate(run.spawned_at)}</td>
       <td>${runtime}</td>

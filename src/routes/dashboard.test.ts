@@ -457,13 +457,20 @@ describe("dashboardRouter", () => {
 
     expect(res.status).toBe(200);
     expect(html).toMatch(/\.agent-status-cell\b[^}]*white-space:\s*nowrap/);
+    expect(html).toMatch(/\.ticket-status-cell\b[^}]*white-space:\s*nowrap/);
     expect(html).toMatch(/\.pr-status-cell\b[^}]*white-space:\s*nowrap/);
-    expect(html).toContain("white-space:nowrap;background:#3b82f6;color:#fff");
-    expect(html).toContain("white-space:nowrap;background:#ef4444;color:#fff\">Merge conflicts</span>");
-    expect(html).toContain(
-      "white-space:nowrap;background:#7c3aed;color:#fff\">Review + revision running</span>"
+    expect(html).toMatch(
+      /<span style="[^"]*white-space:\s*nowrap;[^"]*background:#3b82f6;color:#fff[^"]*">running<\/span>/i
     );
-    expect(html).toContain("white-space:nowrap;background:#3b82f6;color:#fff\">In Progress</span>");
+    expect(html).toMatch(
+      /<span style="[^"]*white-space:\s*nowrap;[^"]*background:#ef4444;color:#fff[^"]*">Merge conflicts<\/span>/i
+    );
+    expect(html).toMatch(
+      /<span style="[^"]*white-space:\s*nowrap;[^"]*background:#7c3aed;color:#fff[^"]*">Review \+ revision running<\/span>/i
+    );
+    expect(html).toMatch(
+      /<span style="[^"]*white-space:\s*nowrap;[^"]*background:#3b82f6;color:#fff[^"]*">In Progress<\/span>/i
+    );
   });
 
   it("ignores stale running flags once the PR is merged", async () => {
