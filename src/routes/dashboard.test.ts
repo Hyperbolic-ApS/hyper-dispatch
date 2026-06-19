@@ -590,6 +590,12 @@ describe("dashboardRouter", () => {
   it("escapes ticket status names sourced from persisted Jira data", async () => {
     getDispatchRunsPageMock.mockResolvedValue([
       makeDispatchRun({
+        ticket_key: "HYDI-93",
+        status: "running",
+        ticket_status_name: "<script>alert(1)</script>",
+        ticket_status_category: "in-flight",
+      }),
+      makeDispatchRun({
         ticket_key: "HYDI-92",
         status: "running",
         ticket_status_name: "<b>R&amp;D</b>",
@@ -602,6 +608,8 @@ describe("dashboardRouter", () => {
     const html = await res.text();
 
     expect(res.status).toBe(200);
+    expect(html).toContain("&lt;script&gt;alert(1)&lt;/script&gt;");
+    expect(html).not.toContain("<script>alert(1)</script>");
     expect(html).toContain("&lt;b&gt;R&amp;amp;D&lt;/b&gt;");
     expect(html).not.toContain("<b>R&amp;D</b>");
   });

@@ -118,7 +118,7 @@ function statusBadge(status: string): string {
     stale: "background:#6b7280;color:#fff",
   };
   const style = colors[status] ?? "background:#e5e7eb;color:#000";
-  return `<span style="${BASE_BADGE_STYLE}${style}">${status}</span>`;
+  return `<span style="${BASE_BADGE_STYLE}${style}">${escapeHtml(status)}</span>`;
 }
 function ticketStatusBadge(statusName: string | null, categoryKey: string | null): string {
   if (!statusName) return "-";
