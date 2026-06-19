@@ -4,6 +4,7 @@ import { makeDispatchRun, makeJiraIssue, makeProjectConfig } from "../test/fixtu
 const {
   getProjectConfigMock,
   getRunsByPrUrlMock,
+  createRunMock,
   updateRunStatusMock,
   tryRecordRevisionEventMock,
   deleteRevisionEventMock,
@@ -19,6 +20,7 @@ const {
 } = vi.hoisted(() => ({
   getProjectConfigMock: vi.fn(),
   getRunsByPrUrlMock: vi.fn(),
+  createRunMock: vi.fn(),
   updateRunStatusMock: vi.fn(),
   tryRecordRevisionEventMock: vi.fn(),
   deleteRevisionEventMock: vi.fn(),
@@ -36,6 +38,7 @@ const {
 vi.mock("../db/queries.js", () => ({
   getProjectConfig: getProjectConfigMock,
   getRunsByPrUrl: getRunsByPrUrlMock,
+  createRun: createRunMock,
   updateRunStatus: updateRunStatusMock,
   tryRecordRevisionEvent: tryRecordRevisionEventMock,
   deleteRevisionEvent: deleteRevisionEventMock,
@@ -82,6 +85,7 @@ describe("handleGithubRevisionWebhook", () => {
   beforeEach(() => {
     getProjectConfigMock.mockReset();
     getRunsByPrUrlMock.mockReset();
+    createRunMock.mockReset();
     updateRunStatusMock.mockReset();
     tryRecordRevisionEventMock.mockReset();
     deleteRevisionEventMock.mockReset();
@@ -110,6 +114,7 @@ describe("handleGithubRevisionWebhook", () => {
     jiraGetIssueMock.mockResolvedValue(makeJiraIssue({ key: "HYDI-44" }));
     resolveModelMock.mockReturnValue("auto");
     runMock.mockResolvedValue({ run_id: "run_revision_1" });
+    createRunMock.mockResolvedValue({ id: "revision-record-1" });
     retrieveRunMock.mockResolvedValue({ session_link: "https://warp.dev/run_revision_1" });
     tryRecordRevisionEventMock.mockResolvedValue(true);
     deleteRevisionEventMock.mockResolvedValue(undefined);

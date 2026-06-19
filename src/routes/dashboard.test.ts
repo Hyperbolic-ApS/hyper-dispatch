@@ -6,6 +6,7 @@ const getDispatchRunsPageMock = vi.fn();
 const countDispatchRunsMock = vi.fn();
 const getStatusCountsMock = vi.fn();
 const getDistinctRunProjectKeysMock = vi.fn();
+const getRunHistoryForTicketsMock = vi.fn();
 const listProjectConfigsMock = vi.fn();
 const deleteRunMock = vi.fn();
 const annotateRunsWithProdDeploymentStatusMock = vi.fn();
@@ -18,6 +19,7 @@ vi.mock("../db/config-queries.js", () => ({
   countDispatchRuns: countDispatchRunsMock,
   getStatusCounts: getStatusCountsMock,
   getDistinctRunProjectKeys: getDistinctRunProjectKeysMock,
+  getRunHistoryForTickets: getRunHistoryForTicketsMock,
   listProjectConfigs: listProjectConfigsMock,
   DEFAULT_DASHBOARD_PAGE_SIZE: 50,
 }));
@@ -39,6 +41,7 @@ describe("dashboardRouter", () => {
     countDispatchRunsMock.mockResolvedValue(0);
     getStatusCountsMock.mockResolvedValue([]);
     getDistinctRunProjectKeysMock.mockResolvedValue([]);
+    getRunHistoryForTicketsMock.mockResolvedValue([]);
     listProjectConfigsMock.mockResolvedValue([]);
     getAllDispatchRunsMock.mockResolvedValue([]);
     annotateRunsWithProdDeploymentStatusMock.mockImplementation(async (runs: unknown[]) =>

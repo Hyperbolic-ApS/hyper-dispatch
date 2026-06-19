@@ -1,10 +1,10 @@
 # Worker Agents
 
-Worker agents are Oz cloud agent runs that perform the actual coding work. HyperDispatch spawns them and monitors their lifecycle, but does not control their implementation approach — that is defined by the skill.
+Worker agents are Oz cloud agent runs that perform the actual coding work. HyperDispatch keeps ticket-level state in `dispatch_entries` and appends execution history in `dispatch_runs`, but does not control implementation approach — that is defined by the skill.
 
 ## Spawning
 
-The Agent Spawner creates a run via the `oz-agent-sdk` with:
+The Agent Spawner creates a `dispatch_runs` record (`run_type = implementation`) and then creates an Oz run via the `oz-agent-sdk` with:
 - **name**: Jira ticket key (e.g., `PROJ-123`).
 - **environment_id**: from the project config.
 - **agent_identity_uid**: optional Oz agent identity from the project config (`oz_agent_identity_uid`). When set, it becomes the run's execution principal so all of the project's runs are tracked under one Oz agent. Only valid for team-owned runs (the default for single-team API keys); omitted when unset.
@@ -34,12 +34,13 @@ When reading the per-ticket Jira custom field, HyperDispatch accepts either a di
 
 ## Lifecycle
 
-1. HyperDispatch spawns the agent → status becomes `running`.
-2. The run monitor polls Oz every 30s.
-3. On `SUCCEEDED` → HyperDispatch transitions the Jira ticket to "In Review" and records the PR URL.
-4. While the run remains `succeeded`, HyperDispatch polls the PR; once GitHub reports it as merged, HyperDispatch transitions the Jira ticket to "Done".
-5. On `FAILED` → status becomes `failed`, ticket stays in "In Progress" for manual triage.
-6. On stale (running > `MAX_RUN_DURATION_HOURS`) → cancelled and marked `stale`.
+1. HyperDispatch claims a queued entry, creates a run record, and spawns the agent.
+2. The run monitor polls Oz every 30s for run records where `status = running`.
+3. On `SUCCEEDED` → HyperDispatch updates that run row, transitions the Jira ticket to \"In Review\", and records PR/session metadata.
+4. While the latest run remains `succeeded`, HyperDispatch polls the PR; once GitHub reports it as merged, HyperDispatch transitions the Jira ticket to \"Done\".
+5. On `FAILED` → that run is marked `failed`; the ticket stays in \"In Progress\" for manual triage.
+6. On stale (running > `MAX_RUN_DURATION_HOURS`) → run is cancelled and marked `stale`.
+7. After run updates, HyperDispatch recomputes the ticket entry status from run history.
 
 ## PR Review Feedback Loop
 
@@ -58,7 +59,7 @@ HyperDispatch handles PR revision triggering directly in application code via th
 2. For submitted reviews, loads review body + inline comments and detects action items from `REV-###` references / action-list entries.
 3. Spawns a revision run **only when action items are present**; no severity threshold is applied.
 4. For manual `/revise ...` comments, HyperDispatch still reads the ticket but passes only the explicit `/revise` instruction to the revision agent.
-5. Spawns an Oz run against the existing PR branch with the revision prompt contract (read feedback, implement fixes, test, commit, push existing branch, no new PR).
+5. Creates a new `dispatch_runs` record (`run_type = revision`) and spawns an Oz run against the existing PR branch with the revision prompt contract (read feedback, implement fixes, test, commit, push existing branch, no new PR).
 6. Deduplicates and serializes spawns: each triggering event (GitHub review/comment id) is recorded in `revision_events` so redelivered webhooks do not spawn duplicates, and an atomic running-run claim prevents overlapping revision agents on the same branch (the run monitor releases the claim when the spawned run reaches a terminal state).
 
 ## Automated PR Review Commenting

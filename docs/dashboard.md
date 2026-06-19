@@ -7,12 +7,16 @@ Both pages now share the HyperDispatch brand icon (header logo) and include the 
 
 **Route**: `GET /dashboard`
 
-Displays all tracked dispatch runs in a table with:
+Displays one row per tracked ticket entry (latest run shown by default) in a table with:
 - Ticket key (linked to Jira)
 - Project key
 - Summary
-- Ticket status (Jira workflow status, e.g. To Do / In Progress / Done) read from persisted `dispatch_runs.ticket_status_name` / `ticket_status_category` — the dashboard render performs zero live Jira calls regardless of how many runs are tracked
+- Ticket status (Jira workflow status, e.g. To Do / In Progress / Done) read from persisted `dispatch_entries.ticket_status_name` / `ticket_status_category` — the dashboard render performs zero live Jira calls regardless of how many runs are tracked
 - Agent status badge (color-coded: green=succeeded, blue=running, yellow=queued, orange=blocked, red=failed)
+  - Shows the latest run status for that ticket
+  - Hovering the status opens a run-history popover listing all runs for the ticket (newest first)
+  - Clicking a run status badge pins the popover open; outside-click dismisses it
+  - Each run-history row has a per-run open-in-new-tab icon when `session_link` is present
   - When a run includes persisted `dispatch_runs.error` text, the Agent Status cell shows a red `!` error token next to the status badge
   - Hovering the token (desktop) or tapping/clicking it (touch/mouse) reveals the escaped error text in an inline tooltip; `Esc` or outside-click closes tapped tooltips
 - Spawned-at timestamp in the viewer's local timezone
@@ -22,7 +26,6 @@ Displays all tracked dispatch runs in a table with:
   - Falls back to `dd/MM/YY HH:MM` for older runs
 - Agent runtime (for running/completed entries)
 - Branch (`agent/{ticket-key}-{short-descriptor}`) with an inline clipboard icon button that copies the branch name to clipboard (shows a checkmark on success). The descriptor is derived from the ticket summary slug (first three normalized words), matching worker branch creation behavior. When slug normalization yields empty output, branch falls back to `agent/{ticket-key}`.
-- Oz task link labeled `Open` (opens the run task/session in Oz). The session link is usually not available at spawn time — the Oz session is created once the run bootstraps on a worker — so the monitor loop backfills it for in-flight runs (including `BLOCKED`) on its next poll, making the link available while the run is still `running` (within ~30s of the session existing)
 - PR status badge (`Review running`, `Revision running`, or `Review + revision running` when those actions are active; otherwise `Merge conflicts`, `No conflicts`, or `Unknown` once a PR exists) — read from the persisted `pr_review_running` / `pr_revision_running` columns, never from a live GitHub call on render
 - Production deployment badge from Coolify (`Deployed`, `Not deployed`, or `Unknown`) is currently hidden from the dashboard table while feature wiring is retained in code for quick re-enablement
 - Session link (clickable, for live runs — opens Oz session)
@@ -35,7 +38,7 @@ Displays all tracked dispatch runs in a table with:
   - `Delete` is allowed when no PR exists or the linked PR is already closed
   - When the PR status cannot be verified (for example a GitHub API error or rate limiting), `Delete` is declined with an accurate inline error that points to `Force delete`; the underlying error is logged server-side. It no longer incorrectly claims the PR is still open.
   - Delete success/error notices render with a dismiss (`×`) control so operators can clear them without navigating away
-  - `Force delete` (POST body `force=1`) skips the GitHub PR check entirely and removes the run regardless of PR state, after a browser confirmation prompt. It only deletes the local `dispatch_runs` record; it does not touch the PR or GitHub.
+  - `Force delete` (POST body `force=1`) skips the GitHub PR check entirely and removes the local ticket entry regardless of PR state, after a browser confirmation prompt. Cascading delete removes associated `dispatch_runs` history; no GitHub state is changed.
     - It is shown (stacked beneath `Delete`) only for a row whose normal `Delete` was just declined: the failed attempt redirects back with `deleteFailed=<ticket>`, which gates the button. A successful delete or any other navigation clears it.
 - Blocked-by info (for blocked entries)
 - Header filter toggle to hide/show rows whose Jira ticket status category is `Done`
@@ -47,11 +50,11 @@ Displays all tracked dispatch runs in a table with:
   - Project filtering is applied first, then status-tag filtering
   - When a selected status has no matching rows, the table shows `no {status} tasks available` (for example, `no stale tasks available`)
 
-Summary stats bar at the top: counts of running / queued / blocked / succeeded / failed / stale. Counts are computed from `dispatch_runs` via a single grouped SQL query that respects the active project and `hideDone` filters; the `Blocked` tile sums both `blocked` and `blocked_cycle`.
+Summary stats bar at the top: counts of running / queued / blocked / succeeded / failed / stale. Counts are computed from ticket-level status (`dispatch_entries` joined through config query helpers) via a grouped SQL query that respects active project and `hideDone` filters; the `Blocked` tile sums both `blocked` and `blocked_cycle`.
 
 ### Pagination
 
-Rows are paginated server-side at 50 per page (`DEFAULT_DASHBOARD_PAGE_SIZE`). Filtering (project key, status, `hideDone`) and pagination (`LIMIT`/`OFFSET`) are applied in SQL via `getDispatchRunsPage` + `countDispatchRuns`, so memory and render cost do not grow with `dispatch_runs` size. Page controls (`← Prev` / `Page X of Y (N total)` / `Next →`) appear only when the total exceeds one page and preserve the current filters in their hrefs. The `?page=N` query parameter is omitted on page 1 for cleaner URLs.
+Rows are paginated server-side at 50 per page (`DEFAULT_DASHBOARD_PAGE_SIZE`). Filtering (project key, status, `hideDone`) and pagination (`LIMIT`/`OFFSET`) are applied in SQL via `getDispatchRunsPage` + `countDispatchRuns`; each row is a ticket entry joined to its latest run and enriched with run history from `getRunHistoryForTickets`. This keeps memory/render cost bounded as both entries and runs grow. Page controls (`← Prev` / `Page X of Y (N total)` / `Next →`) appear only when the total exceeds one page and preserve current filters in their hrefs. The `?page=N` query parameter is omitted on page 1 for cleaner URLs.
 
 ### Refresh model
 
@@ -60,8 +63,8 @@ After the initial render, transient query params used for one-time feedback (`no
 
 **Route**: `GET /dashboard/fragment` returns the same stats + table + pagination block as `GET /dashboard` but without the document shell, so the polling script can drop it straight into `#dashboard-content`.
 
-**Data source**: Exclusively the `dispatch_runs` table on the render path — the dashboard render (full page and `/fragment` poll) performs zero live GitHub or Jira calls regardless of how many runs or PRs are shown. Ticket status (name + category) is persisted by the scheduler's reconcile loop; PR review/revision action-state is persisted in `pr_review_running` / `pr_revision_running` by the run monitor. The monitor resolves that action-state from GitHub workflow runs out-of-band, grouped by repo + token (configured project token when present, otherwise the global token), via a bounded fetch (only the newest few pages, since in-flight runs are always the most recent) cached per `owner/repo::token` with a TTL that exceeds both the 15s dashboard poll and the 30s monitor loop — so the previous failure mode of re-paginating a repo's entire workflow history on the render path is gone.
-PR link display-state suffixes are read from `dispatch_runs.pr_display_state`, so dashboard auto-refreshes do not add per-row GitHub PR lookups.
+**Data source**: `dispatch_entries` (ticket row) + latest `dispatch_runs` row for each ticket, plus run-history rows from `dispatch_runs` for the popover. The dashboard render (full page and `/fragment` poll) performs zero live GitHub or Jira calls regardless of how many runs or PRs are shown. Ticket status (name + category) is persisted by the scheduler's reconcile loop; PR review/revision action-state is persisted in run rows (`pr_review_running` / `pr_revision_running`) by the monitor. The monitor resolves that action-state from GitHub workflow runs out-of-band, grouped by repo + token (configured project token when present, otherwise the global token), via a bounded fetch (only the newest few pages, since in-flight runs are always the most recent) cached per `owner/repo::token` with a TTL that exceeds both the 15s dashboard poll and the 30s monitor loop — so the previous failure mode of re-paginating a repo's entire workflow history on the render path is gone.
+PR link display-state suffixes are read from persisted latest-run fields (`dispatch_runs.pr_display_state`), so dashboard auto-refreshes do not add per-row GitHub PR lookups.
 When Coolify env vars are configured and the production-deployment column is enabled, dashboard rows are further enriched by resolving the PR merge commit and checking whether that commit appears in successful production deployments in Coolify. While that column is hidden (the current default), this enrichment is skipped entirely so the auto-refresh does not perform a per-row GitHub PR lookup whose result would not be displayed.
 
 ## Config UI
@@ -73,7 +76,7 @@ The config UI allows managing project configurations:
 - Projects overview (`/config`) shows the **+ New Project** button below the project list table
 - Projects overview (`/config`) omits the `Projects` nav link/button since users are already on that page
 - Projects overview row actions (Edit/Validate) are rendered as button-style controls with filled backgrounds and borders for clearer affordance
-- Project edit page includes a **Delete project** action that removes the project config and its associated `dispatch_runs` history after confirmation
+- Project edit page includes a **Delete project** action that removes the project config, ticket entries, and associated run history after confirmation
 - Select skills from the GitHub repo (dynamic dropdown)
   - Discovery uses the current in-form `GitHub Repo` value immediately (no save required)
   - If entered, the current in-form `GitHub PAT` is used for discovery before save

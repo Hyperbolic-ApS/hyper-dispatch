@@ -256,7 +256,12 @@ webhookRouter.post("/github", async (c) => {
     }
   }
   await Promise.all(
-    runs.map((run) => updateRunStatus(run.ticket_key, { pr_display_state: prDisplayState }))
+    runs.map((run) =>
+      updateRunStatus(run.ticket_key, {
+        ...(run.id ? { run_record_id: run.id } : {}),
+        pr_display_state: prDisplayState,
+      })
+    )
   );
 
   if (payload.action === "closed" && payload.pull_request?.merged === true) {

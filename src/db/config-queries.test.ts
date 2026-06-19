@@ -53,7 +53,7 @@ describe("deleteProjectConfig", () => {
 
     expect(beginMock).toHaveBeenCalledTimes(1);
     expect(recorder.statements).toHaveLength(2);
-    expect(recorder.statements[0]).toContain("DELETE FROM dispatch_runs");
+    expect(recorder.statements[0]).toContain("DELETE FROM dispatch_entries");
     expect(recorder.statements[1]).toContain("DELETE FROM project_configs");
   });
 
@@ -68,10 +68,10 @@ describe("deleteProjectConfig", () => {
       "simulated failure on project_configs delete"
     );
 
-    // The dispatch_runs delete is issued inside the same begin() callback, so a
+    // The dispatch_entries delete is issued inside the same begin() callback, so a
     // real transaction rolls it back when the second statement throws — the
     // run history is never destroyed on a partial failure.
     expect(beginMock).toHaveBeenCalledTimes(1);
-    expect(recorder.statements[0]).toContain("DELETE FROM dispatch_runs");
+    expect(recorder.statements[0]).toContain("DELETE FROM dispatch_entries");
   });
 });

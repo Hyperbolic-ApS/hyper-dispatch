@@ -1,5 +1,9 @@
 import { Hono } from "hono";
-import { getAllDispatchRuns, getRunCountsByStatus } from "../db/config-queries.js";
+import {
+  getAllDispatchRuns,
+  getRunCountsByStatus,
+  getRunHistoryForTickets,
+} from "../db/config-queries.js";
 import { annotateRunsWithProdDeploymentStatus } from "../coolify/prod-deployment.js";
 
 export const apiRouter = new Hono();
@@ -10,6 +14,15 @@ apiRouter.get("/status", async (c) => {
     getRunCountsByStatus(),
   ]);
   const runsWithProdDeployment = await annotateRunsWithProdDeploymentStatus(runs);
+  const runHistoryRows = await getRunHistoryForTickets(
+    runsWithProdDeployment.map((run) => run.ticket_key)
+  );
+  const runHistoryByTicket = new Map<string, typeof runHistoryRows>();
+  for (const run of runHistoryRows) {
+    const existing = runHistoryByTicket.get(run.ticket_key) ?? [];
+    existing.push(run);
+    runHistoryByTicket.set(run.ticket_key, existing);
+  }
 
   const counts: Record<string, number> = {
     running: 0,
@@ -27,5 +40,10 @@ apiRouter.get("/status", async (c) => {
     }
   }
 
-  return c.json({ runs: runsWithProdDeployment, counts });
+  const runsWithHistory = runsWithProdDeployment.map((run) => ({
+    ...run,
+    runs: runHistoryByTicket.get(run.ticket_key) ?? [],
+  }));
+
+  return c.json({ runs: runsWithHistory, counts });
 });

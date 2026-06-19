@@ -3,6 +3,7 @@ import type { McpServerConfig } from "oz-agent-sdk/resources/agent/agent";
 import { resolveProjectTokens } from "../config/env.js";
 import {
   claimRevisionSlot,
+  createRun,
   deleteRevisionEvent,
   getProjectConfig,
   getRunsByPrUrl,
@@ -194,7 +195,7 @@ async function spawnRevisionRun(params: {
   mode: RevisionMode;
   reviewState: string;
   feedback: string;
-}): Promise<{ runId: string; sessionLink: string | null; model: string | null }> {
+}): Promise<{ runRecordId: string; runId: string; sessionLink: string | null; model: string | null }> {
   const { config } = params;
   const { ozApiKey } = resolveProjectTokens(config);
   const issue = await jira.getIssue(params.ticketKey);
@@ -202,6 +203,12 @@ async function spawnRevisionRun(params: {
   const mcpServers = config.mcp_servers as Record<string, McpServerConfig> | null;
   const agentIdentityUid = config.oz_agent_identity_uid?.trim() || undefined;
   const client = getOzClient(ozApiKey);
+  const runRecord = await createRun({
+    ticketKey: params.ticketKey,
+    runType: "revision",
+    status: "running",
+    spawnedAt: new Date(),
+  });
 
   const runResponse = await client.agent.run({
     prompt: buildPrompt({
@@ -232,7 +239,7 @@ async function spawnRevisionRun(params: {
     );
   }
 
-  return { runId: runResponse.run_id, sessionLink, model: model ?? null };
+  return { runRecordId: runRecord.id, runId: runResponse.run_id, sessionLink, model: model ?? null };
 }
 
 async function getPullRequestHeadBranch(
@@ -304,6 +311,7 @@ async function recordAndSpawnRevision(params: {
     await updateRunStatus(ticketKey, {
       status: "running",
       run_id: run.runId,
+      run_record_id: run.runRecordId,
       model: run.model,
       spawned_at: new Date(),
       completed_at: null,

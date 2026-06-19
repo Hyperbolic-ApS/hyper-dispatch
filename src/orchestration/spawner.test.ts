@@ -6,6 +6,7 @@ const {
   ozApiConstructorMock,
   getTransitionsMock,
   transitionIssueMock,
+  createRunMock,
   updateRunStatusMock,
 } = vi.hoisted(() => ({
   runMock: vi.fn(async () => ({ run_id: "run_hydi_32", state: "QUEUED", task_id: "run_hydi_32" })),
@@ -22,6 +23,7 @@ const {
   ozApiConstructorMock: vi.fn(),
   getTransitionsMock: vi.fn(),
   transitionIssueMock: vi.fn(),
+  createRunMock: vi.fn(async () => ({ id: "run-record-1" })),
   updateRunStatusMock: vi.fn(),
 }));
 
@@ -53,6 +55,7 @@ vi.mock("../jira/client.js", () => ({
 }));
 
 vi.mock("../db/queries.js", () => ({
+  createRun: createRunMock,
   updateRunStatus: updateRunStatusMock,
 }));
 
@@ -306,6 +309,8 @@ describe("spawnAgent", () => {
     ozApiConstructorMock.mockClear();
     getTransitionsMock.mockReset();
     transitionIssueMock.mockReset();
+    createRunMock.mockReset();
+    createRunMock.mockResolvedValue({ id: "run-record-1" });
     updateRunStatusMock.mockReset();
   });
 

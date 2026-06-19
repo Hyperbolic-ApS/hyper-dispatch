@@ -163,6 +163,7 @@ async function transitionMergedPrsToDone(): Promise<void> {
       // run, so reconcilePrActionStates won't refresh them — without this they'd
       // retain a stale (possibly true) value indefinitely.
       await updateRunStatus(run.ticket_key, {
+        ...(run.id ? { run_record_id: run.id } : {}),
         pr_has_conflicts: hasMergeConflicts,
         pr_display_state: prDisplayState,
         ...(isTerminalPr
@@ -286,6 +287,7 @@ export async function reconcilePrActionStates(): Promise<void> {
         }
         try {
           await updateRunStatus(pr.ticketKey, {
+            ...(current?.id ? { run_record_id: current.id } : {}),
             pr_review_running: reviewRunning,
             pr_revision_running: revisionRunning,
           });
@@ -348,6 +350,7 @@ export async function checkRuns(): Promise<void> {
           state === "CANCELLED";
         if (!isTerminalState && !run.session_link && ozRun.session_link) {
           await updateRunStatus(run.ticket_key, {
+            ...(run.id ? { run_record_id: run.id } : {}),
             session_link: ozRun.session_link,
           });
         }
@@ -357,6 +360,7 @@ export async function checkRuns(): Promise<void> {
           const sessionLink = ozRun.session_link ?? null;
 
           await updateRunStatus(run.ticket_key, {
+            ...(run.id ? { run_record_id: run.id } : {}),
             status: "succeeded",
             completed_at: now,
             pr_url: prUrl,
@@ -406,6 +410,7 @@ export async function checkRuns(): Promise<void> {
             ozRun.status_message?.message ?? `Run ended with state: ${state}`;
 
           await updateRunStatus(run.ticket_key, {
+            ...(run.id ? { run_record_id: run.id } : {}),
             status: "failed",
             completed_at: now,
             error: errorMsg,
@@ -416,6 +421,7 @@ export async function checkRuns(): Promise<void> {
         } else if (state === "CANCELLED") {
           // Treat external cancellation as stale
           await updateRunStatus(run.ticket_key, {
+            ...(run.id ? { run_record_id: run.id } : {}),
             status: "stale",
             completed_at: now,
             error: "Run was cancelled externally.",
@@ -436,6 +442,7 @@ export async function checkRuns(): Promise<void> {
               }
 
               await updateRunStatus(run.ticket_key, {
+                ...(run.id ? { run_record_id: run.id } : {}),
                 status: "stale",
                 completed_at: now,
                 error: `Run exceeded max duration of ${env.MAX_RUN_DURATION_HOURS}h.`,
