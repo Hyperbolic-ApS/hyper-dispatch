@@ -6,6 +6,7 @@ import type { JiraIssue } from "../jira/types.js";
 import type { McpServerConfig } from "oz-agent-sdk/resources/agent/agent";
 import { resolveJiraColumnMappings } from "../jira/columns.js";
 import { getOzClient } from "./oz-client.js";
+import { buildAgentBranchName } from "./branch-name.js";
 
 // ─── ADF helpers ───────────────────────────────────────────────────────────
 
@@ -40,8 +41,10 @@ export function buildPrompt(ticketKey: string, issue: JiraIssue): string {
   const description = issue.fields.description
     ? adfToText(issue.fields.description)
     : "";
+  const branchName = buildAgentBranchName(ticketKey, summary);
 
   const lines: string[] = [`Implement ${ticketKey}: ${summary}`];
+  lines.push(`Branch name: ${branchName}`);
   if (description) {
     lines.push("", description);
   }

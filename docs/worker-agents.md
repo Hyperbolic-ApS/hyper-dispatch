@@ -12,13 +12,15 @@ The Agent Spawner creates a run via the `oz-agent-sdk` with:
 - **skill**: from the project config (one or more skill specs).
 - **mcp_servers**: optional map from project config (`mcp_servers`) when set.
 - **prompt**: constructed from the Jira ticket (key, summary, description, acceptance criteria).
+  - Prompt now includes an explicit `Branch name: …` line derived from the ticket summary slug (first three normalized words), so downstream consumers can reuse the exact same branch-name derivation.
+  - Empty-slug contract: if the normalized slug is empty, branch name falls back to `agent/{ticket-key}`.
 
 ## Skill Contract
 
 HyperDispatch is not opinionated about what the skill does internally. It expects two things:
 
 1. **A PR is created** — the agent must create a pull request and output the URL via `report_pr`. HyperDispatch extracts the PR URL from run artifacts to update the state store and Jira ticket.
-2. **Branch naming**: `agent/{ticket-key}-{short-descriptor}` (e.g., `agent/PROJ-123-github-webhooks`). The descriptor should be very short (2-3 words, 4 max) so branch names remain manageable. This convention enables the PR review feedback loop to extract the ticket key while still giving quick context.
+2. **Branch naming**: `agent/{ticket-key}-{short-descriptor}` (e.g., `agent/PROJ-123-github-webhooks`). The descriptor should be very short (2-3 words, 4 max) so branch names remain manageable. If the summary slug normalizes to empty, workers must use `agent/{ticket-key}`. This convention enables the PR review feedback loop to extract the ticket key while still giving quick context.
 
 Everything else — planning, implementation strategy, testing, commit style — is the skill's responsibility.
 

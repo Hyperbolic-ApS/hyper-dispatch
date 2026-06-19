@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { makeDispatchRun } from "../test/fixtures.js";
 
 const getAllDispatchRunsMock = vi.fn();
@@ -51,6 +51,10 @@ describe("dashboardRouter", () => {
     });
   });
 
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   // ─── Rendering from persisted DB state ─────────────────────────────────────
 
   it("renders rows from getDispatchRunsPage with ticket status read from persisted columns", async () => {
@@ -69,9 +73,28 @@ describe("dashboardRouter", () => {
 
     expect(res.status).toBe(200);
     expect(html).toContain(">HYDI-1</a>");
+    expect(html).toContain("<code>agent/HYDI-1-default-fixture-summary</code>");
     // Ticket-status badge text comes straight from the persisted column.
     expect(html).toContain(">In Progress</span>");
     expect(html).toContain("Agent Status");
+  });
+
+  it("falls back to ticket-only branch name when summary slug normalizes to empty", async () => {
+    getDispatchRunsPageMock.mockResolvedValue([
+      makeDispatchRun({
+        ticket_key: "HYDI-101",
+        summary: "!!!",
+        status: "running",
+      }),
+    ]);
+
+    const { dashboardRouter } = await import("./dashboard.js");
+    const res = await dashboardRouter.request("http://localhost/");
+    const html = await res.text();
+
+    expect(res.status).toBe(200);
+    expect(html).toContain("<code>agent/HYDI-101</code>");
+    expect(html).not.toContain("<code>agent/HYDI-101-</code>");
   });
 
   it("does not run prod-deployment enrichment while its column is hidden", async () => {
@@ -98,6 +121,69 @@ describe("dashboardRouter", () => {
 
     expect(res.status).toBe(200);
     expect(html).toMatch(/\d{2}\/\d{2}\/\d{2} \d{2}:\d{2}/);
+  });
+
+  it('renders "Now" when spawned_at is within the last minute', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-06-10T12:34:30.000Z"));
+    getDispatchRunsPageMock.mockResolvedValue([
+      makeDispatchRun({ spawned_at: new Date(Date.now() - 30_000) }),
+    ]);
+
+    const { dashboardRouter } = await import("./dashboard.js");
+    const res = await dashboardRouter.request("http://localhost/");
+    const html = await res.text();
+
+    expect(res.status).toBe(200);
+    expect(html).toContain(">Now</td>");
+  });
+
+  it('renders "Today at HH:MM" when spawned_at is earlier today', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-06-10T12:34:30.000Z"));
+    const now = new Date();
+    const spawnedToday = new Date(
+      now.getFullYear(),
+      now.getMonth(),
+      now.getDate(),
+      8,
+      5,
+      0,
+      0
+    );
+    getDispatchRunsPageMock.mockResolvedValue([makeDispatchRun({ spawned_at: spawnedToday })]);
+
+    const { dashboardRouter } = await import("./dashboard.js");
+    const res = await dashboardRouter.request("http://localhost/");
+    const html = await res.text();
+
+    expect(res.status).toBe(200);
+    expect(html).toMatch(/Today at \d{2}:\d{2}/);
+  });
+
+  it('renders "Yesterday at HH:MM" when spawned_at is on the previous day', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-06-10T12:34:30.000Z"));
+    const now = new Date();
+    const spawnedYesterday = new Date(
+      now.getFullYear(),
+      now.getMonth(),
+      now.getDate() - 1,
+      23,
+      45,
+      0,
+      0
+    );
+    getDispatchRunsPageMock.mockResolvedValue([
+      makeDispatchRun({ spawned_at: spawnedYesterday }),
+    ]);
+
+    const { dashboardRouter } = await import("./dashboard.js");
+    const res = await dashboardRouter.request("http://localhost/");
+    const html = await res.text();
+
+    expect(res.status).toBe(200);
+    expect(html).toMatch(/Yesterday at \d{2}:\d{2}/);
   });
 
   it("renders an error token in Agent Status when a run has error text", async () => {

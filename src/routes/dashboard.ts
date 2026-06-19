@@ -21,12 +21,18 @@ import {
   getPullRequestState,
   parseGithubPullRequestUrl,
 } from "../github/pull-requests.js";
+import { buildAgentBranchName } from "../orchestration/branch-name.js";
 
 export const dashboardRouter = new Hono();
 const spawnedAtDateTimeFormatter = new Intl.DateTimeFormat("en-GB", {
   year: "2-digit",
   month: "2-digit",
   day: "2-digit",
+  hour: "2-digit",
+  minute: "2-digit",
+  hour12: false,
+});
+const spawnedAtTimeFormatter = new Intl.DateTimeFormat("en-GB", {
   hour: "2-digit",
   minute: "2-digit",
   hour12: false,
@@ -46,6 +52,22 @@ function formatDuration(start: Date | null, end: Date | null): string {
 
 function formatSpawnedAtDate(d: Date | null): string {
   if (!d) return "-";
+  const now = new Date();
+  const diffMs = now.getTime() - d.getTime();
+  if (diffMs >= 0 && diffMs < 60_000) {
+    return "Now";
+  }
+  const nowMidnight = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const spawnedAtMidnight = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+  const dayDiff = Math.round(
+    (nowMidnight.getTime() - spawnedAtMidnight.getTime()) / 86_400_000
+  );
+  if (dayDiff === 0) {
+    return `Today at ${spawnedAtTimeFormatter.format(d)}`;
+  }
+  if (dayDiff === 1) {
+    return `Yesterday at ${spawnedAtTimeFormatter.format(d)}`;
+  }
   const parts = spawnedAtDateTimeFormatter.formatToParts(d);
   const values = new Map(parts.map((part) => [part.type, part.value]));
   return `${values.get("day")}/${values.get("month")}/${values.get("year")} ${values.get("hour")}:${values.get("minute")}`;
@@ -431,7 +453,7 @@ function renderDashboardContent(view: DashboardView): string {
 
   const rows = runs.map((run) => {
     const ticketUrl = `${env.JIRA_SITE_URL}/browse/${run.ticket_key}`;
-    const branchName = `agent/${run.ticket_key}`;
+    const branchName = buildAgentBranchName(run.ticket_key, run.summary);
     const runtime = formatDuration(run.spawned_at, run.completed_at);
     const ozTaskLink = run.session_link
       ? `<a href="${run.session_link}" target="_blank">Open</a>`

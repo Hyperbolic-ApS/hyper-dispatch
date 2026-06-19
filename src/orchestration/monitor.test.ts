@@ -1090,6 +1090,76 @@ describe("reconcilePrActionStates", () => {
     });
   });
 
+  it("matches workflow runs by slugged head_branch using shared branch derivation", async () => {
+    getRunsWithActivePrMock.mockResolvedValue([
+      makeDispatchRun({
+        ticket_key: "HYDI-88",
+        summary: "Use correct git branch name BRANCH column",
+        project_key: "HYDI",
+        status: "succeeded",
+        pr_url: "https://github.com/warp/hyper-dispatch/pull/88",
+        pr_review_running: null,
+        pr_revision_running: null,
+      }),
+    ]);
+    getProjectConfigMock.mockResolvedValue(makeProjectConfig());
+    listWorkflowRunsForRepoMock.mockResolvedValue({
+      data: {
+        workflow_runs: [
+          {
+            name: "Oz PR Review Commenting",
+            status: "in_progress",
+            pull_requests: [],
+            head_branch: "agent/HYDI-88-use-correct-git",
+          },
+        ],
+      },
+    });
+
+    const { reconcilePrActionStates } = await importMonitor();
+    await reconcilePrActionStates();
+
+    expect(updateRunStatusMock).toHaveBeenCalledWith("HYDI-88", {
+      pr_review_running: true,
+      pr_revision_running: false,
+    });
+  });
+
+  it("keeps ticket-only fallback matching when summary slug normalizes to empty", async () => {
+    getRunsWithActivePrMock.mockResolvedValue([
+      makeDispatchRun({
+        ticket_key: "HYDI-89",
+        summary: "!!!",
+        project_key: "HYDI",
+        status: "succeeded",
+        pr_url: "https://github.com/warp/hyper-dispatch/pull/89",
+        pr_review_running: null,
+        pr_revision_running: null,
+      }),
+    ]);
+    getProjectConfigMock.mockResolvedValue(makeProjectConfig());
+    listWorkflowRunsForRepoMock.mockResolvedValue({
+      data: {
+        workflow_runs: [
+          {
+            name: "Agent Revision on Review Feedback",
+            status: "in_progress",
+            pull_requests: [],
+            head_branch: "agent/HYDI-89",
+          },
+        ],
+      },
+    });
+
+    const { reconcilePrActionStates } = await importMonitor();
+    await reconcilePrActionStates();
+
+    expect(updateRunStatusMock).toHaveBeenCalledWith("HYDI-89", {
+      pr_review_running: false,
+      pr_revision_running: true,
+    });
+  });
+
   it("does not write when the resolved flags are unchanged", async () => {
     getRunsWithActivePrMock.mockResolvedValue([
       makeDispatchRun({

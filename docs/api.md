@@ -37,11 +37,14 @@ Receives signed GitHub webhook payloads for PR state updates and revision trigge
 - `pull_request` events:
   - Reads `pull_request.html_url`
   - Looks up matching runs via `pr_url`
+  - If `action === "opened"` and `pull_request.draft === true`, attempts to immediately mark the PR ready-for-review via the GitHub GraphQL `markPullRequestReadyForReview` mutation (keyed by `pull_request.node_id`). The REST "update a pull request" endpoint cannot change a PR's draft state, so GraphQL is required.
+  - The transition is idempotent for at-least-once webhook redelivery: if the mutation fails (for example, because the PR is already ready), the authoritative PR state is re-read so an already-open PR is persisted as `open` rather than regressing to `draft`.
   - Derives `pr_display_state` as:
     - `merged_at` present → `merged`
     - `state === "open"` and `draft === true` → `draft`
     - `state === "open"` → `open`
     - otherwise → `closed`
+  - When the draft→ready transition succeeds, persists `pr_display_state: "open"` immediately for matching runs.
   - Persists `pr_display_state` for all matching runs.
   - If no runs are found, returns `200` ignored.
 - `pull_request_review` events:
@@ -63,7 +66,12 @@ Receives signed GitHub webhook payloads for PR state updates and revision trigge
   - Every monitor cycle (30s), succeeded runs with a persisted `pr_url` refresh GitHub PR metadata.
   - The monitor persists both `pr_has_conflicts` and `pr_display_state`, which backfills historical succeeded runs and reconciles missed webhook deliveries/drift.
 
-**Response:** `200 OK` for accepted/ignored GitHub events.
+**Response:** `200 OK` for accepted/ignored GitHub events. For accepted tracked PR events, includes:
+- `action`
+- `pr_url`
+- `pr_display_state`
+- `transitioned_to_ready` (`true` only when this webhook request performed the draft→ready transition via the GraphQL mutation; a redelivery that finds the PR already ready persists `pr_display_state: "open"` but reports `false`)
+- `run_count`
 
 ## Status API
 
