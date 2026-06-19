@@ -128,7 +128,7 @@ function ticketStatusBadge(statusName: string | null, categoryKey: string | null
     "new": "background:#eab308;color:#000",
   };
   const style = colors[categoryKey ?? ""] ?? "background:#e5e7eb;color:#000";
-  return `<span style="${BASE_BADGE_STYLE}${style}">${statusName}</span>`;
+  return `<span style="${BASE_BADGE_STYLE}${style}">${escapeHtml(statusName)}</span>`;
 }
 function prConflictBadge(hasConflicts: boolean | null, hasPr: boolean): string {
   if (!hasPr) return "-";

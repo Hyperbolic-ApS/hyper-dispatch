@@ -458,16 +458,16 @@ describe("dashboardRouter", () => {
     expect(res.status).toBe(200);
     expect(html).toMatch(/\.agent-status-cell\b[^}]*white-space:\s*nowrap/);
     expect(html).toMatch(
-      /<span style="[^"]*white-space:\s*nowrap;[^"]*background:#3b82f6;color:#fff[^"]*">running<\/span>/i
+      /<span style="(?=[^"]*white-space:\s*nowrap)(?=[^"]*background:#3b82f6;color:#fff)[^"]*">running<\/span>/i
     );
     expect(html).toMatch(
-      /<span style="[^"]*white-space:\s*nowrap;[^"]*background:#ef4444;color:#fff[^"]*">Merge conflicts<\/span>/i
+      /<span style="(?=[^"]*white-space:\s*nowrap)(?=[^"]*background:#ef4444;color:#fff)[^"]*">Merge conflicts<\/span>/i
     );
     expect(html).toMatch(
-      /<span style="[^"]*white-space:\s*nowrap;[^"]*background:#7c3aed;color:#fff[^"]*">Review \+ revision running<\/span>/i
+      /<span style="(?=[^"]*white-space:\s*nowrap)(?=[^"]*background:#7c3aed;color:#fff)[^"]*">Review \+ revision running<\/span>/i
     );
     expect(html).toMatch(
-      /<span style="[^"]*white-space:\s*nowrap;[^"]*background:#3b82f6;color:#fff[^"]*">In Progress<\/span>/i
+      /<span style="(?=[^"]*white-space:\s*nowrap)(?=[^"]*background:#3b82f6;color:#fff)[^"]*">In Progress<\/span>/i
     );
   });
 
@@ -585,6 +585,25 @@ describe("dashboardRouter", () => {
     expect(html).not.toContain("<img src=x onerror=alert(1)>");
     expect(html).toContain("data-notice-dismiss");
     expect(html).toContain('aria-label="Dismiss notification"');
+  });
+
+  it("escapes ticket status names sourced from persisted Jira data", async () => {
+    getDispatchRunsPageMock.mockResolvedValue([
+      makeDispatchRun({
+        ticket_key: "HYDI-92",
+        status: "running",
+        ticket_status_name: "<b>R&amp;D</b>",
+        ticket_status_category: "in-flight",
+      }),
+    ]);
+
+    const { dashboardRouter } = await import("./dashboard.js");
+    const res = await dashboardRouter.request("http://localhost/");
+    const html = await res.text();
+
+    expect(res.status).toBe(200);
+    expect(html).toContain("&lt;b&gt;R&amp;amp;D&lt;/b&gt;");
+    expect(html).not.toContain("<b>R&amp;D</b>");
   });
 
   // ─── Polling script (replaces full-page meta refresh) ──────────────────────
