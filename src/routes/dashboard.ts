@@ -81,6 +81,9 @@ function escapeHtml(value: string): string {
     .replace(/"/g, "&quot;")
     .replace(/'/g, "&#39;");
 }
+function isSafeUrl(url: string): boolean {
+  return /^https?:\/\//i.test(url) || url.startsWith("/");
+}
 
 const dashboardStatusFilterOptions = [
   { key: "running", label: "Running", style: "background:#3b82f6;color:#fff", statuses: ["running"] },
@@ -119,6 +122,8 @@ function statusBadge(status: string): string {
     stale: "background:#6b7280;color:#fff",
   };
   const style = colors[status] ?? "background:#e5e7eb;color:#000";
+  // status is a DB-controlled enum today; escapeHtml is a forward-safety guard
+  // for potential future custom status strings.
   return `<span style="${BASE_BADGE_STYLE}${style}">${escapeHtml(status)}</span>`;
 }
 function ticketStatusBadge(statusName: string | null, categoryKey: string | null): string {
@@ -459,14 +464,16 @@ function renderDashboardContent(view: DashboardView): string {
     const escapedTicketKey = escapeHtml(run.ticket_key);
     const escapedProjectKey = escapeHtml(run.project_key);
     const encodedTicketKey = encodeURIComponent(run.ticket_key).replace(/'/g, "%27");
-    const escapedEncodedTicketKey = escapeHtml(encodedTicketKey);
     const ticketUrl = `${env.JIRA_SITE_URL}/browse/${encodedTicketKey}`;
     const escapedTicketUrl = escapeHtml(ticketUrl);
     const branchName = buildAgentBranchName(run.ticket_key, run.summary);
     const runtime = formatDuration(run.spawned_at, run.completed_at);
-    const escapedSessionLink = run.session_link ? escapeHtml(run.session_link) : null;
-    const escapedPrUrl = run.pr_url ? escapeHtml(run.pr_url) : null;
-    const ozTaskLink = run.session_link
+    const safeSessionLink =
+      run.session_link && isSafeUrl(run.session_link) ? run.session_link : null;
+    const safePrUrl = run.pr_url && isSafeUrl(run.pr_url) ? run.pr_url : null;
+    const escapedSessionLink = safeSessionLink ? escapeHtml(safeSessionLink) : null;
+    const escapedPrUrl = safePrUrl ? escapeHtml(safePrUrl) : null;
+    const ozTaskLink = safeSessionLink
       ? `<a href="${escapedSessionLink}" target="_blank">Open</a>`
       : "-";
     const blockedByHtml =
@@ -474,11 +481,11 @@ function renderDashboardContent(view: DashboardView): string {
         ? `<div class="blocked-by">Blocked by: ${run.blocked_by.map(escapeHtml).join(", ")}</div>`
         : "";
     const actionLink =
-      run.status === "running" && run.session_link
+      run.status === "running" && safeSessionLink
         ? `<a href="${escapedSessionLink}" target="_blank">Session</a>`
-        : run.status === "succeeded" && run.pr_url
+        : run.status === "succeeded" && safePrUrl
           ? (() => {
-              const parsedPr = parseGithubPullRequestUrl(run.pr_url ?? "");
+              const parsedPr = parseGithubPullRequestUrl(safePrUrl ?? "");
               const prLabel = parsedPr ? `PR #${parsedPr.pullNumber}` : "PR";
               const prDisplayState = run.pr_display_state;
               const prSuffix =
@@ -496,7 +503,7 @@ function renderDashboardContent(view: DashboardView): string {
     const rowActions = `<div class="row-menu" data-row-menu>
       <button class="row-menu-btn" type="button" data-row-menu-button aria-label="Open actions for ${escapedTicketKey}" aria-expanded="false">⋮</button>
       <div class="row-menu-list" role="menu">
-        <form method="POST" action="/dashboard/${escapedEncodedTicketKey}/delete" style="margin:0;">
+        <form method="POST" action="/dashboard/${encodedTicketKey}/delete" style="margin:0;">
           ${selectedProject ? `<input type="hidden" name="project" value="${escapedSelectedProject}">` : ""}
           ${hideDone ? '<input type="hidden" name="hideDone" value="1">' : ""}
           ${selectedStatus ? `<input type="hidden" name="status" value="${escapeHtml(selectedStatus)}">` : ""}
@@ -765,6 +772,7 @@ dashboardRouter.get("/", async (c) => {
     document.addEventListener("submit", (event) => {
       const form = event.target;
       if (!(form instanceof HTMLFormElement)) return;
+      if (!form.closest("[data-row-menu]")) return;
       const submitter = event.submitter;
       if (!(submitter instanceof HTMLButtonElement)) return;
       const message = submitter.dataset.confirmMessage;

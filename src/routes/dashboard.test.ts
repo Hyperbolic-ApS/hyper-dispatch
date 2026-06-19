@@ -750,6 +750,32 @@ describe("dashboardRouter", () => {
     );
   });
 
+  it("omits links when session_link or pr_url use unsafe protocols", async () => {
+    getDispatchRunsPageMock.mockResolvedValue([
+      makeDispatchRun({
+        ticket_key: "HYDI-99",
+        status: "running",
+        session_link: "javascript:alert(1)",
+      }),
+      makeDispatchRun({
+        ticket_key: "HYDI-100",
+        status: "succeeded",
+        pr_url: "data:text/html,boom",
+      }),
+    ]);
+
+    const { dashboardRouter } = await import("./dashboard.js");
+    const res = await dashboardRouter.request("http://localhost/");
+    const html = await res.text();
+
+    expect(res.status).toBe(200);
+    expect(html).not.toContain('href="javascript:alert(1)"');
+    expect(html).not.toContain('href="data:text/html,boom"');
+    expect(html).not.toContain(">Open</a>");
+    expect(html).not.toContain(">Session</a>");
+    expect(html).not.toContain(">PR</a>");
+  });
+
   // ─── Polling script (replaces full-page meta refresh) ──────────────────────
 
   it("uses client-side polling of the fragment instead of a full-page meta refresh", async () => {
@@ -770,6 +796,7 @@ describe("dashboardRouter", () => {
     expect(html).toContain("clearTransientDashboardQueryParams");
     expect(html).toContain('for (const key of ["notice", "noticeType", "deleteFailed"])');
     expect(html).toContain("window.history.replaceState(null, \"\", nextUrl)");
+    expect(html).toContain('if (!form.closest("[data-row-menu]")) return;');
     expect(html).toContain('document.addEventListener("keydown", (event) => {');
     expect(html).toContain('event.key !== "Escape"');
     expect(html).toContain("data-error-token-button");
