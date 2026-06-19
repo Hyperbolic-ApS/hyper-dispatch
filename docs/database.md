@@ -1,6 +1,6 @@
 # Database
 
-HyperDispatch uses PostgreSQL for persistent state. Two tables serve both orchestration logic and the dashboard.
+HyperDispatch uses PostgreSQL for persistent state. Three tables serve both orchestration logic and the dashboard.
 
 ## Tables
 
@@ -58,11 +58,24 @@ Tracks ticket → agent run state. Managed by the orchestration loop.
 | `created_at` | `TIMESTAMPTZ` | Row creation time |
 | `updated_at` | `TIMESTAMPTZ` | Last update time |
 
+### `revision_events`
+
+Idempotency ledger for PR revision webhook events. One row per processed delivery so redelivered GitHub webhooks do not spawn duplicate revision runs.
+
+| Column | Type | Description |
+|---|---|---|
+| `event_key` | `TEXT` PK | Stable per-delivery key (`review:<reviewId>` or `comment:<commentId>`) |
+| `ticket_key` | `TEXT` | Jira issue key the revision targets |
+| `pr_url` | `TEXT` | Pull request URL the event was received for |
+| `created_at` | `TIMESTAMPTZ` | Row creation time |
+
 ## Indexes
 
 - `idx_status` on `dispatch_runs(status)` — for run monitor queries and concurrency counting.
 - `idx_project` on `dispatch_runs(project_key)` — for per-project dashboard filtering.
 - `idx_dispatch_runs_created_at` on `dispatch_runs(created_at DESC)` — supports the dashboard's default ordering and keeps `LIMIT`/`OFFSET` pagination cheap as the table grows.
+- `idx_revision_events_ticket` on `revision_events(ticket_key)` — for looking up revision events by ticket.
+- `idx_revision_events_created_at` on `revision_events(created_at)` — supports efficient range deletes when purging old rows (see retention note below).
 
 ## Status transition notes
 
@@ -71,9 +84,17 @@ Tracks ticket → agent run state. Managed by the orchestration loop.
 - Runs in `blocked_cycle` remain `blocked_cycle` after blocker removal (cycle status is not auto-cleared by this query path).
 - `claimRunForSpawn(ticketKey)` atomically transitions a row from `queued` → `running` and returns whether the claim succeeded. This is used to prevent duplicate dispatches across concurrent triggers.
 - `releaseSpawnClaim(ticketKey)` reverts `running` → `queued` only when `run_id IS NULL` (failed pre-spawn path), so claimed rows tied to real Oz runs are never accidentally released.
+- `claimRevisionSlot(ticketKey)` atomically transitions a run to `running` and clears `run_id`, but only when the run is in a terminal state (`succeeded`/`failed`/`stale`), returning the prior status and run id. It returns `claimed: false` for runs that are already `running` (overlapping revision) or owned by the scheduler (`queued`/`blocked`/`blocked_cycle`), so a revision never steals a row mid-dispatch. Clearing `run_id` makes the monitor skip the row (via its `!run.run_id` guard) until `recordAndSpawnRevision` binds the new run id. `releaseRevisionSlot(ticketKey, previousStatus, previousRunId)` restores both the prior status and run id if the spawn or its DB write fails (otherwise the run monitor clears the `running` state when the spawned run terminates), so no row is left stranded in `running` with a NULL `run_id`.
+- A PR revision reuses the tracked `dispatch_runs` row rather than creating a new one: on a successful spawn, `recordAndSpawnRevision` overwrites the row's `run_id`, `model`, `spawned_at`, and `session_link` with the revision run's values. The original dispatch run's run id and session link are therefore not preserved — the row always reflects the most recent (revision) run. Auditing the original dispatch run would require a separate column or a `revision_events` extension.
 - Scheduler errors after `spawnAgent` invocation are persisted as `failed` instead of being re-queued; if that failure-state write also fails, claim rollback is attempted so rows remain recoverable and do not stay stranded in `running` indefinitely.
 - `upsertDispatchRun` conflict updates do not allow stale incoming `queued` writes to overwrite rows already in `running` or `succeeded`.
 
+## Retention
+`revision_events` rows are written for every processed revision webhook delivery and are **never auto-deleted** (a successful revision's event key is kept permanently so a later redelivery of the same review/comment stays de-duplicated). The table grows roughly with the number of revision triggers, so operators should periodically purge old rows, e.g.:
+```sql
+DELETE FROM revision_events WHERE created_at < NOW() - INTERVAL '90 days';
+```
+The `idx_revision_events_created_at` index keeps this range delete cheap. A 90-day window is far longer than GitHub's webhook redelivery horizon, so purging beyond it cannot reintroduce duplicate revision runs.
 ## Migrations
 
-Schema migrations are managed with raw SQL files in `src/db/migrations/`. Each migration file is named `NNN_description.sql` and applied in order on startup.
+The schema is applied on startup by `runMigrations()` (`src/db/migrate.ts`): it executes `src/db/schema.sql` (idempotent `CREATE TABLE IF NOT EXISTS` / `CREATE INDEX IF NOT EXISTS`) followed by additive `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` statements. New tables and indexes are added to `schema.sql`; new columns on existing tables are also mirrored in the additive block, so repeated runs are safe.

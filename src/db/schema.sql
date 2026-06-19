@@ -51,3 +51,18 @@ CREATE INDEX IF NOT EXISTS idx_dispatch_runs_project ON dispatch_runs(project_ke
 -- Supports the dashboard/API ordering (ORDER BY created_at DESC) so large tables
 -- are not fully sorted on every read.
 CREATE INDEX IF NOT EXISTS idx_dispatch_runs_created_at ON dispatch_runs(created_at DESC);
+
+-- Idempotency ledger for PR revision webhook events. Each row records a single
+-- processed delivery (keyed by GitHub review/comment id) so redelivered webhooks
+-- do not spawn duplicate revision runs.
+CREATE TABLE IF NOT EXISTS revision_events (
+  event_key   TEXT PRIMARY KEY,
+  ticket_key  TEXT NOT NULL,
+  pr_url      TEXT NOT NULL,
+  created_at  TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_revision_events_ticket ON revision_events(ticket_key);
+-- Supports efficient range deletes when purging old rows (no automatic TTL; see
+-- docs/database.md — operators periodically prune rows older than a retention window).
+CREATE INDEX IF NOT EXISTS idx_revision_events_created_at ON revision_events(created_at);

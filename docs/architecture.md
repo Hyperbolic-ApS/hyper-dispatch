@@ -18,12 +18,12 @@ Jira Automation (webhook) → HyperDispatch → Oz Cloud Agents → PRs
 
 | Component | Responsibility |
 |---|---|
-| Webhook Receiver | Ingests Jira transition events and signed GitHub pull-request events, then applies configured automation |
+| Webhook Receiver | Ingests Jira transition events plus signed GitHub `pull_request`, `pull_request_review`, and `issue_comment` events, then applies configured automation (including in-app PR revision triggering) |
 | Dependency Resolver | Checks `issuelinks` for blocking relationships, detects cycles |
 | Scheduler | Enforces concurrency cap, priority ordering, non-overlapping cycles, and atomic dispatch claims; also persists `ticket_status_name` / `ticket_status_category` for each live issue during reconcile so the dashboard can render ticket status without calling Jira |
 | Agent Spawner | Constructs prompt, selects model/skill/environment, calls Oz SDK |
 | Run Monitor | Polls Oz run status, updates state store, transitions Jira tickets, backfills `session_link` for in-flight runs as soon as Oz exposes it, reconciles succeeded-run PR metadata (`pr_has_conflicts`, `pr_display_state`) including merged-PR Done backfills (skipping runs already in a terminal `merged`/`closed` PR display state to bound GitHub calls), and resolves PR review/revision workflow action-state (`pr_review_running`, `pr_revision_running`) for active PRs so the dashboard renders those badges from the DB instead of calling GitHub on the render path |
-| State Store | PostgreSQL — `project_configs` and `dispatch_runs` tables |
+| State Store | PostgreSQL — `project_configs`, `dispatch_runs`, and `revision_events` tables |
 | Dashboard | Server-rendered HTML status page at `/dashboard` with SQL-side filtering and pagination (50 rows/page); auto-refresh is a client-side fetch of `/dashboard/fragment` that swaps the inner content block, leaving the door open for a future websocket push |
 | Config UI | Server-rendered HTML for managing project configurations at `/config` |
 | Jira Validator | Validates board columns, custom fields, and workflow statuses |

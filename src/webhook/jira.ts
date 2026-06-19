@@ -14,6 +14,7 @@ import {
 } from "../jira/columns.js";
 import { syncTicketInToDo } from "../orchestration/ticket-sync.js";
 import { transitionMergedPrToDone } from "../orchestration/pr-merge.js";
+import { handleGithubRevisionWebhook } from "../orchestration/revision.js";
 import { createGithubClient } from "../github/octokit.js";
 import { getPullRequestDisplayState } from "../github/pull-requests.js";
 import { env } from "../config/env.js";
@@ -211,6 +212,11 @@ webhookRouter.post("/github", async (c) => {
   const event = c.req.header("X-GitHub-Event");
   if (event === "ping") {
     return c.json({ action: "pong" });
+  }
+
+  if (event === "pull_request_review" || event === "pull_request_review_comment" || event === "issue_comment") {
+    const revisionResult = await handleGithubRevisionWebhook({ event, payload });
+    return c.json(revisionResult);
   }
 
   if (event !== "pull_request") {

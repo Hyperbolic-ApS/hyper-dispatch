@@ -173,6 +173,102 @@ export async function releaseSpawnClaim(ticketKey: string): Promise<void> {
   `;
 }
 
+// ─── Revision idempotency & concurrency ──────────────────────────────────────
+
+/**
+ * Record a revision-triggering webhook event for idempotency.
+ * `eventKey` is a stable per-delivery key (e.g. `review:<reviewId>` or
+ * `comment:<commentId>`). Returns true when the event is newly recorded and the
+ * caller may proceed, or false when the same event was already processed — which
+ * happens on GitHub webhook redeliveries/retries — so a duplicate run is skipped.
+ */
+export async function tryRecordRevisionEvent(params: {
+  eventKey: string;
+  ticketKey: string;
+  prUrl: string;
+}): Promise<boolean> {
+  const rows = await sql<Array<{ event_key: string }>>`
+    INSERT INTO revision_events (event_key, ticket_key, pr_url)
+    VALUES (${params.eventKey}, ${params.ticketKey}, ${params.prUrl})
+    ON CONFLICT (event_key) DO NOTHING
+    RETURNING event_key
+  `;
+  return rows.length > 0;
+}
+
+/**
+ * Remove a previously recorded revision event so a genuine retry can proceed.
+ * Called when spawning fails after the event was recorded.
+ */
+export async function deleteRevisionEvent(eventKey: string): Promise<void> {
+  await sql`
+    DELETE FROM revision_events
+    WHERE event_key = ${eventKey}
+  `;
+}
+
+/**
+ * Atomically claim the revision slot for a tracked run. Transitions the run to
+ * 'running' and clears `run_id`, but only when it is currently in a terminal
+ * state (`succeeded` | `failed` | `stale`); returns the prior status. Returns
+ * `claimed: false` when the run is already `running` (a revision is in flight,
+ * which prevents overlapping agents on the same branch) or is owned by the
+ * scheduler (`queued` / `blocked` / `blocked_cycle`), so a revision never steals
+ * a row mid-dispatch. Clearing `run_id` makes the run monitor skip the row (via
+ * its `!run.run_id` guard) during the window before `spawnRevisionRun` binds the
+ * new run id, avoiding a race where the monitor reconciles the stale prior run.
+ * The monitor releases the slot when the spawned run terminates;
+ * `releaseRevisionSlot` restores the prior status if the spawn itself fails.
+ */
+export async function claimRevisionSlot(
+  ticketKey: string
+): Promise<{
+  claimed: boolean;
+  previousStatus: DispatchRun["status"] | null;
+  previousRunId: string | null;
+}> {
+  const rows = await sql<
+    Array<{ previous_status: DispatchRun["status"]; previous_run_id: string | null }>
+  >`
+    UPDATE dispatch_runs AS dr
+    SET status = 'running', run_id = NULL, updated_at = NOW()
+    FROM (
+      SELECT status, run_id FROM dispatch_runs WHERE ticket_key = ${ticketKey}
+    ) AS prev
+    WHERE dr.ticket_key = ${ticketKey}
+      AND dr.status IN ('succeeded', 'failed', 'stale')
+    RETURNING prev.status AS previous_status, prev.run_id AS previous_run_id
+  `;
+  if (rows.length === 0) {
+    return { claimed: false, previousStatus: null, previousRunId: null };
+  }
+  return {
+    claimed: true,
+    previousStatus: rows[0]!.previous_status,
+    previousRunId: rows[0]!.previous_run_id,
+  };
+}
+
+/**
+ * Restore a run's status and run_id after a failed revision spawn (or DB write),
+ * reverting the `claimRevisionSlot` transition so a later review can retry and no
+ * orphaned row is left in 'running' with a NULL run_id. No-ops when there is no
+ * prior status or the run is no longer in the claimed 'running' state.
+ */
+export async function releaseRevisionSlot(
+  ticketKey: string,
+  previousStatus: DispatchRun["status"] | null,
+  previousRunId: string | null = null
+): Promise<void> {
+  if (!previousStatus) return;
+  await sql`
+    UPDATE dispatch_runs
+    SET status = ${previousStatus}, run_id = ${previousRunId}, updated_at = NOW()
+    WHERE ticket_key = ${ticketKey}
+      AND status = 'running'
+  `;
+}
+
 /**
  * Return all runs with a given status.
  */

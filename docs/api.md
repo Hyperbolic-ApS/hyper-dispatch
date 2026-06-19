@@ -23,7 +23,7 @@ Receives Jira Automation webhook payloads on issue transitions.
 **Response:** `200 OK` (acknowledgement, processing is async).
 
 ### `POST /webhook/github`
-Receives GitHub webhook payloads for pull request state updates.
+Receives signed GitHub webhook payloads for PR state updates and revision triggers.
 
 **Headers:**
 - `X-GitHub-Event` (required): event type (`ping`, `pull_request`, etc.)
@@ -47,6 +47,21 @@ Receives GitHub webhook payloads for pull request state updates.
   - When the draft→ready transition succeeds, persists `pr_display_state: "open"` immediately for matching runs.
   - Persists `pr_display_state` for all matching runs.
   - If no runs are found, returns `200` ignored.
+- `pull_request_review` events:
+  - Only `action = submitted` is revision-eligible.
+  - Resolves tracked run/project context from PR URL + branch naming (`agent/{ticket-key}[-suffix]`).
+  - Collects submitted review feedback and inline comments.
+  - Detects actionable review items using `REV-###` references/action-list entries.
+  - Spawns a revision Oz run only when action items exist.
+- `issue_comment` events:
+  - Only `action = created` is considered.
+  - Comment must contain `/revise`.
+  - Still reads ticket context, but passes only explicit `/revise ...` instructions as revision feedback.
+- `pull_request_review_comment` events:
+  - Ignored for spawning (including thread replies) to avoid duplicate revision runs from inline-comment/subcomment activity.
+- Revision spawns are idempotent and serialized:
+  - The triggering review/comment id is recorded in `revision_events`, so redelivered webhooks (GitHub retries) do not spawn duplicate runs (returns `200` ignored).
+  - A revision is skipped (`200` ignored) when one is already running for the same PR branch, preventing overlapping revision agents from rapid successive reviews.
 - Webhook updates are complemented by the monitor loop fallback:
   - Every monitor cycle (30s), succeeded runs with a persisted `pr_url` refresh GitHub PR metadata.
   - The monitor persists both `pr_has_conflicts` and `pr_display_state`, which backfills historical succeeded runs and reconciles missed webhook deliveries/drift.
