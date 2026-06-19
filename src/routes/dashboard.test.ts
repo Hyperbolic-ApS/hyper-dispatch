@@ -682,6 +682,7 @@ describe("dashboardRouter", () => {
     getDispatchRunsPageMock.mockResolvedValue([
       makeDispatchRun({
         ticket_key: "HYDI'<img>",
+        summary: "!!!",
         error: "failure",
       }),
     ]);
@@ -700,6 +701,9 @@ describe("dashboardRouter", () => {
       "data-confirm-message=\"Force delete HYDI&#39;&lt;img&gt;? This skips the open-PR safety check and only removes the run from the dashboard.\""
     );
     expect(html).toContain('action="/dashboard/HYDI%27%3Cimg%3E/delete"');
+    expect(html).toContain("<code>agent/HYDI&#39;&lt;img&gt;</code>");
+    expect(html).not.toContain("<code>agent/HYDI'<img></code>");
+    expect(html).toContain('data-copy-branch="agent/HYDI&#39;&lt;img&gt;"');
     expect(html).not.toContain(">HYDI'<img></a>");
   });
 

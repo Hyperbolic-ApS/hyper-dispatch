@@ -523,8 +523,8 @@ function renderDashboardContent(view: DashboardView): string {
       <td>${runtime}</td>
       <td>
         <span class="branch-cell">
-          <code>${branchName}</code>
-          <button class="copy-branch-btn" type="button" data-copy-branch="${branchName}" aria-label="Copy ${branchName} to clipboard"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="7" width="12" height="15" rx="2" ry="2"/><path d="M9 7V4a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v11a2 2 0 0 1-2 2h-4"/></svg></button>
+          <code>${escapeHtml(branchName)}</code>
+          <button class="copy-branch-btn" type="button" data-copy-branch="${escapeHtml(branchName)}" aria-label="Copy ${escapeHtml(branchName)} to clipboard"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="7" width="12" height="15" rx="2" ry="2"/><path d="M9 7V4a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v11a2 2 0 0 1-2 2h-4"/></svg></button>
         </span>
       </td>
       <td>${ozTaskLink}</td>
