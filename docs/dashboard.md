@@ -29,7 +29,7 @@ Displays all tracked dispatch runs in a table with:
 - Agent runtime (for running/completed entries)
 - Branch (`agent/{ticket-key}-{short-descriptor}`) with an inline clipboard icon button that copies the branch name to clipboard (shows a checkmark on success). The descriptor is derived from the ticket summary slug (first three normalized words), matching worker branch creation behavior. When slug normalization yields empty output, branch falls back to `agent/{ticket-key}`.
 - Oz task link labeled `Open` (opens the run task/session in Oz). The session link is usually not available at spawn time — the Oz session is created once the run bootstraps on a worker — so the monitor loop backfills it for in-flight runs (including `BLOCKED`) on its next poll, making the link available while the run is still `running` (within ~30s of the session existing)
-  - Session links are rendered only for safe protocols (`http://`, `https://`, or root-relative paths). Unsafe protocols (for example `javascript:` / `data:`) are dropped and the cell shows `-`.
+  - Session links are rendered only for safe protocols (`http://`, `https://`, or root-relative paths). Unsafe protocols (for example `javascript:` / `data:`) and protocol-relative links (`//host/path`) are dropped and the cell shows `-`.
   - Safe session-link `href` values are HTML-escaped before rendering, so URLs with query-string separators (for example `?a=1&b=2`) render as well-formed HTML attributes (`&amp;`)
 - PR status badge (`Review running`, `Revision running`, or `Review + revision running` when those actions are active; otherwise `Merge conflicts`, `No conflicts`, or `Unknown` once a PR exists) — read from the persisted `pr_review_running` / `pr_revision_running` columns, never from a live GitHub call on render
   - PR status tokens are rendered as no-wrap badges, so long labels (for example `Review + revision running`) do not word-wrap
@@ -39,7 +39,7 @@ Displays all tracked dispatch runs in a table with:
 - PR link with PR number (for completed runs, e.g. `PR #123` when parseable)
   - Non-open PRs include a status suffix in the link text: `(Merged)`, `(Draft)`, or `(Closed)` based on persisted `dispatch_runs.pr_display_state`
   - Dashboard render does not poll GitHub for PR display state; it uses DB state captured by the monitor pipeline
-  - PR links are rendered only for safe protocols (`http://`, `https://`, or root-relative paths). Unsafe protocols are dropped and the links cell shows `-`.
+  - PR links are rendered only for safe protocols (`http://`, `https://`, or root-relative paths). Unsafe protocols and protocol-relative links (`//host/path`) are dropped and the links cell shows `-`.
   - Safe PR-link `href` values are HTML-escaped before rendering to keep attribute escaping consistent with the rest of the dashboard row
 - Compact row action menu (`⋮`) on the right side with `Delete` (and a conditional `Force delete` action stacked beneath it)
   - The action popover is allowed to extend beyond table bounds so the actions remain fully visible on the last row, including at non-default browser zoom levels

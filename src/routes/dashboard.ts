@@ -82,7 +82,7 @@ function escapeHtml(value: string): string {
     .replace(/'/g, "&#39;");
 }
 function isSafeUrl(url: string): boolean {
-  return /^https?:\/\//i.test(url) || url.startsWith("/");
+  return /^https?:\/\//i.test(url) || (url.startsWith("/") && !url.startsWith("//"));
 }
 
 const dashboardStatusFilterOptions = [

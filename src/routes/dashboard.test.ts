@@ -762,6 +762,16 @@ describe("dashboardRouter", () => {
         status: "succeeded",
         pr_url: "data:text/html,boom",
       }),
+      makeDispatchRun({
+        ticket_key: "HYDI-101",
+        status: "running",
+        session_link: "//evil.com/attack",
+      }),
+      makeDispatchRun({
+        ticket_key: "HYDI-102",
+        status: "succeeded",
+        pr_url: "//evil.com/bad",
+      }),
     ]);
 
     const { dashboardRouter } = await import("./dashboard.js");
@@ -771,9 +781,18 @@ describe("dashboardRouter", () => {
     expect(res.status).toBe(200);
     expect(html).not.toContain('href="javascript:alert(1)"');
     expect(html).not.toContain('href="data:text/html,boom"');
+    expect(html).not.toContain('href="//evil.com/attack"');
+    expect(html).not.toContain('href="//evil.com/bad"');
+    expect(html).not.toMatch(/href="\/{2}/);
     expect(html).not.toContain(">Open</a>");
     expect(html).not.toContain(">Session</a>");
     expect(html).not.toContain(">PR</a>");
+    expect(html).toMatch(
+      /HYDI-101<\/a><\/td>[\s\S]*?<td>-<\/td>[\s\S]*?<td>-<\/td>[\s\S]*?<\/tr>/
+    );
+    expect(html).toMatch(
+      /HYDI-102<\/a><\/td>[\s\S]*?<td>-<\/td>[\s\S]*?<td>-<\/td>[\s\S]*?<\/tr>/
+    );
   });
 
   // ─── Polling script (replaces full-page meta refresh) ──────────────────────
