@@ -13,6 +13,7 @@ Displays all tracked dispatch runs in a table with:
 - Summary
 - Ticket status (Jira workflow status, e.g. To Do / In Progress / Done) read from persisted `dispatch_runs.ticket_status_name` / `ticket_status_category` — the dashboard render performs zero live Jira calls regardless of how many runs are tracked
 - Agent status badge (color-coded: green=succeeded, blue=running, yellow=queued, orange=blocked, red=failed)
+  - Agent status tokens are rendered as no-wrap badges, so labels stay on one line in the table
   - When a run includes persisted `dispatch_runs.error` text, the Agent Status cell shows a red `!` error token next to the status badge
   - Hovering the token (desktop) or tapping/clicking it (touch/mouse) reveals the escaped error text in an inline tooltip; `Esc` or outside-click closes tapped tooltips
 - Spawned-at timestamp in the viewer's local timezone
@@ -24,6 +25,7 @@ Displays all tracked dispatch runs in a table with:
 - Branch (`agent/{ticket-key}-{short-descriptor}`) with an inline clipboard icon button that copies the branch name to clipboard (shows a checkmark on success). The descriptor is derived from the ticket summary slug (first three normalized words), matching worker branch creation behavior. When slug normalization yields empty output, branch falls back to `agent/{ticket-key}`.
 - Oz task link labeled `Open` (opens the run task/session in Oz). The session link is usually not available at spawn time — the Oz session is created once the run bootstraps on a worker — so the monitor loop backfills it for in-flight runs (including `BLOCKED`) on its next poll, making the link available while the run is still `running` (within ~30s of the session existing)
 - PR status badge (`Review running`, `Revision running`, or `Review + revision running` when those actions are active; otherwise `Merge conflicts`, `No conflicts`, or `Unknown` once a PR exists) — read from the persisted `pr_review_running` / `pr_revision_running` columns, never from a live GitHub call on render
+  - PR status tokens are rendered as no-wrap badges, so long labels (for example `Review + revision running`) do not word-wrap
 - Production deployment badge from Coolify (`Deployed`, `Not deployed`, or `Unknown`) is currently hidden from the dashboard table while feature wiring is retained in code for quick re-enablement
 - Session link (clickable, for live runs — opens Oz session)
 - PR link with PR number (for completed runs, e.g. `PR #123` when parseable)
