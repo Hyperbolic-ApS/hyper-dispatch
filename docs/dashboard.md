@@ -11,6 +11,7 @@ Displays all tracked dispatch runs in a table with:
 - Ticket key (linked to Jira)
 - Project key
 - Summary
+  - Summary text is HTML-escaped before rendering in the table cell, so Jira-provided markup characters are displayed literally (for example `<img src=x onerror=alert(1)>` becomes text, not executable HTML)
 - Ticket status (Jira workflow status, e.g. To Do / In Progress / Done) read from persisted `dispatch_runs.ticket_status_name` / `ticket_status_category` — the dashboard render performs zero live Jira calls regardless of how many runs are tracked
   - Ticket status tokens are rendered as no-wrap badges, so multi-word Jira statuses (for example `In Progress`) stay on one line
   - Ticket status text is HTML-escaped before rendering so Jira-provided names containing markup characters (for example `<Draft>` or `R&amp;D`) are shown as literal text, not interpreted as HTML

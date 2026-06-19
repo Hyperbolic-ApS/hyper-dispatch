@@ -103,6 +103,7 @@ const dashboardStatusFilterKeys = new Set<DashboardStatusFilterKey>(
 const dashboardStatusesByFilterKey = new Map<DashboardStatusFilterKey, Set<string>>(
   dashboardStatusFilterOptions.map((option) => [option.key, new Set<string>(option.statuses)])
 );
+// Keep badges as inline-flex so text stays vertically centered and future status icons align cleanly.
 const BASE_BADGE_STYLE =
   "padding:2px 8px;border-radius:4px;font-size:0.75rem;font-weight:600;" +
   "display:inline-flex;align-items:center;white-space:nowrap;";
@@ -508,7 +509,7 @@ function renderDashboardContent(view: DashboardView): string {
     return `<tr>
       <td><a href="${ticketUrl}" target="_blank">${run.ticket_key}</a></td>
       <td>${run.project_key}</td>
-      <td>${run.summary ? run.summary.slice(0, 80) : "-"}</td>
+      <td>${run.summary ? escapeHtml(run.summary.slice(0, 80)) : "-"}</td>
       <td>${ticketStatusBadge(run.ticket_status_name, run.ticket_status_category)}</td>
       <td><span class="agent-status-cell">${statusBadge(run.status)}${errorToken}</span></td>
       <td>${formatSpawnedAtDate(run.spawned_at)}</td>

@@ -614,6 +614,23 @@ describe("dashboardRouter", () => {
     expect(html).not.toContain("<b>R&amp;D</b>");
   });
 
+  it("escapes ticket summary text sourced from persisted Jira data", async () => {
+    getDispatchRunsPageMock.mockResolvedValue([
+      makeDispatchRun({
+        ticket_key: "HYDI-94",
+        summary: "<img src=x onerror=alert(1)>",
+      }),
+    ]);
+
+    const { dashboardRouter } = await import("./dashboard.js");
+    const res = await dashboardRouter.request("http://localhost/");
+    const html = await res.text();
+
+    expect(res.status).toBe(200);
+    expect(html).toContain("&lt;img src=x onerror=alert(1)&gt;");
+    expect(html).not.toContain("<img src=x onerror=alert(1)>");
+  });
+
   // ─── Polling script (replaces full-page meta refresh) ──────────────────────
 
   it("uses client-side polling of the fragment instead of a full-page meta refresh", async () => {
