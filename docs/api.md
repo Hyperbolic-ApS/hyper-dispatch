@@ -37,16 +37,14 @@ Receives signed GitHub webhook payloads for PR state updates and revision trigge
 - `pull_request` events:
   - Reads `pull_request.html_url`
   - Looks up matching runs via `pr_url`
-  - If `action === "opened"` and `pull_request.draft === true`, attempts to immediately mark the PR ready-for-review via the GitHub GraphQL `markPullRequestReadyForReview` mutation (keyed by `pull_request.node_id`). The REST "update a pull request" endpoint cannot change a PR's draft state, so GraphQL is required.
-  - The transition is idempotent for at-least-once webhook redelivery: if the mutation fails (for example, because the PR is already ready), the authoritative PR state is re-read so an already-open PR is persisted as `open` rather than regressing to `draft`.
   - Derives `pr_display_state` as:
     - `merged_at` present → `merged`
     - `state === "open"` and `draft === true` → `draft`
     - `state === "open"` → `open`
     - otherwise → `closed`
-  - When the draft→ready transition succeeds, persists `pr_display_state: "open"` immediately for matching runs.
   - Persists `pr_display_state` for all matching runs.
   - If no runs are found, returns `200` ignored.
+  - Draft PRs are not marked ready-for-review here; that is the monitor's job (see below). The `opened` event fires before a run's `pr_url` is persisted, so it cannot reliably match the run.
 - `pull_request_review` events:
   - Only `action = submitted` is revision-eligible.
   - Resolves tracked run/project context from PR URL + branch naming (`agent/{ticket-key}[-suffix]`).
@@ -65,12 +63,12 @@ Receives signed GitHub webhook payloads for PR state updates and revision trigge
 - Webhook updates are complemented by the monitor loop fallback:
   - Every monitor cycle (30s), succeeded runs with a persisted `pr_url` refresh GitHub PR metadata.
   - The monitor persists both `pr_has_conflicts` and `pr_display_state`, which backfills historical succeeded runs and reconciles missed webhook deliveries/drift.
+  - If a tracked, succeeded run's PR is still a draft, the monitor marks it ready-for-review via the GitHub GraphQL `markPullRequestReadyForReview` mutation (keyed by the PR's `node_id`) and persists `pr_display_state: "open"`. This is the authoritative draft→open path: it runs only after `pr_url` is recorded, so it does not depend on webhook timing. GitHub's REST "update a pull request" endpoint cannot change a PR's draft state, so GraphQL is required.
 
 **Response:** `200 OK` for accepted/ignored GitHub events. For accepted tracked PR events, includes:
 - `action`
 - `pr_url`
 - `pr_display_state`
-- `transitioned_to_ready` (`true` only when this webhook request performed the draft→ready transition via the GraphQL mutation; a redelivery that finds the PR already ready persists `pr_display_state: "open"` but reports `false`)
 - `run_count`
 
 ## Status API
