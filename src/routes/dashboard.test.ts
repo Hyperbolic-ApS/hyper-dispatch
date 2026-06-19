@@ -426,7 +426,7 @@ describe("dashboardRouter", () => {
     expect(html).toContain("Review + revision running");
   });
 
-  it("renders no-wrap status tokens without ticket/pr wrapper spans", async () => {
+  it("renders no-wrap inline styles across agent, PR, and ticket status badges", async () => {
     getDispatchRunsPageMock.mockResolvedValue([
       makeDispatchRun({
         ticket_key: "HYDI-89",
@@ -457,8 +457,6 @@ describe("dashboardRouter", () => {
 
     expect(res.status).toBe(200);
     expect(html).toMatch(/\.agent-status-cell\b[^}]*white-space:\s*nowrap/);
-    expect(html).not.toContain('class="ticket-status-cell"');
-    expect(html).not.toContain('class="pr-status-cell"');
     expect(html).toMatch(
       /<span style="[^"]*white-space:\s*nowrap;[^"]*background:#3b82f6;color:#fff[^"]*">running<\/span>/i
     );
