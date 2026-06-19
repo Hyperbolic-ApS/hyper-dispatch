@@ -75,6 +75,7 @@ Idempotency ledger for PR revision webhook events. One row per processed deliver
 - `idx_project` on `dispatch_runs(project_key)` — for per-project dashboard filtering.
 - `idx_dispatch_runs_created_at` on `dispatch_runs(created_at DESC)` — supports the dashboard's default ordering and keeps `LIMIT`/`OFFSET` pagination cheap as the table grows.
 - `idx_revision_events_ticket` on `revision_events(ticket_key)` — for looking up revision events by ticket.
+- `idx_revision_events_created_at` on `revision_events(created_at)` — supports efficient range deletes when purging old rows (see retention note below).
 
 ## Status transition notes
 
@@ -88,6 +89,12 @@ Idempotency ledger for PR revision webhook events. One row per processed deliver
 - Scheduler errors after `spawnAgent` invocation are persisted as `failed` instead of being re-queued; if that failure-state write also fails, claim rollback is attempted so rows remain recoverable and do not stay stranded in `running` indefinitely.
 - `upsertDispatchRun` conflict updates do not allow stale incoming `queued` writes to overwrite rows already in `running` or `succeeded`.
 
+## Retention
+`revision_events` rows are written for every processed revision webhook delivery and are **never auto-deleted** (a successful revision's event key is kept permanently so a later redelivery of the same review/comment stays de-duplicated). The table grows roughly with the number of revision triggers, so operators should periodically purge old rows, e.g.:
+```sql
+DELETE FROM revision_events WHERE created_at < NOW() - INTERVAL '90 days';
+```
+The `idx_revision_events_created_at` index keeps this range delete cheap. A 90-day window is far longer than GitHub's webhook redelivery horizon, so purging beyond it cannot reintroduce duplicate revision runs.
 ## Migrations
 
 The schema is applied on startup by `runMigrations()` (`src/db/migrate.ts`): it executes `src/db/schema.sql` (idempotent `CREATE TABLE IF NOT EXISTS` / `CREATE INDEX IF NOT EXISTS`) followed by additive `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` statements. New tables and indexes are added to `schema.sql`; new columns on existing tables are also mirrored in the additive block, so repeated runs are safe.

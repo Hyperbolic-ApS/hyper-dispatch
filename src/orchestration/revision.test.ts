@@ -178,6 +178,9 @@ describe("handleGithubRevisionWebhook", () => {
       prUrl: "https://github.com/org/repo/pull/44",
     });
     expect(claimRevisionSlotMock).toHaveBeenCalledWith("HYDI-44");
+    // Project config is fetched once (resolveTrackedRevisionContext); the spawn
+    // reuses it rather than re-fetching.
+    expect(getProjectConfigMock).toHaveBeenCalledTimes(1);
   });
 
   it("ignores a duplicate submitted-review delivery without spawning", async () => {
@@ -397,6 +400,7 @@ describe("handleGithubRevisionWebhook", () => {
           },
         },
         comment: {
+          id: 9999,
           user: { login: "kasper" },
           body: "/revise focus on the failing webhook action parsing",
         },
@@ -416,6 +420,35 @@ describe("handleGithubRevisionWebhook", () => {
         prompt: expect.stringContaining("focus on the failing webhook action parsing"),
       })
     );
+    expect(tryRecordRevisionEventMock).toHaveBeenCalledWith({
+      eventKey: "comment:9999",
+      ticketKey: "HYDI-44",
+      prUrl: "https://github.com/org/repo/pull/44",
+    });
+    // Project config is fetched once for the manual path; the spawn reuses it.
+    expect(getProjectConfigMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("ignores an issue_comment without a comment id so idempotency is not bypassed", async () => {
+    const { handleGithubRevisionWebhook } = await import("./revision.js");
+    const result = await handleGithubRevisionWebhook({
+      event: "issue_comment",
+      payload: {
+        action: "created",
+        repository: { owner: { login: "org" }, name: "repo" },
+        issue: {
+          number: 44,
+          html_url: "https://github.com/org/repo/pull/44",
+          pull_request: { html_url: "https://github.com/org/repo/pull/44" },
+        },
+        comment: { user: { login: "kasper" }, body: "/revise do the thing" },
+      },
+    });
+
+    expect(result).toEqual({ action: "ignored", reason: "issue comment missing id" });
+    expect(tryRecordRevisionEventMock).not.toHaveBeenCalled();
+    expect(claimRevisionSlotMock).not.toHaveBeenCalled();
+    expect(runMock).not.toHaveBeenCalled();
   });
 
   it("ignores pull_request_review_comment reply events", async () => {

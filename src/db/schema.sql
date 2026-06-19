@@ -63,3 +63,6 @@ CREATE TABLE IF NOT EXISTS revision_events (
 );
 
 CREATE INDEX IF NOT EXISTS idx_revision_events_ticket ON revision_events(ticket_key);
+-- Supports efficient range deletes when purging old rows (no automatic TTL; see
+-- docs/database.md — operators periodically prune rows older than a retention window).
+CREATE INDEX IF NOT EXISTS idx_revision_events_created_at ON revision_events(created_at);

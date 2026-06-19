@@ -10,6 +10,7 @@ import {
   tryRecordRevisionEvent,
   updateRunStatus,
 } from "../db/queries.js";
+import type { ProjectConfig } from "../db/queries.js";
 import * as jira from "../jira/client.js";
 import { getOzClient } from "./oz-client.js";
 import { resolveModel } from "./spawner.js";
@@ -31,6 +32,7 @@ interface TrackedRevisionContext {
   pr: PullRequestRef;
   ticketKey: string;
   projectKey: string;
+  projectConfig: ProjectConfig;
   githubToken: string;
 }
 
@@ -171,6 +173,7 @@ async function resolveTrackedRevisionContext(pr: PullRequestRef): Promise<Tracke
     pr,
     ticketKey,
     projectKey: projectConfig.project_key,
+    projectConfig,
     githubToken,
   };
 }
@@ -179,22 +182,20 @@ async function resolveTrackedRevisionContext(pr: PullRequestRef): Promise<Tracke
  * Spawn an Oz revision run for the given PR/branch and return the new run id, its
  * session link, and the resolved model. This function performs NO database write:
  * the caller (`recordAndSpawnRevision`) owns the `updateRunStatus` call so that a
- * spawn success followed by a DB-write failure shares a single cleanup path.
+ * spawn success followed by a DB-write failure shares a single cleanup path. The
+ * resolved `config` is passed in by the caller (which already loaded it) to avoid
+ * a redundant `getProjectConfig` round-trip.
  */
 async function spawnRevisionRun(params: {
   ticketKey: string;
-  projectKey: string;
+  config: ProjectConfig;
   branch: string;
   prUrl: string;
   mode: RevisionMode;
   reviewState: string;
   feedback: string;
 }): Promise<{ runId: string; sessionLink: string | null; model: string | null }> {
-  const config = await getProjectConfig(params.projectKey);
-  if (!config) {
-    throw new Error(`Missing active project config for ${params.projectKey}`);
-  }
-
+  const { config } = params;
   const { ozApiKey } = resolveProjectTokens(config);
   const issue = await jira.getIssue(params.ticketKey);
   const model = resolveModel(issue, config);
@@ -273,19 +274,17 @@ type GuardedRevisionOutcome =
  * proceed.
  */
 async function recordAndSpawnRevision(params: {
-  eventKey: string | null;
+  eventKey: string;
   spawn: SpawnRevisionParams;
 }): Promise<GuardedRevisionOutcome> {
   const { ticketKey, prUrl } = params.spawn;
 
-  if (params.eventKey) {
-    const recorded = await tryRecordRevisionEvent({
-      eventKey: params.eventKey,
-      ticketKey,
-      prUrl,
-    });
-    if (!recorded) return { status: "duplicate" };
-  }
+  const recorded = await tryRecordRevisionEvent({
+    eventKey: params.eventKey,
+    ticketKey,
+    prUrl,
+  });
+  if (!recorded) return { status: "duplicate" };
 
   const claim = await claimRevisionSlot(ticketKey);
   if (!claim.claimed) {
@@ -316,9 +315,7 @@ async function recordAndSpawnRevision(params: {
     await releaseRevisionSlot(ticketKey, claim.previousStatus, claim.previousRunId).catch(
       () => {}
     );
-    if (params.eventKey) {
-      await deleteRevisionEvent(params.eventKey).catch(() => {});
-    }
+    await deleteRevisionEvent(params.eventKey).catch(() => {});
     throw err;
   }
 }
@@ -385,7 +382,7 @@ export async function handleGithubRevisionWebhook(params: {
       eventKey: `review:${reviewId}`,
       spawn: {
         ticketKey: context.ticketKey,
-        projectKey: context.projectKey,
+        config: context.projectConfig,
         branch: context.pr.branch,
         prUrl: context.pr.htmlUrl,
         mode: "auto_review_submitted",
@@ -429,6 +426,12 @@ export async function handleGithubRevisionWebhook(params: {
     if (!owner || !repo || pullNumber == null) {
       return { action: "ignored", reason: "issue comment payload missing PR metadata" };
     }
+    // GitHub always sends a comment id; require it so the idempotency ledger is
+    // never silently bypassed (a missing id would otherwise skip dedup entirely).
+    const commentId = parsePrNumber(payload.comment?.id);
+    if (commentId == null) {
+      return { action: "ignored", reason: "issue comment missing id" };
+    }
 
     const runs = await getRunsByPrUrl(prUrl);
     if (runs.length === 0) {
@@ -453,12 +456,11 @@ export async function handleGithubRevisionWebhook(params: {
     const instructions = extractManualInstructions(commentBody);
     const feedback = instructions || "No additional instruction provided after /revise.";
 
-    const commentId = parsePrNumber(payload.comment?.id);
     const outcome = await recordAndSpawnRevision({
-      eventKey: commentId != null ? `comment:${commentId}` : null,
+      eventKey: `comment:${commentId}`,
       spawn: {
         ticketKey,
-        projectKey: projectConfig.project_key,
+        config: projectConfig,
         branch: effectiveBranch,
         prUrl,
         mode: "manual_comment",
