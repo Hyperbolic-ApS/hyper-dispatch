@@ -19,6 +19,7 @@ const {
   ozCancelMock,
   ozApiConstructorMock,
   githubPullGetMock,
+  githubGraphqlMock,
   listWorkflowRunsForRepoMock,
   getRunsWithActivePrMock,
 } = vi.hoisted(() => ({
@@ -34,6 +35,7 @@ const {
   ozCancelMock: vi.fn(),
   ozApiConstructorMock: vi.fn(),
   githubPullGetMock: vi.fn(),
+  githubGraphqlMock: vi.fn(),
   listWorkflowRunsForRepoMock: vi.fn(),
   getRunsWithActivePrMock: vi.fn(),
 }));
@@ -82,6 +84,7 @@ vi.mock("oz-agent-sdk", () => ({
 
 vi.mock("../github/octokit.js", () => ({
   createGithubClient: () => ({
+    graphql: githubGraphqlMock,
     pulls: {
       get: githubPullGetMock,
     },
@@ -118,6 +121,10 @@ beforeEach(() => {
   ozCancelMock.mockReset();
   ozApiConstructorMock.mockReset();
   githubPullGetMock.mockReset();
+  githubGraphqlMock.mockReset();
+  githubGraphqlMock.mockResolvedValue({
+    markPullRequestReadyForReview: { pullRequest: { isDraft: false } },
+  });
   listWorkflowRunsForRepoMock.mockReset();
   listWorkflowRunsForRepoMock.mockResolvedValue({ data: { workflow_runs: [] } });
   getRunsWithActivePrMock.mockReset();
@@ -1038,7 +1045,7 @@ describe("checkRuns", () => {
           mergeable_state: "clean",
           mergeable: true,
           state: "open",
-          draft: true,
+          draft: false,
         },
       });
 
@@ -1051,8 +1058,77 @@ describe("checkRuns", () => {
     );
     expect(updateRunStatusMock).toHaveBeenCalledWith("HYDI-20", {
       pr_has_conflicts: false,
+      pr_display_state: "open",
+    });
+  });
+
+  it("marks a succeeded run's still-draft PR ready for review and persists open", async () => {
+    getRunsByStatusMock
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([
+        makeDispatchRun({
+          ticket_key: "HYDI-40",
+          status: "succeeded",
+          pr_url: "https://github.com/org/repo/pull/40",
+        }),
+      ]);
+    githubPullGetMock.mockResolvedValue({
+      data: {
+        merged_at: null,
+        mergeable_state: "clean",
+        mergeable: true,
+        state: "open",
+        draft: true,
+        node_id: "PR_node_40",
+      },
+    });
+
+    const { checkRuns } = await importMonitor();
+    await checkRuns();
+
+    expect(githubGraphqlMock).toHaveBeenCalledWith(
+      expect.stringContaining("markPullRequestReadyForReview"),
+      { pullRequestId: "PR_node_40" }
+    );
+    expect(updateRunStatusMock).toHaveBeenCalledWith("HYDI-40", {
+      pr_has_conflicts: false,
+      pr_display_state: "open",
+    });
+  });
+
+  it("keeps draft display state and warns when the ready-for-review mutation fails", async () => {
+    getRunsByStatusMock
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([
+        makeDispatchRun({
+          ticket_key: "HYDI-41",
+          status: "succeeded",
+          pr_url: "https://github.com/org/repo/pull/41",
+        }),
+      ]);
+    githubPullGetMock.mockResolvedValue({
+      data: {
+        merged_at: null,
+        mergeable_state: "clean",
+        mergeable: true,
+        state: "open",
+        draft: true,
+        node_id: "PR_node_41",
+      },
+    });
+    githubGraphqlMock.mockRejectedValue(new Error("no write access"));
+
+    const { checkRuns } = await importMonitor();
+    await checkRuns();
+
+    expect(updateRunStatusMock).toHaveBeenCalledWith("HYDI-41", {
+      pr_has_conflicts: false,
       pr_display_state: "draft",
     });
+    expect(warnSpy).toHaveBeenCalledWith(
+      "[monitor] Failed to mark draft PR ready for review for HYDI-41:",
+      expect.any(Error)
+    );
   });
 });
 

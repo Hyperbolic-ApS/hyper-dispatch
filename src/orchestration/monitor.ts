@@ -11,7 +11,10 @@ import {
 import { resolveJiraColumnMappings } from "../jira/columns.js";
 import { getOzClient } from "./oz-client.js";
 import { transitionMergedPrToDone } from "./pr-merge.js";
-import { derivePullRequestDisplayState } from "../github/pull-requests.js";
+import {
+  derivePullRequestDisplayState,
+  markPullRequestReadyForReview,
+} from "../github/pull-requests.js";
 import { createGithubClient } from "../github/octokit.js";
 import {
   getRepoWorkflowRuns,
@@ -115,7 +118,7 @@ export function parseGithubPullRequestUrl(
   }
 }
 
-async function transitionMergedPrsToDone(): Promise<void> {
+async function reconcileSucceededRunPrs(): Promise<void> {
   const succeededRuns = await getRunsByStatus("succeeded");
   if (succeededRuns.length === 0) return;
 
@@ -149,11 +152,34 @@ async function transitionMergedPrsToDone(): Promise<void> {
       });
       const hasMergeConflicts =
         pullRequest.mergeable_state === "dirty" || pullRequest.mergeable === false;
-      const prDisplayState = derivePullRequestDisplayState({
+      let prDisplayState = derivePullRequestDisplayState({
         merged_at: pullRequest.merged_at,
         state: pullRequest.state,
         draft: pullRequest.draft,
       });
+
+      // Backstop for the draft→ready conversion. The GitHub `opened` webhook
+      // fires the instant the worker creates the PR — before this loop has
+      // persisted the run's pr_url (pr_url is only written on SUCCEEDED), so the
+      // webhook can't reliably look the run up to mark it ready. Once the run is
+      // tracked here, force any still-draft PR ready for review. The PR fetch
+      // above is reused (no extra GitHub round-trip), and a successful mutation
+      // flips the persisted state to "open".
+      if (prDisplayState === "draft") {
+        try {
+          await markPullRequestReadyForReview(githubClient, pullRequest.node_id);
+          prDisplayState = "open";
+          console.log(
+            `[monitor] Marked draft PR ready for review for ${run.ticket_key}: ${run.pr_url}`
+          );
+        } catch (err) {
+          console.warn(
+            `[monitor] Failed to mark draft PR ready for review for ${run.ticket_key}:`,
+            err
+          );
+        }
+      }
+
       const isTerminalPr =
         prDisplayState === "merged" || prDisplayState === "closed";
       // Reconcile PR conflict/display-state metadata for every succeeded run,
@@ -461,7 +487,7 @@ export async function checkRuns(): Promise<void> {
     }
   }
 
-  await transitionMergedPrsToDone();
+  await reconcileSucceededRunPrs();
   await reconcilePrActionStates();
 }
 
