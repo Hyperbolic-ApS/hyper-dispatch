@@ -103,6 +103,9 @@ const dashboardStatusFilterKeys = new Set<DashboardStatusFilterKey>(
 const dashboardStatusesByFilterKey = new Map<DashboardStatusFilterKey, Set<string>>(
   dashboardStatusFilterOptions.map((option) => [option.key, new Set<string>(option.statuses)])
 );
+const BASE_BADGE_STYLE =
+  "padding:2px 8px;border-radius:4px;font-size:0.75rem;font-weight:600;" +
+  "display:inline-flex;align-items:center;white-space:nowrap;";
 
 function statusBadge(status: string): string {
   const colors: Record<string, string> = {
@@ -115,7 +118,7 @@ function statusBadge(status: string): string {
     stale: "background:#6b7280;color:#fff",
   };
   const style = colors[status] ?? "background:#e5e7eb;color:#000";
-  return `<span style="padding:2px 8px;border-radius:4px;font-size:0.75rem;font-weight:600;display:inline-flex;align-items:center;white-space:nowrap;${style}">${status}</span>`;
+  return `<span style="${BASE_BADGE_STYLE}${style}">${status}</span>`;
 }
 function ticketStatusBadge(statusName: string | null, categoryKey: string | null): string {
   if (!statusName) return "-";
@@ -125,17 +128,17 @@ function ticketStatusBadge(statusName: string | null, categoryKey: string | null
     "new": "background:#eab308;color:#000",
   };
   const style = colors[categoryKey ?? ""] ?? "background:#e5e7eb;color:#000";
-  return `<span style="padding:2px 8px;border-radius:4px;font-size:0.75rem;font-weight:600;display:inline-flex;align-items:center;white-space:nowrap;${style}">${statusName}</span>`;
+  return `<span style="${BASE_BADGE_STYLE}${style}">${statusName}</span>`;
 }
 function prConflictBadge(hasConflicts: boolean | null, hasPr: boolean): string {
   if (!hasPr) return "-";
   if (hasConflicts === true) {
-    return '<span style="padding:2px 8px;border-radius:4px;font-size:0.75rem;font-weight:600;display:inline-flex;align-items:center;white-space:nowrap;background:#ef4444;color:#fff">Merge conflicts</span>';
+    return `<span style="${BASE_BADGE_STYLE}background:#ef4444;color:#fff">Merge conflicts</span>`;
   }
   if (hasConflicts === false) {
-    return '<span style="padding:2px 8px;border-radius:4px;font-size:0.75rem;font-weight:600;display:inline-flex;align-items:center;white-space:nowrap;background:#22c55e;color:#fff">No conflicts</span>';
+    return `<span style="${BASE_BADGE_STYLE}background:#22c55e;color:#fff">No conflicts</span>`;
   }
-  return '<span style="padding:2px 8px;border-radius:4px;font-size:0.75rem;font-weight:600;display:inline-flex;align-items:center;white-space:nowrap;background:#e5e7eb;color:#111">Unknown</span>';
+  return `<span style="${BASE_BADGE_STYLE}background:#e5e7eb;color:#111">Unknown</span>`;
 }
 type PrActionState = {
   reviewRunning: boolean;
@@ -149,25 +152,25 @@ function prStatusBadge(
 ): string {
   if (!hasPr) return "-";
   if (actionState?.reviewRunning && actionState?.revisionRunning) {
-    return '<span style="padding:2px 8px;border-radius:4px;font-size:0.75rem;font-weight:600;display:inline-flex;align-items:center;white-space:nowrap;background:#7c3aed;color:#fff">Review + revision running</span>';
+    return `<span style="${BASE_BADGE_STYLE}background:#7c3aed;color:#fff">Review + revision running</span>`;
   }
   if (actionState?.reviewRunning) {
-    return '<span style="padding:2px 8px;border-radius:4px;font-size:0.75rem;font-weight:600;display:inline-flex;align-items:center;white-space:nowrap;background:#2563eb;color:#fff">Review running</span>';
+    return `<span style="${BASE_BADGE_STYLE}background:#2563eb;color:#fff">Review running</span>`;
   }
   if (actionState?.revisionRunning) {
-    return '<span style="padding:2px 8px;border-radius:4px;font-size:0.75rem;font-weight:600;display:inline-flex;align-items:center;white-space:nowrap;background:#ea580c;color:#fff">Revision running</span>';
+    return `<span style="${BASE_BADGE_STYLE}background:#ea580c;color:#fff">Revision running</span>`;
   }
   return prConflictBadge(hasConflicts, hasPr);
 }
 
 function prodDeploymentBadge(deployedToProd: boolean | null): string {
   if (deployedToProd === true) {
-    return '<span style="padding:2px 8px;border-radius:4px;font-size:0.75rem;font-weight:600;display:inline-flex;align-items:center;white-space:nowrap;background:#22c55e;color:#fff">Deployed</span>';
+    return `<span style="${BASE_BADGE_STYLE}background:#22c55e;color:#fff">Deployed</span>`;
   }
   if (deployedToProd === false) {
-    return '<span style="padding:2px 8px;border-radius:4px;font-size:0.75rem;font-weight:600;display:inline-flex;align-items:center;white-space:nowrap;background:#f97316;color:#fff">Not deployed</span>';
+    return `<span style="${BASE_BADGE_STYLE}background:#f97316;color:#fff">Not deployed</span>`;
   }
-  return '<span style="padding:2px 8px;border-radius:4px;font-size:0.75rem;font-weight:600;display:inline-flex;align-items:center;white-space:nowrap;background:#e5e7eb;color:#111">Unknown</span>';
+  return `<span style="${BASE_BADGE_STYLE}background:#e5e7eb;color:#111">Unknown</span>`;
 }
 
 const showProdDeploymentColumn = false;
@@ -247,8 +250,6 @@ const CSS = `
   .pagination .disabled { padding: 6px 12px; border: 1px solid #e5e7eb; border-radius: 6px; color: #9ca3af; background: #f9fafb; }
   .page-info { font-weight: 500; }
   .agent-status-cell { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
-  .ticket-status-cell { display: inline-flex; align-items: center; white-space: nowrap; }
-  .pr-status-cell { display: inline-flex; align-items: center; white-space: nowrap; }
   .error-token-wrap { position: relative; display: inline-flex; align-items: center; }
   .error-token { width: 16px; height: 16px; border: 0; border-radius: 999px; background: #dc2626; color: #fff; font-size: 0.68rem; font-weight: 700; line-height: 1; display: inline-flex; align-items: center; justify-content: center; cursor: pointer; padding: 0; }
   .error-token:focus-visible { outline: 2px solid #111827; outline-offset: 2px; }
@@ -508,7 +509,7 @@ function renderDashboardContent(view: DashboardView): string {
       <td><a href="${ticketUrl}" target="_blank">${run.ticket_key}</a></td>
       <td>${run.project_key}</td>
       <td>${run.summary ? run.summary.slice(0, 80) : "-"}</td>
-      <td><span class="ticket-status-cell">${ticketStatusBadge(run.ticket_status_name, run.ticket_status_category)}</span></td>
+      <td>${ticketStatusBadge(run.ticket_status_name, run.ticket_status_category)}</td>
       <td><span class="agent-status-cell">${statusBadge(run.status)}${errorToken}</span></td>
       <td>${formatSpawnedAtDate(run.spawned_at)}</td>
       <td>${runtime}</td>
@@ -519,7 +520,7 @@ function renderDashboardContent(view: DashboardView): string {
         </span>
       </td>
       <td>${ozTaskLink}</td>
-      <td><span class="pr-status-cell">${prStatusBadge(
+      <td>${prStatusBadge(
         run.pr_has_conflicts,
         Boolean(run.pr_url),
         // Running badges only apply to non-terminal PRs. The monitor stops
@@ -534,7 +535,7 @@ function renderDashboardContent(view: DashboardView): string {
               revisionRunning: Boolean(run.pr_revision_running),
             }
           : null
-      )}</span></td>
+      )}</td>
       ${showProdDeploymentColumn ? `<td>${prodDeploymentBadge(run.deployed_to_prod)}</td>` : ""}
       <td>${actionLink}${blockedByHtml}</td>
       <td class="row-actions-cell">${rowActions}</td>
