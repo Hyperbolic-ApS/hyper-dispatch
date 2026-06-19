@@ -15,8 +15,6 @@ import {
 import { syncTicketInToDo } from "../orchestration/ticket-sync.js";
 import { transitionMergedPrToDone } from "../orchestration/pr-merge.js";
 import { handleGithubRevisionWebhook } from "../orchestration/revision.js";
-import { createGithubClient } from "../github/octokit.js";
-import { getPullRequestDisplayState } from "../github/pull-requests.js";
 import { env } from "../config/env.js";
 export { priorityNameToNumber } from "../orchestration/ticket-sync.js";
 
@@ -60,70 +58,6 @@ function derivePullRequestDisplayState(payload: {
   if (pullRequest?.state === "open" && pullRequest.draft) return "draft";
   if (pullRequest?.state === "open") return "open";
   return "closed";
-}
-
-// GitHub's REST "Update a pull request" endpoint does not support changing the
-// `draft` field, so a draft PR can only be marked ready for review through the
-// GraphQL `markPullRequestReadyForReview` mutation (the same capability used by
-// `gh pr ready`). It takes the PR's GraphQL node ID, which GitHub includes on
-// the webhook payload as `pull_request.node_id`.
-const MARK_READY_FOR_REVIEW_MUTATION = `
-  mutation MarkPullRequestReadyForReview($pullRequestId: ID!) {
-    markPullRequestReadyForReview(input: { pullRequestId: $pullRequestId }) {
-      pullRequest {
-        id
-        isDraft
-      }
-    }
-  }
-`;
-
-// Outcome of attempting to mark a draft PR ready for review.
-interface ReadyForReviewOutcome {
-  // The display state to persist, or `null` when it could not be determined
-  // (so the caller keeps the payload-derived state).
-  displayState: PullRequestDisplayState | null;
-  // True only when this webhook pass actually performed the draft→ready
-  // transition (the GraphQL mutation succeeded). A redelivery that finds the PR
-  // already ready reconciles to `open` but reports `false`.
-  transitioned: boolean;
-}
-
-// Marks a draft PR ready for review. The mutation throws when the PR is no
-// longer a draft — e.g. an at-least-once webhook redelivery of the same
-// `opened` event after we already transitioned it. In that case we re-read the
-// authoritative state instead of regressing an already-open PR back to `draft`,
-// while reporting `transitioned: false` because this pass performed no change.
-async function transitionDraftPullRequestToReady(
-  prUrl: string,
-  pullRequestNodeId: string,
-  projectKey: string
-): Promise<ReadyForReviewOutcome> {
-  const projectConfig = await getProjectConfig(projectKey);
-  const githubToken = projectConfig?.github_pat ?? env.GITHUB_TOKEN;
-  const github = createGithubClient(githubToken);
-
-  try {
-    await github.graphql(MARK_READY_FOR_REVIEW_MUTATION, {
-      pullRequestId: pullRequestNodeId,
-    });
-    return { displayState: "open", transitioned: true };
-  } catch (err) {
-    console.warn(
-      `[webhook] markPullRequestReadyForReview failed; reconciling authoritative PR state: ${prUrl}`,
-      err
-    );
-    try {
-      const displayState = await getPullRequestDisplayState(prUrl, githubToken);
-      return { displayState, transitioned: false };
-    } catch (stateErr) {
-      console.warn(
-        `[webhook] Failed to read authoritative PR state after ready transition failure: ${prUrl}`,
-        stateErr
-      );
-      return { displayState: null, transitioned: false };
-    }
-  }
 }
 
 webhookRouter.post("/jira", async (c) => {
@@ -196,7 +130,6 @@ webhookRouter.post("/github", async (c) => {
     action?: string;
     pull_request?: {
       html_url?: string;
-      node_id?: string;
       merged_at?: string | null;
       merged?: boolean;
       state?: string;
@@ -233,28 +166,7 @@ webhookRouter.post("/github", async (c) => {
     return c.json({ action: "ignored", reason: "pr not tracked" });
   }
 
-  let prDisplayState = derivePullRequestDisplayState(payload);
-  let transitionedToReady = false;
-  if (payload.action === "opened" && payload.pull_request?.draft === true) {
-    const pullRequestNodeId = payload.pull_request?.node_id;
-    if (pullRequestNodeId) {
-      const outcome = await transitionDraftPullRequestToReady(
-        prUrl,
-        pullRequestNodeId,
-        runs[0]!.project_key
-      );
-      if (outcome.displayState) {
-        prDisplayState = outcome.displayState;
-      }
-      // `transitioned_to_ready` reflects only a transition performed by this
-      // pass; a redelivery that reconciles to `open` still reports `false`.
-      transitionedToReady = outcome.transitioned;
-    } else {
-      console.warn(
-        `[webhook] Missing pull_request.node_id; cannot transition draft PR to ready for review: ${prUrl}`
-      );
-    }
-  }
+  const prDisplayState = derivePullRequestDisplayState(payload);
   await Promise.all(
     runs.map((run) => updateRunStatus(run.ticket_key, { pr_display_state: prDisplayState }))
   );
@@ -273,7 +185,6 @@ webhookRouter.post("/github", async (c) => {
     action: "updated",
     pr_url: prUrl,
     pr_display_state: prDisplayState,
-    transitioned_to_ready: transitionedToReady,
     run_count: runs.length,
   });
 });

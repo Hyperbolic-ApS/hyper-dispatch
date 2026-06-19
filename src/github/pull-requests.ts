@@ -1,3 +1,4 @@
+import type { Octokit } from "@octokit/rest";
 import { createGithubClient } from "./octokit.js";
 
 export function parseGithubPullRequestUrl(
@@ -50,24 +51,31 @@ export function derivePullRequestDisplayState(pullRequest: {
   return "closed";
 }
 
-export async function getPullRequestDisplayState(
-  prUrl: string,
-  githubToken: string
-): Promise<PullRequestDisplayState> {
-  const parsed = parseGithubPullRequestUrl(prUrl);
-  if (!parsed) {
-    throw new Error("Invalid GitHub pull request URL.");
+// GitHub's REST "Update a pull request" endpoint cannot change the `draft`
+// field, so a draft PR can only be marked ready for review through the GraphQL
+// `markPullRequestReadyForReview` mutation (the same capability as `gh pr
+// ready`). It takes the PR's GraphQL node ID (`pull_request.node_id`).
+const MARK_READY_FOR_REVIEW_MUTATION = `
+  mutation MarkPullRequestReadyForReview($pullRequestId: ID!) {
+    markPullRequestReadyForReview(input: { pullRequestId: $pullRequestId }) {
+      pullRequest {
+        id
+        isDraft
+      }
+    }
   }
+`;
 
-  const github = createGithubClient(githubToken);
-  const { data: pullRequest } = await github.pulls.get({
-    owner: parsed.owner,
-    repo: parsed.repo,
-    pull_number: parsed.pullNumber,
-  });
-  return derivePullRequestDisplayState({
-    merged_at: pullRequest.merged_at,
-    state: pullRequest.state,
-    draft: pullRequest.draft,
+/**
+ * Mark a draft pull request ready for review via the GraphQL mutation.
+ * Throws when the PR is not in the draft state (e.g. it is already ready), so
+ * callers that treat readiness as best-effort should catch and reconcile.
+ */
+export async function markPullRequestReadyForReview(
+  github: Octokit,
+  pullRequestNodeId: string
+): Promise<void> {
+  await github.graphql(MARK_READY_FOR_REVIEW_MUTATION, {
+    pullRequestId: pullRequestNodeId,
   });
 }
