@@ -125,7 +125,7 @@ function ticketStatusBadge(statusName: string | null, categoryKey: string | null
     "new": "background:#eab308;color:#000",
   };
   const style = colors[categoryKey ?? ""] ?? "background:#e5e7eb;color:#000";
-  return `<span style="padding:2px 8px;border-radius:4px;font-size:0.75rem;font-weight:600;${style}">${statusName}</span>`;
+  return `<span style="padding:2px 8px;border-radius:4px;font-size:0.75rem;font-weight:600;display:inline-flex;align-items:center;white-space:nowrap;${style}">${statusName}</span>`;
 }
 function prConflictBadge(hasConflicts: boolean | null, hasPr: boolean): string {
   if (!hasPr) return "-";

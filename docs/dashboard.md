@@ -12,6 +12,7 @@ Displays all tracked dispatch runs in a table with:
 - Project key
 - Summary
 - Ticket status (Jira workflow status, e.g. To Do / In Progress / Done) read from persisted `dispatch_runs.ticket_status_name` / `ticket_status_category` — the dashboard render performs zero live Jira calls regardless of how many runs are tracked
+  - Ticket status tokens are rendered as no-wrap badges, so multi-word Jira statuses (for example `In Progress`) stay on one line
 - Agent status badge (color-coded: green=succeeded, blue=running, yellow=queued, orange=blocked, red=failed)
   - Agent status tokens are rendered as no-wrap badges, so labels stay on one line in the table
   - When a run includes persisted `dispatch_runs.error` text, the Agent Status cell shows a red `!` error token next to the status badge

@@ -431,8 +431,23 @@ describe("dashboardRouter", () => {
       makeDispatchRun({
         ticket_key: "HYDI-89",
         status: "running",
+        ticket_status_name: "In Progress",
+        ticket_status_category: "in-flight",
         pr_url: "https://github.com/warp/hyper-dispatch/pull/89",
         pr_review_running: true,
+      }),
+      makeDispatchRun({
+        ticket_key: "HYDI-90",
+        status: "succeeded",
+        pr_url: "https://github.com/warp/hyper-dispatch/pull/90",
+        pr_has_conflicts: true,
+      }),
+      makeDispatchRun({
+        ticket_key: "HYDI-91",
+        status: "succeeded",
+        pr_url: "https://github.com/warp/hyper-dispatch/pull/91",
+        pr_review_running: true,
+        pr_revision_running: true,
       }),
     ]);
 
@@ -441,10 +456,14 @@ describe("dashboardRouter", () => {
     const html = await res.text();
 
     expect(res.status).toBe(200);
-    expect(html).toContain(".agent-status-cell { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }");
-    expect(html).toContain(".pr-status-cell { display: inline-flex; align-items: center; white-space: nowrap; }");
+    expect(html).toMatch(/\.agent-status-cell\b[^}]*white-space:\s*nowrap/);
+    expect(html).toMatch(/\.pr-status-cell\b[^}]*white-space:\s*nowrap/);
     expect(html).toContain("white-space:nowrap;background:#3b82f6;color:#fff");
-    expect(html).toContain('<span class="pr-status-cell"><span style="padding:2px 8px;border-radius:4px;font-size:0.75rem;font-weight:600;display:inline-flex;align-items:center;white-space:nowrap;background:#2563eb;color:#fff">Review running</span></span>');
+    expect(html).toContain("white-space:nowrap;background:#ef4444;color:#fff\">Merge conflicts</span>");
+    expect(html).toContain(
+      "white-space:nowrap;background:#7c3aed;color:#fff\">Review + revision running</span>"
+    );
+    expect(html).toContain("white-space:nowrap;background:#3b82f6;color:#fff\">In Progress</span>");
   });
 
   it("ignores stale running flags once the PR is merged", async () => {
