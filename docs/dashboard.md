@@ -9,10 +9,16 @@ Both pages now share the HyperDispatch brand icon (header logo) and include the 
 
 Displays all tracked dispatch runs in a table with:
 - Ticket key (linked to Jira)
+  - Ticket key text and related dashboard accessibility labels are HTML-escaped before rendering, so malformed persisted keys (for example `HYDI'<img>`) are displayed literally and cannot inject markup into link text or `aria-label` attributes
 - Project key
+  - Project key text is HTML-escaped before rendering, matching the same Jira-data hardening applied to summary/status/blocked-by fields
 - Summary
+  - Summary text is HTML-escaped before rendering in the table cell, so Jira-provided markup characters are displayed literally (for example `<img src=x onerror=alert(1)>` becomes text, not executable HTML)
 - Ticket status (Jira workflow status, e.g. To Do / In Progress / Done) read from persisted `dispatch_runs.ticket_status_name` / `ticket_status_category` — the dashboard render performs zero live Jira calls regardless of how many runs are tracked
+  - Ticket status tokens are rendered as no-wrap badges, so multi-word Jira statuses (for example `In Progress`) stay on one line
+  - Ticket status text is HTML-escaped before rendering so Jira-provided names containing markup characters (for example `<Draft>` or `R&amp;D`) are shown as literal text, not interpreted as HTML
 - Agent status badge (color-coded: green=succeeded, blue=running, yellow=queued, orange=blocked, red=failed)
+  - Agent status tokens are rendered as no-wrap badges, so labels stay on one line in the table
   - When a run includes persisted `dispatch_runs.error` text, the Agent Status cell shows a red `!` error token next to the status badge
   - Hovering the token (desktop) or tapping/clicking it (touch/mouse) reveals the escaped error text in an inline tooltip; `Esc` or outside-click closes tapped tooltips
 - Spawned-at timestamp in the viewer's local timezone
@@ -23,12 +29,18 @@ Displays all tracked dispatch runs in a table with:
 - Agent runtime (for running/completed entries)
 - Branch (`agent/{ticket-key}-{short-descriptor}`) with an inline clipboard icon button that copies the branch name to clipboard (shows a checkmark on success). The descriptor is derived from the ticket summary slug (first three normalized words), matching worker branch creation behavior. When slug normalization yields empty output, branch falls back to `agent/{ticket-key}`.
 - Oz task link labeled `Open` (opens the run task/session in Oz). The session link is usually not available at spawn time — the Oz session is created once the run bootstraps on a worker — so the monitor loop backfills it for in-flight runs (including `BLOCKED`) on its next poll, making the link available while the run is still `running` (within ~30s of the session existing)
+  - Session links are rendered only for safe protocols (`http://`, `https://`, or root-relative paths). Unsafe protocols (for example `javascript:` / `data:`) are dropped and the cell shows `-`.
+  - Safe session-link `href` values are HTML-escaped before rendering, so URLs with query-string separators (for example `?a=1&b=2`) render as well-formed HTML attributes (`&amp;`)
 - PR status badge (`Review running`, `Revision running`, or `Review + revision running` when those actions are active; otherwise `Merge conflicts`, `No conflicts`, or `Unknown` once a PR exists) — read from the persisted `pr_review_running` / `pr_revision_running` columns, never from a live GitHub call on render
+  - PR status tokens are rendered as no-wrap badges, so long labels (for example `Review + revision running`) do not word-wrap
 - Production deployment badge from Coolify (`Deployed`, `Not deployed`, or `Unknown`) is currently hidden from the dashboard table while feature wiring is retained in code for quick re-enablement
+  - Production deployment tokens are rendered as no-wrap badges (matching the other status columns) when the column is enabled
 - Session link (clickable, for live runs — opens Oz session)
 - PR link with PR number (for completed runs, e.g. `PR #123` when parseable)
   - Non-open PRs include a status suffix in the link text: `(Merged)`, `(Draft)`, or `(Closed)` based on persisted `dispatch_runs.pr_display_state`
   - Dashboard render does not poll GitHub for PR display state; it uses DB state captured by the monitor pipeline
+  - PR links are rendered only for safe protocols (`http://`, `https://`, or root-relative paths). Unsafe protocols are dropped and the links cell shows `-`.
+  - Safe PR-link `href` values are HTML-escaped before rendering to keep attribute escaping consistent with the rest of the dashboard row
 - Compact row action menu (`⋮`) on the right side with `Delete` (and a conditional `Force delete` action stacked beneath it)
   - The action popover is allowed to extend beyond table bounds so the actions remain fully visible on the last row, including at non-default browser zoom levels
   - `Delete` is blocked when the run has an open GitHub PR, with an inline error prompting to close the PR first or use `Force delete`
@@ -36,8 +48,11 @@ Displays all tracked dispatch runs in a table with:
   - When the PR status cannot be verified (for example a GitHub API error or rate limiting), `Delete` is declined with an accurate inline error that points to `Force delete`; the underlying error is logged server-side. It no longer incorrectly claims the PR is still open.
   - Delete success/error notices render with a dismiss (`×`) control so operators can clear them without navigating away
   - `Force delete` (POST body `force=1`) skips the GitHub PR check entirely and removes the run regardless of PR state, after a browser confirmation prompt. It only deletes the local `dispatch_runs` record; it does not touch the PR or GitHub.
+    - The confirmation prompt message is carried via a `data-confirm-message` attribute and handled by delegated client-side submit logic scoped to row-action menu forms (no inline `onclick` string interpolation with ticket data).
+    - Delete-form `action` values use URL-encoded ticket keys.
     - It is shown (stacked beneath `Delete`) only for a row whose normal `Delete` was just declined: the failed attempt redirects back with `deleteFailed=<ticket>`, which gates the button. A successful delete or any other navigation clears it.
 - Blocked-by info (for blocked entries)
+  - Blocked-by ticket values are HTML-escaped before rendering, so markup-like content is displayed as text instead of interpreted HTML
 - Header filter toggle to hide/show rows whose Jira ticket status category is `Done`
 - Header project dropdown to filter rows by project key (shows `All Projects` by default)
 - Clickable status stat tags (`Running`, `Queued`, `Blocked`, `Succeeded`, `Failed`, `Stale`) that apply a status filter to the current dashboard view

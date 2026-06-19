@@ -426,6 +426,80 @@ describe("dashboardRouter", () => {
     expect(html).toContain("Review + revision running");
   });
 
+  it("renders no-wrap inline styles across agent, PR, and ticket status badges", async () => {
+    getDispatchRunsPageMock.mockResolvedValue([
+      makeDispatchRun({
+        ticket_key: "HYDI-89",
+        status: "running",
+        ticket_status_name: "In Progress",
+        ticket_status_category: "in-flight",
+        pr_url: "https://github.com/warp/hyper-dispatch/pull/89",
+        pr_review_running: true,
+      }),
+      makeDispatchRun({
+        ticket_key: "HYDI-90",
+        status: "succeeded",
+        pr_url: "https://github.com/warp/hyper-dispatch/pull/90",
+        pr_has_conflicts: true,
+      }),
+      makeDispatchRun({
+        ticket_key: "HYDI-91",
+        status: "succeeded",
+        pr_url: "https://github.com/warp/hyper-dispatch/pull/91",
+        pr_review_running: true,
+        pr_revision_running: true,
+      }),
+      makeDispatchRun({
+        ticket_key: "HYDI-92",
+        status: "succeeded",
+        pr_url: "https://github.com/warp/hyper-dispatch/pull/92",
+        pr_has_conflicts: false,
+      }),
+      makeDispatchRun({
+        ticket_key: "HYDI-93",
+        status: "succeeded",
+        pr_url: "https://github.com/warp/hyper-dispatch/pull/93",
+      }),
+      makeDispatchRun({
+        ticket_key: "HYDI-94",
+        status: "succeeded",
+        pr_url: "https://github.com/warp/hyper-dispatch/pull/94",
+        pr_revision_running: true,
+      }),
+    ]);
+
+    const { dashboardRouter } = await import("./dashboard.js");
+    const res = await dashboardRouter.request("http://localhost/");
+    const html = await res.text();
+
+    expect(res.status).toBe(200);
+    expect(html).toMatch(/\.agent-status-cell\b[^}]*white-space:\s*nowrap/);
+    expect(html).toMatch(
+      /<span style="(?=[^"]*white-space:\s*nowrap)(?=[^"]*background:#3b82f6;color:#fff)[^"]*">running<\/span>/i
+    );
+    expect(html).toMatch(
+      /<span style="(?=[^"]*white-space:\s*nowrap)(?=[^"]*background:#ef4444;color:#fff)[^"]*">Merge conflicts<\/span>/i
+    );
+    expect(html).toMatch(
+      /<span style="(?=[^"]*white-space:\s*nowrap)(?=[^"]*background:#22c55e;color:#fff)[^"]*">No conflicts<\/span>/i
+    );
+    expect(html).toMatch(
+      /<span style="(?=[^"]*white-space:\s*nowrap)(?=[^"]*background:#e5e7eb;color:#111)[^"]*">Unknown<\/span>/i
+    );
+    expect(html).toMatch(
+      /<span style="(?=[^"]*white-space:\s*nowrap)(?=[^"]*background:#2563eb;color:#fff)[^"]*">Review running<\/span>/i
+    );
+    expect(html).toMatch(
+      /<span style="(?=[^"]*white-space:\s*nowrap)(?=[^"]*background:#ea580c;color:#fff)[^"]*">Revision running<\/span>/i
+    );
+    expect(html).toMatch(
+      /<span style="(?=[^"]*white-space:\s*nowrap)(?=[^"]*background:#7c3aed;color:#fff)[^"]*">Review \+ revision running<\/span>/i
+    );
+    expect(html).toMatch(
+      /<span style="(?=[^"]*white-space:\s*nowrap)(?=[^"]*background:#3b82f6;color:#fff)[^"]*">In Progress<\/span>/i
+    );
+  });
+
   it("ignores stale running flags once the PR is merged", async () => {
     getDispatchRunsPageMock.mockResolvedValue([
       makeDispatchRun({
@@ -542,6 +616,166 @@ describe("dashboardRouter", () => {
     expect(html).toContain('aria-label="Dismiss notification"');
   });
 
+  it("escapes ticket status names sourced from persisted Jira data", async () => {
+    getDispatchRunsPageMock.mockResolvedValue([
+      makeDispatchRun({
+        ticket_key: "HYDI-93",
+        status: "running",
+        ticket_status_name: "<script>alert(1)</script>",
+        ticket_status_category: "in-flight",
+      }),
+      makeDispatchRun({
+        ticket_key: "HYDI-92",
+        status: "running",
+        ticket_status_name: "<b>R&amp;D</b>",
+        ticket_status_category: "in-flight",
+      }),
+    ]);
+
+    const { dashboardRouter } = await import("./dashboard.js");
+    const res = await dashboardRouter.request("http://localhost/");
+    const html = await res.text();
+
+    expect(res.status).toBe(200);
+    expect(html).toContain("&lt;script&gt;alert(1)&lt;/script&gt;");
+    expect(html).not.toContain("<script>alert(1)</script>");
+    expect(html).toContain("&lt;b&gt;R&amp;amp;D&lt;/b&gt;");
+    expect(html).not.toContain("<b>R&amp;D</b>");
+  });
+
+  it("escapes ticket summary text sourced from persisted Jira data", async () => {
+    getDispatchRunsPageMock.mockResolvedValue([
+      makeDispatchRun({
+        ticket_key: "HYDI-94",
+        summary: "<img src=x onerror=alert(1)>",
+      }),
+    ]);
+
+    const { dashboardRouter } = await import("./dashboard.js");
+    const res = await dashboardRouter.request("http://localhost/");
+    const html = await res.text();
+
+    expect(res.status).toBe(200);
+    expect(html).toContain("&lt;img src=x onerror=alert(1)&gt;");
+    expect(html).not.toContain("<img src=x onerror=alert(1)>");
+  });
+
+  it("escapes blocked-by ticket values sourced from persisted Jira data", async () => {
+    getDispatchRunsPageMock.mockResolvedValue([
+      makeDispatchRun({
+        ticket_key: "HYDI-95",
+        status: "blocked",
+        blocked_by: ["<script>alert(1)</script>"],
+      }),
+    ]);
+
+    const { dashboardRouter } = await import("./dashboard.js");
+    const res = await dashboardRouter.request("http://localhost/");
+    const html = await res.text();
+
+    expect(res.status).toBe(200);
+    expect(html).toContain("Blocked by: &lt;script&gt;alert(1)&lt;/script&gt;");
+    expect(html).not.toContain("Blocked by: <script>alert(1)</script>");
+  });
+
+  it("escapes ticket_key in link text and aria-label attributes", async () => {
+    getDispatchRunsPageMock.mockResolvedValue([
+      makeDispatchRun({
+        ticket_key: "HYDI'<img>",
+        summary: "!!!",
+        error: "failure",
+      }),
+    ]);
+
+    const { dashboardRouter } = await import("./dashboard.js");
+    const res = await dashboardRouter.request(
+      "http://localhost/?deleteFailed=HYDI%27%3Cimg%3E"
+    );
+    const html = await res.text();
+
+    expect(res.status).toBe(200);
+    expect(html).toContain(">HYDI&#39;&lt;img&gt;</a>");
+    expect(html).toContain('aria-label="Open actions for HYDI&#39;&lt;img&gt;"');
+    expect(html).toContain('aria-label="Show error for HYDI&#39;&lt;img&gt;"');
+    expect(html).toContain(
+      "data-confirm-message=\"Force delete HYDI&#39;&lt;img&gt;? This skips the open-PR safety check and only removes the run from the dashboard.\""
+    );
+    expect(html).toContain('action="/dashboard/HYDI%27%3Cimg%3E/delete"');
+    expect(html).toContain("<code>agent/HYDI&#39;&lt;img&gt;</code>");
+    expect(html).not.toContain("<code>agent/HYDI'<img></code>");
+    expect(html).toContain('data-copy-branch="agent/HYDI&#39;&lt;img&gt;"');
+    expect(html).not.toContain(">HYDI'<img></a>");
+  });
+
+  it("escapes project_key text sourced from persisted Jira data", async () => {
+    getDispatchRunsPageMock.mockResolvedValue([
+      makeDispatchRun({
+        ticket_key: "HYDI-96",
+        project_key: "<b>PRJ</b>",
+      }),
+    ]);
+
+    const { dashboardRouter } = await import("./dashboard.js");
+    const res = await dashboardRouter.request("http://localhost/");
+    const html = await res.text();
+
+    expect(res.status).toBe(200);
+    expect(html).toContain("<td>&lt;b&gt;PRJ&lt;/b&gt;</td>");
+    expect(html).not.toContain("<td><b>PRJ</b></td>");
+  });
+
+  it("escapes session_link and pr_url href attributes in rendered links", async () => {
+    getDispatchRunsPageMock.mockResolvedValue([
+      makeDispatchRun({
+        ticket_key: "HYDI-97",
+        status: "running",
+        session_link: "https://oz.warp.dev/runs/abc?a=1&b=2",
+      }),
+      makeDispatchRun({
+        ticket_key: "HYDI-98",
+        status: "succeeded",
+        pr_url: "https://github.com/org/repo/pull/98?a=1&b=2",
+      }),
+    ]);
+    parseGithubPullRequestUrlMock.mockReturnValue({ owner: "org", repo: "repo", pullNumber: 98 });
+
+    const { dashboardRouter } = await import("./dashboard.js");
+    const res = await dashboardRouter.request("http://localhost/");
+    const html = await res.text();
+
+    expect(res.status).toBe(200);
+    expect(html).toContain('href="https://oz.warp.dev/runs/abc?a=1&amp;b=2" target="_blank">Open</a>');
+    expect(html).toContain(
+      'href="https://github.com/org/repo/pull/98?a=1&amp;b=2" target="_blank">PR #98</a>'
+    );
+  });
+
+  it("omits links when session_link or pr_url use unsafe protocols", async () => {
+    getDispatchRunsPageMock.mockResolvedValue([
+      makeDispatchRun({
+        ticket_key: "HYDI-99",
+        status: "running",
+        session_link: "javascript:alert(1)",
+      }),
+      makeDispatchRun({
+        ticket_key: "HYDI-100",
+        status: "succeeded",
+        pr_url: "data:text/html,boom",
+      }),
+    ]);
+
+    const { dashboardRouter } = await import("./dashboard.js");
+    const res = await dashboardRouter.request("http://localhost/");
+    const html = await res.text();
+
+    expect(res.status).toBe(200);
+    expect(html).not.toContain('href="javascript:alert(1)"');
+    expect(html).not.toContain('href="data:text/html,boom"');
+    expect(html).not.toContain(">Open</a>");
+    expect(html).not.toContain(">Session</a>");
+    expect(html).not.toContain(">PR</a>");
+  });
+
   // ─── Polling script (replaces full-page meta refresh) ──────────────────────
 
   it("uses client-side polling of the fragment instead of a full-page meta refresh", async () => {
@@ -562,6 +796,7 @@ describe("dashboardRouter", () => {
     expect(html).toContain("clearTransientDashboardQueryParams");
     expect(html).toContain('for (const key of ["notice", "noticeType", "deleteFailed"])');
     expect(html).toContain("window.history.replaceState(null, \"\", nextUrl)");
+    expect(html).toContain('if (!form.closest("[data-row-menu]")) return;');
     expect(html).toContain('document.addEventListener("keydown", (event) => {');
     expect(html).toContain('event.key !== "Escape"');
     expect(html).toContain("data-error-token-button");

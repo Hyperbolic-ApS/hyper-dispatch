@@ -81,6 +81,9 @@ function escapeHtml(value: string): string {
     .replace(/"/g, "&quot;")
     .replace(/'/g, "&#39;");
 }
+function isSafeUrl(url: string): boolean {
+  return /^https?:\/\//i.test(url) || url.startsWith("/");
+}
 
 const dashboardStatusFilterOptions = [
   { key: "running", label: "Running", style: "background:#3b82f6;color:#fff", statuses: ["running"] },
@@ -103,6 +106,10 @@ const dashboardStatusFilterKeys = new Set<DashboardStatusFilterKey>(
 const dashboardStatusesByFilterKey = new Map<DashboardStatusFilterKey, Set<string>>(
   dashboardStatusFilterOptions.map((option) => [option.key, new Set<string>(option.statuses)])
 );
+// Keep badges as inline-flex so text stays vertically centered and future status icons align cleanly.
+const BASE_BADGE_STYLE =
+  "padding:2px 8px;border-radius:4px;font-size:0.75rem;font-weight:600;" +
+  "display:inline-flex;align-items:center;white-space:nowrap;";
 
 function statusBadge(status: string): string {
   const colors: Record<string, string> = {
@@ -115,7 +122,9 @@ function statusBadge(status: string): string {
     stale: "background:#6b7280;color:#fff",
   };
   const style = colors[status] ?? "background:#e5e7eb;color:#000";
-  return `<span style="padding:2px 8px;border-radius:4px;font-size:0.75rem;font-weight:600;${style}">${status}</span>`;
+  // status is a DB-controlled enum today; escapeHtml is a forward-safety guard
+  // for potential future custom status strings.
+  return `<span style="${BASE_BADGE_STYLE}${style}">${escapeHtml(status)}</span>`;
 }
 function ticketStatusBadge(statusName: string | null, categoryKey: string | null): string {
   if (!statusName) return "-";
@@ -125,17 +134,17 @@ function ticketStatusBadge(statusName: string | null, categoryKey: string | null
     "new": "background:#eab308;color:#000",
   };
   const style = colors[categoryKey ?? ""] ?? "background:#e5e7eb;color:#000";
-  return `<span style="padding:2px 8px;border-radius:4px;font-size:0.75rem;font-weight:600;${style}">${statusName}</span>`;
+  return `<span style="${BASE_BADGE_STYLE}${style}">${escapeHtml(statusName)}</span>`;
 }
 function prConflictBadge(hasConflicts: boolean | null, hasPr: boolean): string {
   if (!hasPr) return "-";
   if (hasConflicts === true) {
-    return '<span style="padding:2px 8px;border-radius:4px;font-size:0.75rem;font-weight:600;background:#ef4444;color:#fff">Merge conflicts</span>';
+    return `<span style="${BASE_BADGE_STYLE}background:#ef4444;color:#fff">Merge conflicts</span>`;
   }
   if (hasConflicts === false) {
-    return '<span style="padding:2px 8px;border-radius:4px;font-size:0.75rem;font-weight:600;background:#22c55e;color:#fff">No conflicts</span>';
+    return `<span style="${BASE_BADGE_STYLE}background:#22c55e;color:#fff">No conflicts</span>`;
   }
-  return '<span style="padding:2px 8px;border-radius:4px;font-size:0.75rem;font-weight:600;background:#e5e7eb;color:#111">Unknown</span>';
+  return `<span style="${BASE_BADGE_STYLE}background:#e5e7eb;color:#111">Unknown</span>`;
 }
 type PrActionState = {
   reviewRunning: boolean;
@@ -149,25 +158,25 @@ function prStatusBadge(
 ): string {
   if (!hasPr) return "-";
   if (actionState?.reviewRunning && actionState?.revisionRunning) {
-    return '<span style="padding:2px 8px;border-radius:4px;font-size:0.75rem;font-weight:600;background:#7c3aed;color:#fff">Review + revision running</span>';
+    return `<span style="${BASE_BADGE_STYLE}background:#7c3aed;color:#fff">Review + revision running</span>`;
   }
   if (actionState?.reviewRunning) {
-    return '<span style="padding:2px 8px;border-radius:4px;font-size:0.75rem;font-weight:600;background:#2563eb;color:#fff">Review running</span>';
+    return `<span style="${BASE_BADGE_STYLE}background:#2563eb;color:#fff">Review running</span>`;
   }
   if (actionState?.revisionRunning) {
-    return '<span style="padding:2px 8px;border-radius:4px;font-size:0.75rem;font-weight:600;background:#ea580c;color:#fff">Revision running</span>';
+    return `<span style="${BASE_BADGE_STYLE}background:#ea580c;color:#fff">Revision running</span>`;
   }
   return prConflictBadge(hasConflicts, hasPr);
 }
 
 function prodDeploymentBadge(deployedToProd: boolean | null): string {
   if (deployedToProd === true) {
-    return '<span style="padding:2px 8px;border-radius:4px;font-size:0.75rem;font-weight:600;background:#22c55e;color:#fff">Deployed</span>';
+    return `<span style="${BASE_BADGE_STYLE}background:#22c55e;color:#fff">Deployed</span>`;
   }
   if (deployedToProd === false) {
-    return '<span style="padding:2px 8px;border-radius:4px;font-size:0.75rem;font-weight:600;background:#f97316;color:#fff">Not deployed</span>';
+    return `<span style="${BASE_BADGE_STYLE}background:#f97316;color:#fff">Not deployed</span>`;
   }
-  return '<span style="padding:2px 8px;border-radius:4px;font-size:0.75rem;font-weight:600;background:#e5e7eb;color:#111">Unknown</span>';
+  return `<span style="${BASE_BADGE_STYLE}background:#e5e7eb;color:#111">Unknown</span>`;
 }
 
 const showProdDeploymentColumn = false;
@@ -246,7 +255,7 @@ const CSS = `
   .pagination a:hover { background: #f9fafb; text-decoration: none; }
   .pagination .disabled { padding: 6px 12px; border: 1px solid #e5e7eb; border-radius: 6px; color: #9ca3af; background: #f9fafb; }
   .page-info { font-weight: 500; }
-  .agent-status-cell { display: inline-flex; align-items: center; gap: 6px; }
+  .agent-status-cell { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
   .error-token-wrap { position: relative; display: inline-flex; align-items: center; }
   .error-token { width: 16px; height: 16px; border: 0; border-radius: 999px; background: #dc2626; color: #fff; font-size: 0.68rem; font-weight: 700; line-height: 1; display: inline-flex; align-items: center; justify-content: center; cursor: pointer; padding: 0; }
   .error-token:focus-visible { outline: 2px solid #111827; outline-offset: 2px; }
@@ -452,22 +461,31 @@ function renderDashboardContent(view: DashboardView): string {
     .join("\n");
 
   const rows = runs.map((run) => {
-    const ticketUrl = `${env.JIRA_SITE_URL}/browse/${run.ticket_key}`;
+    const escapedTicketKey = escapeHtml(run.ticket_key);
+    const escapedProjectKey = escapeHtml(run.project_key);
+    const encodedTicketKey = encodeURIComponent(run.ticket_key).replace(/'/g, "%27");
+    const ticketUrl = `${env.JIRA_SITE_URL}/browse/${encodedTicketKey}`;
+    const escapedTicketUrl = escapeHtml(ticketUrl);
     const branchName = buildAgentBranchName(run.ticket_key, run.summary);
     const runtime = formatDuration(run.spawned_at, run.completed_at);
-    const ozTaskLink = run.session_link
-      ? `<a href="${run.session_link}" target="_blank">Open</a>`
+    const safeSessionLink =
+      run.session_link && isSafeUrl(run.session_link) ? run.session_link : null;
+    const safePrUrl = run.pr_url && isSafeUrl(run.pr_url) ? run.pr_url : null;
+    const escapedSessionLink = safeSessionLink ? escapeHtml(safeSessionLink) : null;
+    const escapedPrUrl = safePrUrl ? escapeHtml(safePrUrl) : null;
+    const ozTaskLink = safeSessionLink
+      ? `<a href="${escapedSessionLink}" target="_blank">Open</a>`
       : "-";
     const blockedByHtml =
       run.blocked_by && run.blocked_by.length > 0
-        ? `<div class="blocked-by">Blocked by: ${run.blocked_by.join(", ")}</div>`
+        ? `<div class="blocked-by">Blocked by: ${run.blocked_by.map(escapeHtml).join(", ")}</div>`
         : "";
     const actionLink =
-      run.status === "running" && run.session_link
-        ? `<a href="${run.session_link}" target="_blank">Session</a>`
-        : run.status === "succeeded" && run.pr_url
+      run.status === "running" && safeSessionLink
+        ? `<a href="${escapedSessionLink}" target="_blank">Session</a>`
+        : run.status === "succeeded" && safePrUrl
           ? (() => {
-              const parsedPr = parseGithubPullRequestUrl(run.pr_url ?? "");
+              const parsedPr = parseGithubPullRequestUrl(safePrUrl ?? "");
               const prLabel = parsedPr ? `PR #${parsedPr.pullNumber}` : "PR";
               const prDisplayState = run.pr_display_state;
               const prSuffix =
@@ -478,42 +496,42 @@ function renderDashboardContent(view: DashboardView): string {
                     : prDisplayState === "closed"
                       ? " (Closed)"
                       : "";
-              return `<a href="${run.pr_url}" target="_blank">${prLabel}${prSuffix}</a>`;
+              return `<a href="${escapedPrUrl}" target="_blank">${prLabel}${prSuffix}</a>`;
             })()
           : "-";
     const showForceDelete = run.ticket_key === deleteFailedKey;
     const rowActions = `<div class="row-menu" data-row-menu>
-      <button class="row-menu-btn" type="button" data-row-menu-button aria-label="Open actions for ${run.ticket_key}" aria-expanded="false">⋮</button>
+      <button class="row-menu-btn" type="button" data-row-menu-button aria-label="Open actions for ${escapedTicketKey}" aria-expanded="false">⋮</button>
       <div class="row-menu-list" role="menu">
-        <form method="POST" action="/dashboard/${run.ticket_key}/delete" style="margin:0;">
+        <form method="POST" action="/dashboard/${encodedTicketKey}/delete" style="margin:0;">
           ${selectedProject ? `<input type="hidden" name="project" value="${escapedSelectedProject}">` : ""}
           ${hideDone ? '<input type="hidden" name="hideDone" value="1">' : ""}
           ${selectedStatus ? `<input type="hidden" name="status" value="${escapeHtml(selectedStatus)}">` : ""}
           <button class="row-menu-delete" type="submit" role="menuitem">Delete</button>
-          ${showForceDelete ? `<button class="row-menu-delete" type="submit" name="force" value="1" role="menuitem" onclick="return confirm('Force delete ${run.ticket_key}? This skips the open-PR safety check and only removes the run from the dashboard.')">Force delete</button>` : ""}
+          ${showForceDelete ? `<button class="row-menu-delete" type="submit" name="force" value="1" role="menuitem" data-confirm-message="Force delete ${escapedTicketKey}? This skips the open-PR safety check and only removes the run from the dashboard.">Force delete</button>` : ""}
         </form>
       </div>
     </div>`;
 
     const errorToken = run.error
       ? `<span class="error-token-wrap" data-error-token>
-          <button class="error-token" type="button" data-error-token-button aria-label="Show error for ${run.ticket_key}" aria-expanded="false">!</button>
+          <button class="error-token" type="button" data-error-token-button aria-label="Show error for ${escapedTicketKey}" aria-expanded="false">!</button>
           <span class="error-tooltip" role="tooltip">${escapeHtml(run.error)}</span>
         </span>`
       : "";
 
     return `<tr>
-      <td><a href="${ticketUrl}" target="_blank">${run.ticket_key}</a></td>
-      <td>${run.project_key}</td>
-      <td>${run.summary ? run.summary.slice(0, 80) : "-"}</td>
+      <td><a href="${escapedTicketUrl}" target="_blank">${escapedTicketKey}</a></td>
+      <td>${escapedProjectKey}</td>
+      <td>${run.summary ? escapeHtml(run.summary.slice(0, 80)) : "-"}</td>
       <td>${ticketStatusBadge(run.ticket_status_name, run.ticket_status_category)}</td>
       <td><span class="agent-status-cell">${statusBadge(run.status)}${errorToken}</span></td>
       <td>${formatSpawnedAtDate(run.spawned_at)}</td>
       <td>${runtime}</td>
       <td>
         <span class="branch-cell">
-          <code>${branchName}</code>
-          <button class="copy-branch-btn" type="button" data-copy-branch="${branchName}" aria-label="Copy ${branchName} to clipboard"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="7" width="12" height="15" rx="2" ry="2"/><path d="M9 7V4a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v11a2 2 0 0 1-2 2h-4"/></svg></button>
+          <code>${escapeHtml(branchName)}</code>
+          <button class="copy-branch-btn" type="button" data-copy-branch="${escapeHtml(branchName)}" aria-label="Copy ${escapeHtml(branchName)} to clipboard"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="7" width="12" height="15" rx="2" ry="2"/><path d="M9 7V4a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v11a2 2 0 0 1-2 2h-4"/></svg></button>
         </span>
       </td>
       <td>${ozTaskLink}</td>
@@ -749,6 +767,18 @@ dashboardRouter.get("/", async (c) => {
         if (openButton instanceof HTMLButtonElement) {
           openButton.setAttribute("aria-expanded", "false");
         }
+      }
+    });
+    document.addEventListener("submit", (event) => {
+      const form = event.target;
+      if (!(form instanceof HTMLFormElement)) return;
+      if (!form.closest("[data-row-menu]")) return;
+      const submitter = event.submitter;
+      if (!(submitter instanceof HTMLButtonElement)) return;
+      const message = submitter.dataset.confirmMessage;
+      if (!message) return;
+      if (!window.confirm(message)) {
+        event.preventDefault();
       }
     });
     document.addEventListener("click", (event) => {
