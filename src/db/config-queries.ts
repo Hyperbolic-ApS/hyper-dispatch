@@ -1,31 +1,7 @@
 import { sql } from "./connection.js";
+import type { DispatchRun } from "./dispatch-run.js";
 import type { RunRecord } from "./queries.js";
-
-export interface DispatchRun {
-  ticket_key: string;
-  project_key: string;
-  summary: string | null;
-  status: string;
-  blocked_by: string[] | null;
-  priority: number;
-  ticket_status_name: string | null;
-  ticket_status_category: string | null;
-  run_record_id?: string | null;
-  run_type?: string | null;
-  run_id: string | null;
-  model: string | null;
-  spawned_at: Date | null;
-  completed_at: Date | null;
-  pr_url: string | null;
-  pr_has_conflicts: boolean | null;
-  pr_display_state: "open" | "draft" | "merged" | "closed" | null;
-  pr_review_running: boolean | null;
-  pr_revision_running: boolean | null;
-  session_link: string | null;
-  error: string | null;
-  created_at: Date;
-  updated_at: Date;
-}
+export type { DispatchRun } from "./dispatch-run.js";
 
 export interface ProjectConfig {
   project_key: string;
@@ -213,7 +189,7 @@ function dispatchRunSelectSql() {
       de.priority,
       de.ticket_status_name,
       de.ticket_status_category,
-      lr.id AS run_record_id,
+      lr.id,
       lr.run_type,
       lr.run_id,
       lr.model,

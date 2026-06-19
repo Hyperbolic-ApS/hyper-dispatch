@@ -1,7 +1,9 @@
 import { randomUUID } from "node:crypto";
 import { sql } from "./connection.js";
 import type { ProjectConfig } from "./config-queries.js";
+import type { DispatchRun } from "./dispatch-run.js";
 export type { ProjectConfig };
+export type { DispatchRun } from "./dispatch-run.js";
 
 export type DispatchStatus =
   | "blocked"
@@ -45,31 +47,6 @@ export interface RunRecord {
   updated_at: Date;
 }
 
-export interface DispatchRun {
-  id: string | null;
-  ticket_key: string;
-  project_key: string;
-  run_type: string | null;
-  run_id: string | null;
-  status: DispatchStatus;
-  model: string | null;
-  spawned_at: Date | null;
-  completed_at: Date | null;
-  pr_url: string | null;
-  pr_has_conflicts: boolean | null;
-  pr_display_state: "open" | "draft" | "merged" | "closed" | null;
-  pr_review_running: boolean | null;
-  pr_revision_running: boolean | null;
-  session_link: string | null;
-  error: string | null;
-  summary: string | null;
-  blocked_by: string[] | null;
-  priority: number;
-  ticket_status_name: string | null;
-  ticket_status_category: string | null;
-  created_at: Date;
-  updated_at: Date;
-}
 
 export interface UpsertDispatchRunInput {
   ticketKey: string;
@@ -314,40 +291,65 @@ export async function claimRevisionSlot(
   previousStatus: DispatchStatus | null;
   previousRunId: string | null;
 }> {
-  const runningRows = await sql<Array<{ count: string }>>`
-    SELECT COUNT(*)::text AS count
-    FROM dispatch_runs
-    WHERE ticket_key = ${ticketKey}
-      AND status = 'running'
+  const rows = await sql<
+    Array<{ previous_status: DispatchStatus; previous_run_id: string | null }>
+  >`
+    WITH latest AS (
+      SELECT status, run_id
+      FROM dispatch_runs
+      WHERE ticket_key = ${ticketKey}
+      ORDER BY created_at DESC
+      LIMIT 1
+    ),
+    claimed AS (
+      UPDATE dispatch_entries de
+      SET
+        status = 'running',
+        updated_at = NOW()
+      WHERE de.ticket_key = ${ticketKey}
+        AND de.status <> 'running'
+        AND EXISTS (
+          SELECT 1
+          FROM latest
+          WHERE status NOT IN ('queued', 'blocked', 'blocked_cycle', 'running')
+        )
+        AND NOT EXISTS (
+          SELECT 1
+          FROM dispatch_runs dr
+          WHERE dr.ticket_key = de.ticket_key
+            AND dr.status = 'running'
+        )
+      RETURNING de.ticket_key
+    )
+    SELECT
+      latest.status AS previous_status,
+      latest.run_id AS previous_run_id
+    FROM latest
+    WHERE EXISTS (SELECT 1 FROM claimed)
   `;
-  if (parseInt(runningRows[0]?.count ?? "0", 10) > 0) {
+  if (!rows[0]) {
     return { claimed: false, previousStatus: null, previousRunId: null };
   }
-
-  const latestRows = await sql<Array<{ status: DispatchStatus; run_id: string | null }>>`
-    SELECT status, run_id
-    FROM dispatch_runs
-    WHERE ticket_key = ${ticketKey}
-    ORDER BY created_at DESC
-    LIMIT 1
-  `;
-  await sql`
-    UPDATE dispatch_entries
-    SET status = 'running', updated_at = NOW()
-    WHERE ticket_key = ${ticketKey}
-  `;
   return {
     claimed: true,
-    previousStatus: latestRows[0]?.status ?? null,
-    previousRunId: latestRows[0]?.run_id ?? null,
+    previousStatus: rows[0].previous_status,
+    previousRunId: rows[0].previous_run_id,
   };
 }
 
 export async function releaseRevisionSlot(
   ticketKey: string,
   _previousStatus: DispatchStatus | null,
-  _previousRunId: string | null = null
+  _previousRunId: string | null = null,
+  failedRunRecordId: string | null = null
 ): Promise<void> {
+  if (failedRunRecordId) {
+    await sql`
+      DELETE FROM dispatch_runs
+      WHERE id = ${failedRunRecordId}::uuid
+        AND ticket_key = ${ticketKey}
+    `;
+  }
   await recomputeEntryStatus(ticketKey);
 }
 
@@ -447,14 +449,82 @@ export async function updateRunStatus(
     FROM updated
     INNER JOIN dispatch_entries e ON e.ticket_key = updated.ticket_key
   `;
+  let updatedRun = rows[0] ?? null;
+  const shouldInsertFallbackRun =
+    updates.status !== undefined ||
+    updates.run_id !== undefined ||
+    updates.model !== undefined ||
+    updates.spawned_at !== undefined ||
+    updates.completed_at !== undefined ||
+    updates.pr_url !== undefined ||
+    updates.pr_has_conflicts !== undefined ||
+    updates.pr_display_state !== undefined ||
+    updates.pr_review_running !== undefined ||
+    updates.pr_revision_running !== undefined ||
+    updates.session_link !== undefined ||
+    updates.error !== undefined;
 
-  if (!rows[0] && updates.status) {
-    await sql`
-      UPDATE dispatch_entries
-      SET status = ${updates.status}, updated_at = NOW()
-      WHERE ticket_key = ${ticketKey}
+  if (!updatedRun && shouldInsertFallbackRun) {
+    const fallbackRows = await sql<DispatchRun[]>`
+      WITH entry AS (
+        UPDATE dispatch_entries
+        SET
+          status = COALESCE(${updates.status ?? null}::text, status),
+          updated_at = NOW()
+        WHERE ticket_key = ${ticketKey}
+        RETURNING *
+      ),
+      inserted AS (
+        INSERT INTO dispatch_runs (
+          id,
+          ticket_key,
+          run_type,
+          run_id,
+          status,
+          model,
+          spawned_at,
+          completed_at,
+          pr_url,
+          pr_has_conflicts,
+          pr_display_state,
+          pr_review_running,
+          pr_revision_running,
+          session_link,
+          error,
+          updated_at
+        )
+        SELECT
+          ${randomUUID()},
+          ${ticketKey},
+          'implementation',
+          ${updates.run_id ?? null},
+          COALESCE(${updates.status ?? null}::text, entry.status),
+          ${updates.model ?? null},
+          ${updates.spawned_at ?? null},
+          ${updates.completed_at ?? null},
+          ${updates.pr_url ?? null},
+          ${updates.pr_has_conflicts ?? null},
+          ${updates.pr_display_state ?? null},
+          ${updates.pr_review_running ?? null},
+          ${updates.pr_revision_running ?? null},
+          ${updates.session_link ?? null},
+          ${updates.error ?? null},
+          NOW()
+        FROM entry
+        RETURNING *
+      )
+      SELECT
+        inserted.*,
+        entry.project_key,
+        entry.summary,
+        entry.blocked_by,
+        entry.priority,
+        entry.ticket_status_name,
+        entry.ticket_status_category
+      FROM inserted
+      INNER JOIN entry ON entry.ticket_key = inserted.ticket_key
     `;
-    return null;
+    updatedRun = fallbackRows[0] ?? null;
   }
   if (updates.blocked_by !== undefined) {
     await sql`
@@ -467,7 +537,7 @@ export async function updateRunStatus(
   if (updates.status || updates.completed_at !== undefined) {
     await recomputeEntryStatus(ticketKey);
   }
-  return rows[0] ?? null;
+  return updatedRun;
 }
 
 export async function removeBlocker(

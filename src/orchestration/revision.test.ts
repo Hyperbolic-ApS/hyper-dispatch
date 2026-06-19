@@ -5,7 +5,6 @@ const {
   getProjectConfigMock,
   getRunsByPrUrlMock,
   createRunMock,
-  updateRunStatusMock,
   tryRecordRevisionEventMock,
   deleteRevisionEventMock,
   claimRevisionSlotMock,
@@ -21,7 +20,6 @@ const {
   getProjectConfigMock: vi.fn(),
   getRunsByPrUrlMock: vi.fn(),
   createRunMock: vi.fn(),
-  updateRunStatusMock: vi.fn(),
   tryRecordRevisionEventMock: vi.fn(),
   deleteRevisionEventMock: vi.fn(),
   claimRevisionSlotMock: vi.fn(),
@@ -39,7 +37,6 @@ vi.mock("../db/queries.js", () => ({
   getProjectConfig: getProjectConfigMock,
   getRunsByPrUrl: getRunsByPrUrlMock,
   createRun: createRunMock,
-  updateRunStatus: updateRunStatusMock,
   tryRecordRevisionEvent: tryRecordRevisionEventMock,
   deleteRevisionEvent: deleteRevisionEventMock,
   claimRevisionSlot: claimRevisionSlotMock,
@@ -86,7 +83,6 @@ describe("handleGithubRevisionWebhook", () => {
     getProjectConfigMock.mockReset();
     getRunsByPrUrlMock.mockReset();
     createRunMock.mockReset();
-    updateRunStatusMock.mockReset();
     tryRecordRevisionEventMock.mockReset();
     deleteRevisionEventMock.mockReset();
     claimRevisionSlotMock.mockReset();
@@ -169,11 +165,12 @@ describe("handleGithubRevisionWebhook", () => {
       actionItemCount: 1,
     });
     expect(runMock).toHaveBeenCalledTimes(1);
-    expect(updateRunStatusMock).toHaveBeenCalledWith(
-      "HYDI-44",
+    expect(createRunMock).toHaveBeenCalledWith(
       expect.objectContaining({
+        ticketKey: "HYDI-44",
+        runType: "revision",
         status: "running",
-        run_id: "run_revision_1",
+        runId: "run_revision_1",
         model: "auto",
       })
     );
@@ -293,11 +290,16 @@ describe("handleGithubRevisionWebhook", () => {
       })
     ).rejects.toThrow("spawn failed");
 
-    expect(releaseRevisionSlotMock).toHaveBeenCalledWith("HYDI-44", "succeeded", "run-original-44");
+    expect(releaseRevisionSlotMock).toHaveBeenCalledWith(
+      "HYDI-44",
+      "succeeded",
+      "run-original-44",
+      null
+    );
     expect(deleteRevisionEventMock).toHaveBeenCalledWith("review:999");
   });
 
-  it("releases the slot and event record when the DB write fails after a successful spawn", async () => {
+  it("releases the slot and event record when creating the run record fails after spawn", async () => {
     getRunsByPrUrlMock.mockResolvedValue([
       makeDispatchRun({
         ticket_key: "HYDI-44",
@@ -308,8 +310,8 @@ describe("handleGithubRevisionWebhook", () => {
     octokitPaginateMock.mockResolvedValue([
       { path: "src/orchestration/revision.ts", line: 120, body: "**[REV-001] Important**" },
     ]);
-    // The Oz spawn succeeds, but persisting the run to the DB fails.
-    updateRunStatusMock.mockRejectedValue(new Error("db write failed"));
+    // The Oz spawn succeeds, but persisting the run record fails.
+    createRunMock.mockRejectedValue(new Error("db write failed"));
 
     const { handleGithubRevisionWebhook } = await import("./revision.js");
     await expect(
@@ -330,7 +332,12 @@ describe("handleGithubRevisionWebhook", () => {
 
     // The Oz run was spawned, then the slot + event key were released for retry.
     expect(runMock).toHaveBeenCalledTimes(1);
-    expect(releaseRevisionSlotMock).toHaveBeenCalledWith("HYDI-44", "succeeded", "run-original-44");
+    expect(releaseRevisionSlotMock).toHaveBeenCalledWith(
+      "HYDI-44",
+      "succeeded",
+      "run-original-44",
+      null
+    );
     expect(deleteRevisionEventMock).toHaveBeenCalledWith("review:999");
   });
 
@@ -374,7 +381,7 @@ describe("handleGithubRevisionWebhook", () => {
       reason: "review has no action items",
     });
     expect(runMock).not.toHaveBeenCalled();
-    expect(updateRunStatusMock).not.toHaveBeenCalled();
+    expect(createRunMock).not.toHaveBeenCalled();
   });
 
   it("spawns manual revision from /revise comment using comment instructions", async () => {

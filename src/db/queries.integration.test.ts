@@ -318,33 +318,44 @@ describe.skipIf(!process.env.RUN_DB_TESTS)("queries integration", () => {
     expect(afterDelete).toBe(true);
   });
 
-  it("integration: claimRevisionSlot claims terminal runs, clears run_id, and releaseRevisionSlot restores prior status and run_id", async () => {
+  it("integration: concurrent claimRevisionSlot allows one winner and releaseRevisionSlot removes failed revision rows", async () => {
     await queries.upsertDispatchRun({
       ticketKey: "HYDI-701",
       projectKey: "HYDI",
       status: "succeeded",
     });
     await queries.updateRunStatus("HYDI-701", { run_id: "run-original-701" });
-
-    const firstClaim = await queries.claimRevisionSlot("HYDI-701");
-    const secondClaim = await queries.claimRevisionSlot("HYDI-701");
-    expect(firstClaim).toEqual({
+    const [claimA, claimB] = await Promise.all([
+      queries.claimRevisionSlot("HYDI-701"),
+      queries.claimRevisionSlot("HYDI-701"),
+    ]);
+    const claims = [claimA, claimB];
+    const winners = claims.filter((claim) => claim.claimed);
+    const losers = claims.filter((claim) => !claim.claimed);
+    expect(winners).toHaveLength(1);
+    expect(losers).toHaveLength(1);
+    expect(winners[0]).toEqual({
       claimed: true,
       previousStatus: "succeeded",
       previousRunId: "run-original-701",
     });
-    expect(secondClaim).toEqual({ claimed: false, previousStatus: null, previousRunId: null });
+    expect(losers[0]).toEqual({ claimed: false, previousStatus: null, previousRunId: null });
 
-    // run_id is cleared so the monitor's `!run.run_id` guard skips the row
-    // until spawnRevisionRun binds the new run id.
-    const running = await queries.getRunsByStatus("running");
-    const claimed = running.find((run) => run.ticket_key === "HYDI-701");
-    expect(claimed).toBeDefined();
-    expect(claimed?.run_id).toBeNull();
+    const failedRevisionRun = await queries.createRun({
+      ticketKey: "HYDI-701",
+      runType: "revision",
+      status: "running",
+      spawnedAt: new Date(),
+    });
 
-    // Releasing restores BOTH the prior status and the original run_id so no
-    // orphaned row remains in 'running' with a NULL run_id.
-    await queries.releaseRevisionSlot("HYDI-701", firstClaim.previousStatus, firstClaim.previousRunId);
+    await queries.releaseRevisionSlot(
+      "HYDI-701",
+      winners[0]!.previousStatus,
+      winners[0]!.previousRunId,
+      failedRevisionRun.id
+    );
+    const runningAfterRelease = await queries.getRunsByStatus("running");
+    expect(runningAfterRelease.find((run) => run.id === failedRevisionRun.id)).toBeUndefined();
     const afterRelease = (await queries.getRunsByProject("HYDI")).find(
       (run) => run.ticket_key === "HYDI-701"
     );
@@ -505,6 +516,31 @@ describe.skipIf(!process.env.RUN_DB_TESTS)("queries integration", () => {
       status: "succeeded",
     });
     expect(preservePrDisplayState?.pr_display_state).toBe("merged");
+  });
+
+  it("integration: updateRunStatus fallback creates a run record and preserves metadata when no run row exists", async () => {
+    await queries.upsertDispatchRun({
+      ticketKey: "HYDI-72",
+      projectKey: "HYDI",
+      status: "queued",
+    });
+
+    const fallback = await queries.updateRunStatus("HYDI-72", {
+      status: "failed",
+      error: "spawn failed before run binding",
+      session_link: "https://warp.dev/runs/fallback-72",
+      pr_url: "https://github.com/hyperbolic-co/hyper-dispatch/pull/72",
+    });
+    expect(fallback?.status).toBe("failed");
+    expect(fallback?.error).toBe("spawn failed before run binding");
+    expect(fallback?.session_link).toBe("https://warp.dev/runs/fallback-72");
+    expect(fallback?.pr_url).toBe("https://github.com/hyperbolic-co/hyper-dispatch/pull/72");
+
+    const failedRuns = await queries.getRunsByStatus("failed");
+    const persisted = failedRuns.find((run) => run.ticket_key === "HYDI-72");
+    expect(persisted).toBeDefined();
+    expect(persisted?.error).toBe("spawn failed before run binding");
+    expect(persisted?.pr_url).toBe("https://github.com/hyperbolic-co/hyper-dispatch/pull/72");
   });
 
   it("integration: getRunsBlockedBy returns only runs containing the blocker key", async () => {

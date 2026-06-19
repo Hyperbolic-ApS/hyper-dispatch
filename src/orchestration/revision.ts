@@ -9,7 +9,6 @@ import {
   getRunsByPrUrl,
   releaseRevisionSlot,
   tryRecordRevisionEvent,
-  updateRunStatus,
 } from "../db/queries.js";
 import type { ProjectConfig } from "../db/queries.js";
 import * as jira from "../jira/client.js";
@@ -181,11 +180,10 @@ async function resolveTrackedRevisionContext(pr: PullRequestRef): Promise<Tracke
 
 /**
  * Spawn an Oz revision run for the given PR/branch and return the new run id, its
- * session link, and the resolved model. This function performs NO database write:
- * the caller (`recordAndSpawnRevision`) owns the `updateRunStatus` call so that a
- * spawn success followed by a DB-write failure shares a single cleanup path. The
- * resolved `config` is passed in by the caller (which already loaded it) to avoid
- * a redundant `getProjectConfig` round-trip.
+ * run-record id. The run record is inserted only after the Oz spawn succeeds so a
+ * spawn failure cannot leave an orphaned `status='running'` row. The resolved
+ * `config` is passed in by the caller (which already loaded it) to avoid a
+ * redundant `getProjectConfig` round-trip.
  */
 async function spawnRevisionRun(params: {
   ticketKey: string;
@@ -195,7 +193,7 @@ async function spawnRevisionRun(params: {
   mode: RevisionMode;
   reviewState: string;
   feedback: string;
-}): Promise<{ runRecordId: string; runId: string; sessionLink: string | null; model: string | null }> {
+}): Promise<{ runRecordId: string; runId: string }> {
   const { config } = params;
   const { ozApiKey } = resolveProjectTokens(config);
   const issue = await jira.getIssue(params.ticketKey);
@@ -203,12 +201,7 @@ async function spawnRevisionRun(params: {
   const mcpServers = config.mcp_servers as Record<string, McpServerConfig> | null;
   const agentIdentityUid = config.oz_agent_identity_uid?.trim() || undefined;
   const client = getOzClient(ozApiKey);
-  const runRecord = await createRun({
-    ticketKey: params.ticketKey,
-    runType: "revision",
-    status: "running",
-    spawnedAt: new Date(),
-  });
+  const spawnedAt = new Date();
 
   const runResponse = await client.agent.run({
     prompt: buildPrompt({
@@ -238,8 +231,17 @@ async function spawnRevisionRun(params: {
       err
     );
   }
+  const runRecord = await createRun({
+    ticketKey: params.ticketKey,
+    runType: "revision",
+    status: "running",
+    runId: runResponse.run_id,
+    model: model ?? null,
+    spawnedAt,
+    sessionLink,
+  });
 
-  return { runRecordId: runRecord.id, runId: runResponse.run_id, sessionLink, model: model ?? null };
+  return { runRecordId: runRecord.id, runId: runResponse.run_id };
 }
 
 async function getPullRequestHeadBranch(
@@ -272,13 +274,9 @@ type GuardedRevisionOutcome =
  *     webhook (GitHub retries) does not spawn a duplicate run.
  *  2. Concurrency — an atomic running-run claim ensures rapid successive reviews
  *     cannot start overlapping revision agents on the same branch.
- * On success the tracked run's row is REPURPOSED for the revision: its `run_id`,
- * `model`, `spawned_at`, and `session_link` are overwritten with the revision
- * run's values, so the original dispatch run's id/session link are not preserved
- * (the row always reflects the most recent run — see docs/database.md). If either
- * the spawn or the subsequent DB write fails, the claim (status + original
- * run_id) and the idempotency ledger entry are released so a genuine retry can
- * proceed.
+ * On success a new `dispatch_runs` row is inserted for the revision attempt. If
+ * either spawn or run-record creation fails, the claim and idempotency entry are
+ * released so a genuine retry can proceed.
  */
 async function recordAndSpawnRevision(params: {
   eventKey: string;
@@ -302,27 +300,19 @@ async function recordAndSpawnRevision(params: {
     // a dropped review, an operator must delete its row from `revision_events`.
     return { status: "in_progress" };
   }
+  let spawnedRunRecordId: string | null = null;
 
   try {
     const run = await spawnRevisionRun(params.spawn);
-    // The DB write lives here (not in spawnRevisionRun) so that a write failure
-    // after a successful spawn shares the same release/cleanup path below as a
-    // spawn failure.
-    await updateRunStatus(ticketKey, {
-      status: "running",
-      run_id: run.runId,
-      run_record_id: run.runRecordId,
-      model: run.model,
-      spawned_at: new Date(),
-      completed_at: null,
-      error: null,
-      session_link: run.sessionLink,
-    });
+    spawnedRunRecordId = run.runRecordId;
     return { status: "spawned", runId: run.runId };
   } catch (err) {
-    await releaseRevisionSlot(ticketKey, claim.previousStatus, claim.previousRunId).catch(
-      () => {}
-    );
+    await releaseRevisionSlot(
+      ticketKey,
+      claim.previousStatus,
+      claim.previousRunId,
+      spawnedRunRecordId
+    ).catch(() => {});
     await deleteRevisionEvent(params.eventKey).catch(() => {});
     throw err;
   }

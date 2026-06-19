@@ -99,9 +99,10 @@ Idempotency ledger for PR revision webhook events. One row per processed deliver
 - `claimRunForSpawn(ticketKey)` atomically claims a queued entry for dispatch (`queued` → `running`) and prevents duplicate scheduler dispatches.
 - `releaseSpawnClaim(ticketKey)` reverts a claimed entry (`running` → `queued`) only if no run id has been bound on the active run.
 - `createRun(ticketKey, runType)` inserts a new run record for every implementation/revision spawn attempt.
-- `updateRunStatus` writes run-level fields and can target a specific run record id (`run_record_id`) so monitor/webhook updates only mutate the intended run row.
+- `updateRunStatus` writes run-level fields and can target a specific run record id (`run_record_id`) so monitor/webhook updates only mutate the intended run row. If no run row exists yet, it creates one from the supplied fields (using the entry status when `status` is omitted) so metadata like `error`, `session_link`, and PR fields are not silently dropped.
 - `recomputeEntryStatus(ticketKey)` derives `dispatch_entries.status` from run history so entry-level status remains consistent with the latest active/terminal run state.
-- `claimRevisionSlot` / `releaseRevisionSlot` coordinate revision dispatches so overlapping revision workers are prevented while preserving recoverability on spawn failure.
+- `claimRevisionSlot` atomically flips the entry to `running` only when no running run exists and the latest run is terminal, so concurrent revision triggers cannot both claim.
+- `releaseRevisionSlot` recomputes entry status and can optionally delete a failed revision run record, making the ticket re-claimable after spawn/create failures.
 
 ## Retention
 `revision_events` rows are written for every processed revision webhook delivery and are **never auto-deleted** (a successful revision's event key is kept permanently so a later redelivery of the same review/comment stays de-duplicated). The table grows roughly with the number of revision triggers, so operators should periodically purge old rows, e.g.:
@@ -111,4 +112,4 @@ DELETE FROM revision_events WHERE created_at < NOW() - INTERVAL '90 days';
 The `idx_revision_events_created_at` index keeps this range delete cheap. A 90-day window is far longer than GitHub's webhook redelivery horizon, so purging beyond it cannot reintroduce duplicate revision runs.
 ## Migrations
 
-The schema is applied on startup by `runMigrations()` (`src/db/migrate.ts`): it executes `src/db/schema.sql` (idempotent `CREATE TABLE IF NOT EXISTS` / `CREATE INDEX IF NOT EXISTS`) followed by additive `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` statements. It also migrates legacy single-table state (`dispatch_runs` as ticket-level row) into the split model by renaming the old table, creating the new schema, backfilling `dispatch_entries` + per-run `dispatch_runs`, then dropping the legacy table. Repeated runs are safe.
+The schema is applied on startup by `runMigrations()` (`src/db/migrate.ts`): it executes `src/db/schema.sql` (idempotent `CREATE TABLE IF NOT EXISTS` / `CREATE INDEX IF NOT EXISTS`) followed by additive `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` statements. Legacy single-table state (`dispatch_runs` as ticket-level row) is migrated into the split model inside one transaction (rename legacy table → apply schema → backfill `dispatch_entries` + per-run `dispatch_runs` → drop legacy table), so a crash cannot leave a half-migrated database.

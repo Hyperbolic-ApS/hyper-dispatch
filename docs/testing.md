@@ -52,6 +52,7 @@ This document defines the testing contract for HyperDispatch. All new tests adde
 - Prefer Arrange/Act/Assert structure in each test.
 ## DB integration tests
 - Integration suite lives in `src/db/queries.integration.test.ts` and executes `src/db/schema.sql` in `beforeAll`.
+- Legacy migration integration coverage lives in `src/db/migrate.integration.test.ts` and runs against in-process PGlite (always on in `npm test`).
 - Each test case truncates `dispatch_runs` and `project_configs` in `beforeEach` for isolation.
 - Default suite stays fast/offline:
   - `npm test` runs normally; integration tests self-skip unless `RUN_DB_TESTS=1` is set.
