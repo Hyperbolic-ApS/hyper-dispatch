@@ -456,7 +456,11 @@ function renderDashboardContent(view: DashboardView): string {
     .join("\n");
 
   const rows = runs.map((run) => {
-    const ticketUrl = `${env.JIRA_SITE_URL}/browse/${run.ticket_key}`;
+    const escapedTicketKey = escapeHtml(run.ticket_key);
+    const escapedProjectKey = escapeHtml(run.project_key);
+    const encodedTicketKey = encodeURIComponent(run.ticket_key).replace(/'/g, "%27");
+    const ticketUrl = `${env.JIRA_SITE_URL}/browse/${encodedTicketKey}`;
+    const escapedTicketUrl = escapeHtml(ticketUrl);
     const branchName = buildAgentBranchName(run.ticket_key, run.summary);
     const runtime = formatDuration(run.spawned_at, run.completed_at);
     const ozTaskLink = run.session_link
@@ -487,28 +491,28 @@ function renderDashboardContent(view: DashboardView): string {
           : "-";
     const showForceDelete = run.ticket_key === deleteFailedKey;
     const rowActions = `<div class="row-menu" data-row-menu>
-      <button class="row-menu-btn" type="button" data-row-menu-button aria-label="Open actions for ${run.ticket_key}" aria-expanded="false">⋮</button>
+      <button class="row-menu-btn" type="button" data-row-menu-button aria-label="Open actions for ${escapedTicketKey}" aria-expanded="false">⋮</button>
       <div class="row-menu-list" role="menu">
-        <form method="POST" action="/dashboard/${run.ticket_key}/delete" style="margin:0;">
+        <form method="POST" action="/dashboard/${encodedTicketKey}/delete" style="margin:0;">
           ${selectedProject ? `<input type="hidden" name="project" value="${escapedSelectedProject}">` : ""}
           ${hideDone ? '<input type="hidden" name="hideDone" value="1">' : ""}
           ${selectedStatus ? `<input type="hidden" name="status" value="${escapeHtml(selectedStatus)}">` : ""}
           <button class="row-menu-delete" type="submit" role="menuitem">Delete</button>
-          ${showForceDelete ? `<button class="row-menu-delete" type="submit" name="force" value="1" role="menuitem" onclick="return confirm('Force delete ${run.ticket_key}? This skips the open-PR safety check and only removes the run from the dashboard.')">Force delete</button>` : ""}
+          ${showForceDelete ? `<button class="row-menu-delete" type="submit" name="force" value="1" role="menuitem" data-confirm-message="Force delete ${escapedTicketKey}? This skips the open-PR safety check and only removes the run from the dashboard.">Force delete</button>` : ""}
         </form>
       </div>
     </div>`;
 
     const errorToken = run.error
       ? `<span class="error-token-wrap" data-error-token>
-          <button class="error-token" type="button" data-error-token-button aria-label="Show error for ${run.ticket_key}" aria-expanded="false">!</button>
+          <button class="error-token" type="button" data-error-token-button aria-label="Show error for ${escapedTicketKey}" aria-expanded="false">!</button>
           <span class="error-tooltip" role="tooltip">${escapeHtml(run.error)}</span>
         </span>`
       : "";
 
     return `<tr>
-      <td><a href="${ticketUrl}" target="_blank">${run.ticket_key}</a></td>
-      <td>${run.project_key}</td>
+      <td><a href="${escapedTicketUrl}" target="_blank">${escapedTicketKey}</a></td>
+      <td>${escapedProjectKey}</td>
       <td>${run.summary ? escapeHtml(run.summary.slice(0, 80)) : "-"}</td>
       <td>${ticketStatusBadge(run.ticket_status_name, run.ticket_status_category)}</td>
       <td><span class="agent-status-cell">${statusBadge(run.status)}${errorToken}</span></td>
@@ -753,6 +757,17 @@ dashboardRouter.get("/", async (c) => {
         if (openButton instanceof HTMLButtonElement) {
           openButton.setAttribute("aria-expanded", "false");
         }
+      }
+    });
+    document.addEventListener("submit", (event) => {
+      const form = event.target;
+      if (!(form instanceof HTMLFormElement)) return;
+      const submitter = event.submitter;
+      if (!(submitter instanceof HTMLButtonElement)) return;
+      const message = submitter.dataset.confirmMessage;
+      if (!message) return;
+      if (!window.confirm(message)) {
+        event.preventDefault();
       }
     });
     document.addEventListener("click", (event) => {

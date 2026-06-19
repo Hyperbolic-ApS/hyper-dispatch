@@ -678,6 +678,48 @@ describe("dashboardRouter", () => {
     expect(html).not.toContain("Blocked by: <script>alert(1)</script>");
   });
 
+  it("escapes ticket_key in link text and aria-label attributes", async () => {
+    getDispatchRunsPageMock.mockResolvedValue([
+      makeDispatchRun({
+        ticket_key: "HYDI'<img>",
+        error: "failure",
+      }),
+    ]);
+
+    const { dashboardRouter } = await import("./dashboard.js");
+    const res = await dashboardRouter.request(
+      "http://localhost/?deleteFailed=HYDI%27%3Cimg%3E"
+    );
+    const html = await res.text();
+
+    expect(res.status).toBe(200);
+    expect(html).toContain(">HYDI&#39;&lt;img&gt;</a>");
+    expect(html).toContain('aria-label="Open actions for HYDI&#39;&lt;img&gt;"');
+    expect(html).toContain('aria-label="Show error for HYDI&#39;&lt;img&gt;"');
+    expect(html).toContain(
+      "data-confirm-message=\"Force delete HYDI&#39;&lt;img&gt;? This skips the open-PR safety check and only removes the run from the dashboard.\""
+    );
+    expect(html).toContain('action="/dashboard/HYDI%27%3Cimg%3E/delete"');
+    expect(html).not.toContain(">HYDI'<img></a>");
+  });
+
+  it("escapes project_key text sourced from persisted Jira data", async () => {
+    getDispatchRunsPageMock.mockResolvedValue([
+      makeDispatchRun({
+        ticket_key: "HYDI-96",
+        project_key: "<b>PRJ</b>",
+      }),
+    ]);
+
+    const { dashboardRouter } = await import("./dashboard.js");
+    const res = await dashboardRouter.request("http://localhost/");
+    const html = await res.text();
+
+    expect(res.status).toBe(200);
+    expect(html).toContain("<td>&lt;b&gt;PRJ&lt;/b&gt;</td>");
+    expect(html).not.toContain("<td><b>PRJ</b></td>");
+  });
+
   // ─── Polling script (replaces full-page meta refresh) ──────────────────────
 
   it("uses client-side polling of the fragment instead of a full-page meta refresh", async () => {

@@ -9,7 +9,9 @@ Both pages now share the HyperDispatch brand icon (header logo) and include the 
 
 Displays all tracked dispatch runs in a table with:
 - Ticket key (linked to Jira)
+  - Ticket key text and related dashboard accessibility labels are HTML-escaped before rendering, so malformed persisted keys (for example `HYDI'<img>`) are displayed literally and cannot inject markup into link text or `aria-label` attributes
 - Project key
+  - Project key text is HTML-escaped before rendering, matching the same Jira-data hardening applied to summary/status/blocked-by fields
 - Summary
   - Summary text is HTML-escaped before rendering in the table cell, so Jira-provided markup characters are displayed literally (for example `<img src=x onerror=alert(1)>` becomes text, not executable HTML)
 - Ticket status (Jira workflow status, e.g. To Do / In Progress / Done) read from persisted `dispatch_runs.ticket_status_name` / `ticket_status_category` — the dashboard render performs zero live Jira calls regardless of how many runs are tracked
@@ -42,6 +44,7 @@ Displays all tracked dispatch runs in a table with:
   - When the PR status cannot be verified (for example a GitHub API error or rate limiting), `Delete` is declined with an accurate inline error that points to `Force delete`; the underlying error is logged server-side. It no longer incorrectly claims the PR is still open.
   - Delete success/error notices render with a dismiss (`×`) control so operators can clear them without navigating away
   - `Force delete` (POST body `force=1`) skips the GitHub PR check entirely and removes the run regardless of PR state, after a browser confirmation prompt. It only deletes the local `dispatch_runs` record; it does not touch the PR or GitHub.
+    - The confirmation prompt message is carried via a `data-confirm-message` attribute and handled by delegated client-side submit logic (no inline `onclick` string interpolation with ticket data).
     - It is shown (stacked beneath `Delete`) only for a row whose normal `Delete` was just declined: the failed attempt redirects back with `deleteFailed=<ticket>`, which gates the button. A successful delete or any other navigation clears it.
 - Blocked-by info (for blocked entries)
   - Blocked-by ticket values are HTML-escaped before rendering, so markup-like content is displayed as text instead of interpreted HTML
