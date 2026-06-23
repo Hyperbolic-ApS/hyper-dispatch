@@ -75,7 +75,7 @@ Receives signed GitHub webhook payloads for PR state updates and revision trigge
 
 ### `GET /api/status`
 
-Returns all tracked ticket entries as JSON, each enriched with latest-run fields and full run history, plus status counts.
+Returns all tracked ticket entries as JSON, each enriched with latest-run fields and recent run history (newest first, currently capped to 25 rows per ticket), plus status counts.
 
 **Response:**
 ```json

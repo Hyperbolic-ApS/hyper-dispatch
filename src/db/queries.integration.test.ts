@@ -364,28 +364,29 @@ describe.skipIf(!process.env.RUN_DB_TESTS)("queries integration", () => {
     const losers = claims.filter((claim) => !claim.claimed);
     expect(winners).toHaveLength(1);
     expect(losers).toHaveLength(1);
-    expect(winners[0]).toEqual({
+    expect(winners[0]).toMatchObject({
       claimed: true,
       previousStatus: "succeeded",
       previousRunId: "run-original-701",
+      runRecordId: expect.any(String),
     });
-    expect(losers[0]).toEqual({ claimed: false, previousStatus: null, previousRunId: null });
-
-    const failedRevisionRun = await queries.createRun({
-      ticketKey: "HYDI-701",
-      runType: "revision",
-      status: "running",
-      spawnedAt: new Date(),
+    expect(losers[0]).toEqual({
+      claimed: false,
+      previousStatus: null,
+      previousRunId: null,
+      runRecordId: null,
     });
+    const failedRevisionRunId = winners[0]!.runRecordId;
+    expect(failedRevisionRunId).toBeTruthy();
 
     await queries.releaseRevisionSlot(
       "HYDI-701",
       winners[0]!.previousStatus,
       winners[0]!.previousRunId,
-      failedRevisionRun.id
+      failedRevisionRunId
     );
     const runningAfterRelease = await queries.getRunsByStatus("running");
-    expect(runningAfterRelease.find((run) => run.id === failedRevisionRun.id)).toBeUndefined();
+    expect(runningAfterRelease.find((run) => run.id === failedRevisionRunId)).toBeUndefined();
     const afterRelease = (await queries.getRunsByProject("HYDI")).find(
       (run) => run.ticket_key === "HYDI-701"
     );
@@ -393,10 +394,51 @@ describe.skipIf(!process.env.RUN_DB_TESTS)("queries integration", () => {
     expect(afterRelease?.run_id).toBe("run-original-701");
 
     const reclaim = await queries.claimRevisionSlot("HYDI-701");
-    expect(reclaim).toEqual({
+    expect(reclaim).toMatchObject({
       claimed: true,
       previousStatus: "succeeded",
       previousRunId: "run-original-701",
+      runRecordId: expect.any(String),
+    });
+  });
+
+  it("integration: recomputeEntryStatus between revision claim and spawn cannot reopen a second claim", async () => {
+    await queries.upsertDispatchRun({
+      ticketKey: "HYDI-702",
+      projectKey: "HYDI",
+      status: "succeeded",
+    });
+    const priorRun = await queries.createRun({
+      ticketKey: "HYDI-702",
+      runType: "implementation",
+      status: "succeeded",
+      runId: "run-original-702",
+      completedAt: new Date("2026-01-01T00:05:00.000Z"),
+    });
+    const claim = await queries.claimRevisionSlot("HYDI-702");
+    expect(claim).toMatchObject({
+      claimed: true,
+      previousStatus: "succeeded",
+      previousRunId: "run-original-702",
+      runRecordId: expect.any(String),
+    });
+
+    await queries.updateRunStatus("HYDI-702", {
+      run_record_id: priorRun.id,
+      status: "succeeded",
+      completed_at: new Date("2026-01-01T00:10:00.000Z"),
+    });
+    const projected = (await queries.getRunsByProject("HYDI")).find(
+      (run) => run.ticket_key === "HYDI-702"
+    );
+    expect(projected?.status).toBe("running");
+
+    const secondClaim = await queries.claimRevisionSlot("HYDI-702");
+    expect(secondClaim).toEqual({
+      claimed: false,
+      previousStatus: null,
+      previousRunId: null,
+      runRecordId: null,
     });
   });
 
@@ -415,7 +457,12 @@ describe.skipIf(!process.env.RUN_DB_TESTS)("queries integration", () => {
       blockedBy: ["HYDI-2"],
     });
 
-    const noPrev = { claimed: false, previousStatus: null, previousRunId: null };
+    const noPrev = {
+      claimed: false,
+      previousStatus: null,
+      previousRunId: null,
+      runRecordId: null,
+    };
     expect(await queries.claimRevisionSlot("HYDI-710")).toEqual(noPrev);
     expect(await queries.claimRevisionSlot("HYDI-711")).toEqual(noPrev);
     expect(await queries.claimRevisionSlot("HYDI-712")).toEqual(noPrev);
@@ -611,6 +658,45 @@ describe.skipIf(!process.env.RUN_DB_TESTS)("queries integration", () => {
     expect(projected?.pr_has_conflicts).toBe(false);
   });
 
+  it("integration: getRunHistoryForTickets caps history per ticket", async () => {
+    await queries.upsertDispatchRun({
+      ticketKey: "HYDI-950",
+      projectKey: "HYDI",
+      status: "queued",
+    });
+    await queries.upsertDispatchRun({
+      ticketKey: "HYDI-951",
+      projectKey: "HYDI",
+      status: "queued",
+    });
+    for (let i = 0; i < 30; i++) {
+      await queries.createRun({
+        ticketKey: "HYDI-950",
+        runType: i % 2 === 0 ? "implementation" : "revision",
+        status: "succeeded",
+        runId: `run-950-${i}`,
+      });
+    }
+    for (let i = 0; i < 8; i++) {
+      await queries.createRun({
+        ticketKey: "HYDI-951",
+        runType: "implementation",
+        status: "succeeded",
+        runId: `run-951-${i}`,
+      });
+    }
+
+    const customCap = await configQueries.getRunHistoryForTickets(
+      ["HYDI-950", "HYDI-951"],
+      10
+    );
+    expect(customCap.filter((run) => run.ticket_key === "HYDI-950")).toHaveLength(10);
+    expect(customCap.filter((run) => run.ticket_key === "HYDI-951")).toHaveLength(8);
+
+    const defaultCap = await configQueries.getRunHistoryForTickets(["HYDI-950"]);
+    expect(defaultCap).toHaveLength(25);
+  });
+
   it("integration: updateRunStatus fallback creates a run record and preserves metadata when no run row exists", async () => {
     await queries.upsertDispatchRun({
       ticketKey: "HYDI-72",
@@ -619,11 +705,13 @@ describe.skipIf(!process.env.RUN_DB_TESTS)("queries integration", () => {
     });
 
     const fallback = await queries.updateRunStatus("HYDI-72", {
+      run_type: "revision",
       status: "failed",
       error: "spawn failed before run binding",
       session_link: "https://warp.dev/runs/fallback-72",
       pr_url: "https://github.com/hyperbolic-co/hyper-dispatch/pull/72",
     });
+    expect(fallback?.run_type).toBe("revision");
     expect(fallback?.status).toBe("failed");
     expect(fallback?.error).toBe("spawn failed before run binding");
     expect(fallback?.session_link).toBe("https://warp.dev/runs/fallback-72");
@@ -632,8 +720,34 @@ describe.skipIf(!process.env.RUN_DB_TESTS)("queries integration", () => {
     const failedRuns = await queries.getRunsByStatus("failed");
     const persisted = failedRuns.find((run) => run.ticket_key === "HYDI-72");
     expect(persisted).toBeDefined();
+    expect(persisted?.run_type).toBe("revision");
     expect(persisted?.error).toBe("spawn failed before run binding");
     expect(persisted?.pr_url).toBe("https://github.com/hyperbolic-co/hyper-dispatch/pull/72");
+  });
+
+  it("integration: updateRunStatus does not fabricate a run when explicit run_record_id is missing", async () => {
+    await queries.upsertDispatchRun({
+      ticketKey: "HYDI-73",
+      projectKey: "HYDI",
+      status: "queued",
+    });
+    const before = await queries.getRunsForTicket("HYDI-73");
+    expect(before).toHaveLength(0);
+
+    const result = await queries.updateRunStatus("HYDI-73", {
+      run_record_id: "11111111-2222-4333-8444-555555555555",
+      run_type: "revision",
+      status: "failed",
+      error: "missing run record",
+    });
+    expect(result).toBeNull();
+
+    const after = await queries.getRunsForTicket("HYDI-73");
+    expect(after).toHaveLength(0);
+    const projected = (await queries.getRunsByProject("HYDI")).find(
+      (run) => run.ticket_key === "HYDI-73"
+    );
+    expect(projected?.status).toBe("queued");
   });
 
   it("integration: getRunsBlockedBy returns only runs containing the blocker key", async () => {
@@ -755,7 +869,7 @@ describe.skipIf(!process.env.RUN_DB_TESTS)("queries integration", () => {
 
     const queued = await queries.getRunsByStatus("queued");
     const byProject = await queries.getRunsByProject("HYDI");
-    const allRuns = await queries.getAllRuns();
+    const allRuns = await configQueries.getAllDispatchRuns();
 
     expect(queued.map((run) => run.ticket_key)).toEqual(["HYDI-101", "HYDI-100"]);
     expect(byProject).toHaveLength(3);

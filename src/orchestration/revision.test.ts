@@ -4,7 +4,6 @@ import { makeDispatchRun, makeJiraIssue, makeProjectConfig } from "../test/fixtu
 const {
   getProjectConfigMock,
   getRunsByPrUrlMock,
-  createRunMock,
   updateRunStatusMock,
   tryRecordRevisionEventMock,
   deleteRevisionEventMock,
@@ -20,7 +19,6 @@ const {
 } = vi.hoisted(() => ({
   getProjectConfigMock: vi.fn(),
   getRunsByPrUrlMock: vi.fn(),
-  createRunMock: vi.fn(),
   updateRunStatusMock: vi.fn(),
   tryRecordRevisionEventMock: vi.fn(),
   deleteRevisionEventMock: vi.fn(),
@@ -38,7 +36,6 @@ const {
 vi.mock("../db/queries.js", () => ({
   getProjectConfig: getProjectConfigMock,
   getRunsByPrUrl: getRunsByPrUrlMock,
-  createRun: createRunMock,
   updateRunStatus: updateRunStatusMock,
   tryRecordRevisionEvent: tryRecordRevisionEventMock,
   deleteRevisionEvent: deleteRevisionEventMock,
@@ -85,7 +82,6 @@ describe("handleGithubRevisionWebhook", () => {
   beforeEach(() => {
     getProjectConfigMock.mockReset();
     getRunsByPrUrlMock.mockReset();
-    createRunMock.mockReset();
     updateRunStatusMock.mockReset();
     tryRecordRevisionEventMock.mockReset();
     deleteRevisionEventMock.mockReset();
@@ -114,7 +110,6 @@ describe("handleGithubRevisionWebhook", () => {
     jiraGetIssueMock.mockResolvedValue(makeJiraIssue({ key: "HYDI-44" }));
     resolveModelMock.mockReturnValue("auto");
     runMock.mockResolvedValue({ run_id: "run_revision_1" });
-    createRunMock.mockResolvedValue({ id: "revision-record-1" });
     updateRunStatusMock.mockResolvedValue(null);
     retrieveRunMock.mockResolvedValue({ session_link: "https://warp.dev/run_revision_1" });
     tryRecordRevisionEventMock.mockResolvedValue(true);
@@ -123,6 +118,7 @@ describe("handleGithubRevisionWebhook", () => {
       claimed: true,
       previousStatus: "succeeded",
       previousRunId: "run-original-44",
+      runRecordId: "revision-record-claimed",
     });
     releaseRevisionSlotMock.mockResolvedValue(undefined);
   });
@@ -170,17 +166,11 @@ describe("handleGithubRevisionWebhook", () => {
       actionItemCount: 1,
     });
     expect(runMock).toHaveBeenCalledTimes(1);
-    expect(createRunMock).toHaveBeenCalledWith(
-      expect.objectContaining({
-        ticketKey: "HYDI-44",
-        runType: "revision",
-        status: "running",
-        model: "auto",
-      })
-    );
     expect(updateRunStatusMock).toHaveBeenCalledWith("HYDI-44", {
-      run_record_id: "revision-record-1",
+      run_record_id: "revision-record-claimed",
+      run_type: "revision",
       run_id: "run_revision_1",
+      model: "auto",
       spawned_at: expect.any(Date),
       session_link: "https://warp.dev/run_revision_1",
     });
@@ -246,6 +236,7 @@ describe("handleGithubRevisionWebhook", () => {
       claimed: false,
       previousStatus: null,
       previousRunId: null,
+      runRecordId: null,
     });
 
     const { handleGithubRevisionWebhook } = await import("./revision.js");
@@ -304,12 +295,12 @@ describe("handleGithubRevisionWebhook", () => {
       "HYDI-44",
       "succeeded",
       "run-original-44",
-      "revision-record-1"
+      "revision-record-claimed"
     );
     expect(deleteRevisionEventMock).toHaveBeenCalledWith("review:999");
   });
 
-  it("does not spawn and remains single-spawn on retry when run record creation fails", async () => {
+  it("does not spawn and remains single-spawn on retry when Jira lookup fails before spawn", async () => {
     getRunsByPrUrlMock.mockResolvedValue([
       makeDispatchRun({
         ticket_key: "HYDI-44",
@@ -320,9 +311,9 @@ describe("handleGithubRevisionWebhook", () => {
     octokitPaginateMock.mockResolvedValue([
       { path: "src/orchestration/revision.ts", line: 120, body: "**[REV-001] Important**" },
     ]);
-    createRunMock
-      .mockRejectedValueOnce(new Error("db write failed"))
-      .mockResolvedValueOnce({ id: "revision-record-2" });
+    jiraGetIssueMock
+      .mockRejectedValueOnce(new Error("jira lookup failed"))
+      .mockResolvedValue(makeJiraIssue({ key: "HYDI-44" }));
 
     const { handleGithubRevisionWebhook } = await import("./revision.js");
     await expect(
@@ -339,14 +330,14 @@ describe("handleGithubRevisionWebhook", () => {
           review: { id: 999, state: "COMMENTED", body: "1. [REV-001] Fix it." },
         },
       })
-    ).rejects.toThrow("db write failed");
-    // Run creation failed before external spawn, so no untracked Oz run exists.
+    ).rejects.toThrow("jira lookup failed");
+    // Spawn failed before the external run starts, so no untracked Oz run exists.
     expect(runMock).not.toHaveBeenCalled();
     expect(releaseRevisionSlotMock).toHaveBeenCalledWith(
       "HYDI-44",
       "succeeded",
       "run-original-44",
-      null
+      "revision-record-claimed"
     );
     expect(deleteRevisionEventMock).toHaveBeenCalledWith("review:999");
 
@@ -371,7 +362,7 @@ describe("handleGithubRevisionWebhook", () => {
       runId: "run_revision_1",
       actionItemCount: 1,
     });
-    // Across initial DB failure + retry, only one external Oz run is started.
+    // Across initial pre-spawn failure + retry, only one external Oz run is started.
     expect(runMock).toHaveBeenCalledTimes(1);
   });
 
@@ -415,7 +406,6 @@ describe("handleGithubRevisionWebhook", () => {
       reason: "review has no action items",
     });
     expect(runMock).not.toHaveBeenCalled();
-    expect(createRunMock).not.toHaveBeenCalled();
   });
 
   it("spawns manual revision from /revise comment using comment instructions", async () => {

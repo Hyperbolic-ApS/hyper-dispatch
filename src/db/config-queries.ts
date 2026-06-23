@@ -225,6 +225,7 @@ export async function getRunCountsByStatus(): Promise<RunStatusCount[]> {
 }
 
 export const DEFAULT_DASHBOARD_PAGE_SIZE = 50;
+export const RUN_HISTORY_PER_TICKET_LIMIT = 25;
 
 export interface DispatchRunFilter {
   projectKey?: string | null;
@@ -330,13 +331,42 @@ export async function getDistinctRunProjectKeys(): Promise<string[]> {
 }
 
 export async function getRunHistoryForTickets(
-  ticketKeys: string[]
+  ticketKeys: string[],
+  perTicketLimit: number = RUN_HISTORY_PER_TICKET_LIMIT
 ): Promise<RunRecord[]> {
   if (ticketKeys.length === 0) return [];
+  const boundedPerTicketLimit = Math.max(1, perTicketLimit);
   return sql<RunRecord[]>`
-    SELECT *
-    FROM dispatch_runs
-    WHERE ticket_key = ANY(${ticketKeys}::text[])
+    WITH ranked AS (
+      SELECT
+        dr.*,
+        ROW_NUMBER() OVER (
+          PARTITION BY dr.ticket_key
+          ORDER BY dr.created_at DESC
+        ) AS row_num
+      FROM dispatch_runs dr
+      WHERE dr.ticket_key = ANY(${ticketKeys}::text[])
+    )
+    SELECT
+      id,
+      ticket_key,
+      run_type,
+      run_id,
+      status,
+      model,
+      spawned_at,
+      completed_at,
+      pr_url,
+      pr_has_conflicts,
+      pr_display_state,
+      pr_review_running,
+      pr_revision_running,
+      session_link,
+      error,
+      created_at,
+      updated_at
+    FROM ranked
+    WHERE row_num <= ${boundedPerTicketLimit}
     ORDER BY ticket_key ASC, created_at DESC
   `;
 }

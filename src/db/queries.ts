@@ -169,29 +169,6 @@ export async function getRunsForTicket(ticketKey: string): Promise<RunRecord[]> 
   `;
 }
 
-export async function getLatestRun(ticketKey: string): Promise<RunRecord | null> {
-  const rows = await sql<RunRecord[]>`
-    SELECT *
-    FROM dispatch_runs
-    WHERE ticket_key = ${ticketKey}
-    ORDER BY created_at DESC
-    LIMIT 1
-  `;
-  return rows[0] ?? null;
-}
-
-export async function getLatestRunsForTickets(
-  ticketKeys: string[]
-): Promise<RunRecord[]> {
-  if (ticketKeys.length === 0) return [];
-  return sql<RunRecord[]>`
-    SELECT DISTINCT ON (ticket_key) *
-    FROM dispatch_runs
-    WHERE ticket_key = ANY(${ticketKeys}::text[])
-    ORDER BY ticket_key, created_at DESC
-  `;
-}
-
 export async function getRunsByPrUrl(prUrl: string): Promise<DispatchRun[]> {
   return sql<DispatchRun[]>`
     SELECT
@@ -290,9 +267,15 @@ export async function claimRevisionSlot(
   claimed: boolean;
   previousStatus: DispatchStatus | null;
   previousRunId: string | null;
+  runRecordId: string | null;
 }> {
+  const runRecordId = randomUUID();
   const rows = await sql<
-    Array<{ previous_status: DispatchStatus; previous_run_id: string | null }>
+    Array<{
+      previous_status: DispatchStatus;
+      previous_run_id: string | null;
+      run_record_id: string;
+    }>
   >`
     WITH latest AS (
       SELECT status, run_id
@@ -320,20 +303,44 @@ export async function claimRevisionSlot(
             AND dr.status = 'running'
         )
       RETURNING de.ticket_key
+    ),
+    inserted AS (
+      INSERT INTO dispatch_runs (
+        id,
+        ticket_key,
+        run_type,
+        status,
+        spawned_at
+      )
+      SELECT
+        ${runRecordId}::uuid,
+        claimed.ticket_key,
+        'revision',
+        'running',
+        NOW()
+      FROM claimed
+      RETURNING id
     )
     SELECT
       latest.status AS previous_status,
-      latest.run_id AS previous_run_id
+      latest.run_id AS previous_run_id,
+      inserted.id::text AS run_record_id
     FROM latest
-    WHERE EXISTS (SELECT 1 FROM claimed)
+    CROSS JOIN inserted
   `;
   if (!rows[0]) {
-    return { claimed: false, previousStatus: null, previousRunId: null };
+    return {
+      claimed: false,
+      previousStatus: null,
+      previousRunId: null,
+      runRecordId: null,
+    };
   }
   return {
     claimed: true,
     previousStatus: rows[0].previous_status,
     previousRunId: rows[0].previous_run_id,
+    runRecordId: rows[0].run_record_id,
   };
 }
 
@@ -407,9 +414,14 @@ export async function updateRunStatus(
       | "session_link"
       | "error"
     >
-  > & { blocked_by?: string[] | null; run_record_id?: string | null }
+  > & {
+    blocked_by?: string[] | null;
+    run_record_id?: string | null;
+    run_type?: string;
+  }
 ): Promise<DispatchRun | null> {
   const runRecordId = updates.run_record_id ?? undefined;
+  const hasExplicitRunRecordId = runRecordId !== undefined;
   const shouldUpdateStatus = updates.status !== undefined;
   const shouldUpdateRunId = updates.run_id != null;
   const shouldUpdateModel = updates.model != null;
@@ -422,6 +434,7 @@ export async function updateRunStatus(
   const shouldUpdatePrRevisionRunning = updates.pr_revision_running != null;
   const shouldUpdateSessionLink = updates.session_link != null;
   const shouldUpdateError = updates.error != null;
+  const fallbackRunType = updates.run_type ?? "implementation";
   const rows = await sql<DispatchRun[]>`
     WITH target AS (
       SELECT id
@@ -476,7 +489,7 @@ export async function updateRunStatus(
     shouldUpdateSessionLink ||
     shouldUpdateError;
 
-  if (!updatedRun && shouldInsertFallbackRun) {
+  if (!updatedRun && shouldInsertFallbackRun && !hasExplicitRunRecordId) {
     const fallbackRows = await sql<DispatchRun[]>`
       WITH entry AS (
         UPDATE dispatch_entries
@@ -508,7 +521,7 @@ export async function updateRunStatus(
         SELECT
           ${randomUUID()},
           ${ticketKey},
-          'implementation',
+          ${fallbackRunType},
           ${shouldUpdateRunId ? (updates.run_id ?? null) : null},
           COALESCE(${updates.status ?? null}::text, entry.status),
           ${shouldUpdateModel ? (updates.model ?? null) : null},
@@ -546,7 +559,7 @@ export async function updateRunStatus(
     `;
   }
 
-  if (shouldUpdateStatus || shouldUpdateCompletedAt) {
+  if (updatedRun && (shouldUpdateStatus || shouldUpdateCompletedAt)) {
     await recomputeEntryStatus(ticketKey);
   }
   return updatedRun;
@@ -612,44 +625,6 @@ export async function getActiveRunCount(): Promise<number> {
     WHERE status = 'running'
   `;
   return parseInt(rows[0]?.count ?? "0", 10);
-}
-
-export async function getAllRuns(): Promise<DispatchRun[]> {
-  return sql<DispatchRun[]>`
-    SELECT
-      de.ticket_key,
-      de.project_key,
-      de.summary,
-      de.status,
-      de.blocked_by,
-      de.priority,
-      de.ticket_status_name,
-      de.ticket_status_category,
-      dr.id,
-      dr.run_type,
-      dr.run_id,
-      dr.model,
-      dr.spawned_at,
-      dr.completed_at,
-      dr.pr_url,
-      dr.pr_has_conflicts,
-      dr.pr_display_state,
-      dr.pr_review_running,
-      dr.pr_revision_running,
-      dr.session_link,
-      dr.error,
-      de.created_at,
-      de.updated_at
-    FROM dispatch_entries de
-    LEFT JOIN LATERAL (
-      SELECT *
-      FROM dispatch_runs
-      WHERE ticket_key = de.ticket_key
-      ORDER BY created_at DESC
-      LIMIT 1
-    ) dr ON true
-    ORDER BY de.created_at DESC
-  `;
 }
 
 export async function getRunsByProject(projectKey: string): Promise<DispatchRun[]> {
