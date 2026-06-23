@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Select a review tier based on PR diff analysis.
 
-Reads .github/review-tiers.yml, inspects the git diff between BASE_SHA and
-HEAD_SHA, and writes the chosen tier's model (and metadata) to $GITHUB_OUTPUT.
+Reads .github/review-tiers.yml, inspects the PR diff between the merge-base of
+BASE_SHA/HEAD_SHA and HEAD_SHA, and writes the chosen tier's model (and metadata)
+to $GITHUB_OUTPUT.
 
 No external dependencies — stdlib only.
 """
@@ -63,20 +64,44 @@ NON_CODE = re.compile(
     r"(\.(md|txt|rst|adoc|csv|svg|png|jpg|gif|ico|lock|toml|yml|yaml|json)$"
     r"|\.github/)", re.I
 )
+TEST_FILE = re.compile(
+    r"(^|/)(__tests__|tests?)(/|$)|(\.|-)(test|spec)\.[^.]+$",
+    re.I,
+)
+
+
+def is_test_file(path):
+    return bool(TEST_FILE.search(path))
+
+
+def merge_base(base, head):
+    """Return the merge-base for PR-style diffing; fall back to base if unavailable."""
+    return run(["git", "merge-base", base, head]) or base
 
 
 def diff_info(base, head):
-    ref = f"{base}..{head}"
+    diff_base = merge_base(base, head)
+    ref = f"{diff_base}..{head}"
     all_files = [f for f in run(["git", "diff", "--name-only", ref]).splitlines() if f]
     code_files = [f for f in all_files if not NON_CODE.search(f)]
+    non_test_code_files = [f for f in code_files if not is_test_file(f)]
     stat = run(["git", "diff", "--shortstat", ref])
     nums = re.findall(r"(\d+)", stat)
     lines = sum(int(n) for n in nums[1:]) if len(nums) > 1 else 0
-    # Only fetch diff for code files to avoid false positives in docs
+    # Only fetch diff for non-test code files to avoid false positives in docs
+    # and test fixtures/assertions.
     diff_text = ""
-    if code_files and len(code_files) <= 200:
-        diff_text = run(["git", "diff", ref, "--"] + code_files)
-    return {"files": code_files, "all_files": all_files, "file_count": len(all_files), "lines": lines, "diff": diff_text}
+    if non_test_code_files and len(non_test_code_files) <= 200:
+        diff_text = run(["git", "diff", ref, "--"] + non_test_code_files)
+    return {
+        "files": code_files,
+        "non_test_files": non_test_code_files,
+        "all_files": all_files,
+        "file_count": len(all_files),
+        "lines": lines,
+        "diff": diff_text,
+        "diff_base": diff_base,
+    }
 
 # ---------------------------------------------------------------------------
 # Trigger → pattern mapping
@@ -88,14 +113,26 @@ TRIGGERS = {
         "file": r"test|spec|__tests__|\.test\.|\.spec\.",
     },
     "public API changed": {
-        "file": r"api/v\d|openapi|swagger|\.proto$|graphql.*schema|routes|endpoint",
+        "file": (
+            r"(^|/)api/v\d(/|$)"
+            r"|(^|/)src/routes/api\.(ts|tsx|js|jsx)$"
+            r"|(^|/)routes/api\.(ts|tsx|js|jsx)$"
+            r"|(^|/)(openapi|swagger)(\.|/)"
+            r"|(^|/).*(openapi|swagger).*\.(ya?ml|json)$"
+            r"|\.proto$"
+            r"|graphql.*schema|schema\.graphql"
+        ),
+        "scope": "all_files",
+        "exclude_tests": True,
     },
     "database query logic changed": {
         "file": r"query|repository|dao|\.sql$",
         "diff": r"\b(SELECT|INSERT|UPDATE|DELETE|CREATE\s+TABLE|ALTER\s+TABLE)\b",
+        "exclude_tests": True,
     },
     "auth-adjacent code changed": {
         "file": r"auth|session|token|oauth|permission|login|credential|identity",
+        "exclude_tests": True,
     },
     "ci or automation changes": {
         "file": r"^\.github/(workflows|scripts)/",
@@ -104,22 +141,28 @@ TRIGGERS = {
     # ── high risk ──
     "migrations": {
         "file": r"migrat",
+        "exclude_tests": True,
     },
     "permissions": {
         "file": r"permission|rbac|acl|role|policy|guard|authorize",
+        "exclude_tests": True,
     },
     "payment or billing logic": {
         "file": r"payment|billing|invoice|subscription|ledger|pricing|charge|stripe",
+        "exclude_tests": True,
     },
     "concurrency": {
         "file": r"lock|mutex|semaphore|concurrent|atomic|thread|worker.*(pool|thread|process)|queue.*(process|consum|handl)",
         "diff": r"synchronized|ReentrantLock|Mutex|\.lock\(|atomic|WaitGroup|Semaphore|Promise\.all|asyncio\.gather",
+        "exclude_tests": True,
     },
     "event processing": {
         "file": r"event.*(process|handler)|consumer|producer|subscriber|listener|broker",
+        "exclude_tests": True,
     },
     "security boundary": {
         "file": r"security|firewall|cors|csp|sanitiz|encrypt|crypto|vault|certificate",
+        "exclude_tests": True,
     },
     "data deletion or destructive updates": {
         "diff": r"DELETE\s+FROM|DROP\s+(TABLE|COLUMN|INDEX)|TRUNCATE|\.destroy|\.delete_all|remove_column|drop_column",
@@ -132,14 +175,17 @@ TRIGGERS = {
     "large refactor in critical path": {
         "min_lines": 1000,
         "file": r"src/(core|lib|domain|engine|kernel)|packages/(core|shared)",
+        "exclude_tests": True,
     },
     "authentication/authorization rewrite": {
         "file": r"auth",
         "min_matching_files": 5,
+        "exclude_tests": True,
     },
     "schema migration with irreversible data changes": {
         "file": r"migrat",
         "diff": r"drop_column|remove_column|DROP\s+(TABLE|COLUMN)|TRUNCATE|irreversible",
+        "exclude_tests": True,
     },
 }
 
@@ -156,6 +202,8 @@ def trigger_hit(name, di, meta):
     matched_files = 0
     if "file" in spec:
         files = di["all_files"] if spec.get("scope") == "all_files" else di["files"]
+        if spec.get("exclude_tests"):
+            files = [f for f in files if not is_test_file(f)]
         for f in files:
             if re.search(spec["file"], f, re.I):
                 matched_files += 1
@@ -240,7 +288,7 @@ def main():
 
     fired = [name for name in TRIGGERS if trigger_hit(name, di, meta)]
     print(f"Tier: {tier_name}  |  Model: {model}")
-    print(f"Signals: {signals}  |  Files: {di['file_count']}  |  Lines: {di['lines']}")
+    print(f"Signals: {signals}  |  Files: {di['file_count']}  |  Lines: {di['lines']}  |  Diff base: {di['diff_base']}")
     if fired:
         print(f"Matched: {', '.join(fired)}")
 

@@ -75,7 +75,7 @@ Workflow file: `.github/workflows/oz-pr-review-commenting.yml`
 ### Behavior
 
 1. Runs `warpdotdev/oz-agent-action@v1` with `skill: pr-review-commenting`.
-2. Selects the review model tier from `.github/review-tiers.yml`; changes under `.github/workflows/` and `.github/scripts/` trigger the `ci or automation changes` escalated-review signal.
+2. Selects the review model tier from `.github/review-tiers.yml` using the merge-base-to-head PR diff, matching GitHub's displayed diff instead of unrelated changes that landed on the base branch after the PR branch was created. Test-file changes contribute to the aggregate risk score but do not directly escalate a review by themselves; public API detection is limited to explicit API surfaces such as `src/routes/api.ts`, versioned API paths, OpenAPI/Swagger specs, protobuf files, and GraphQL schemas.
 3. Passes PR URL, number, base/head refs, and SHAs in the prompt context.
 4. Uses per-PR concurrency (`oz-pr-review-<pr-number>`) and cancels in-progress runs when new commits are pushed.
 5. Posts review feedback as a GitHub PR Review: inline comments for code-level findings whose lines are in the diff, with summary, architecture assessment, and unmapped findings in the review body.
