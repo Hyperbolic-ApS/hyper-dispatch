@@ -100,6 +100,7 @@ Idempotency ledger for PR revision webhook events. One row per processed deliver
 - `releaseSpawnClaim(ticketKey)` reverts a claimed entry (`running` → `queued`) only if no run id has been bound on the active run.
 - `createRun(ticketKey, runType)` inserts a new run record for every implementation/revision spawn attempt.
 - `updateRunStatus` writes run-level fields and can target a specific run record id (`run_record_id`) so monitor/webhook updates only mutate the intended run row. If no run row exists yet, it creates one from the supplied fields (using the entry status when `status` is omitted) so metadata like `error`, `session_link`, and PR fields are not silently dropped.
+  - For run-record fields, explicit `null` is treated as "preserve existing value" (same as omission). Explicit clearing is only supported for entry-level `blocked_by` via `blocked_by: null`.
 - `recomputeEntryStatus(ticketKey)` derives `dispatch_entries.status` from run history so entry-level status remains consistent with the latest active/terminal run state.
 - `claimRevisionSlot` atomically flips the entry to `running` only when no running run exists and the latest run is terminal, so concurrent revision triggers cannot both claim.
 - `releaseRevisionSlot` recomputes entry status and can optionally delete a failed revision run record, making the ticket re-claimable after spawn/create failures.

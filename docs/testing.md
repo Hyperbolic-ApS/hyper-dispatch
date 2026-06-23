@@ -53,7 +53,7 @@ This document defines the testing contract for HyperDispatch. All new tests adde
 ## DB integration tests
 - Integration suite lives in `src/db/queries.integration.test.ts` and executes `src/db/schema.sql` in `beforeAll`.
 - Legacy migration integration coverage lives in `src/db/migrate.integration.test.ts` and runs against in-process PGlite (always on in `npm test`).
-- Each test case truncates `dispatch_runs` and `project_configs` in `beforeEach` for isolation.
+- Each test case truncates `dispatch_runs`, `dispatch_entries`, and `project_configs` in `beforeEach` for isolation.
 - Default suite stays fast/offline:
   - `npm test` runs normally; integration tests self-skip unless `RUN_DB_TESTS=1` is set.
 - Run integration tests with disposable Docker Postgres:
@@ -61,5 +61,5 @@ This document defines the testing contract for HyperDispatch. All new tests adde
   - This command runs `scripts/test-db.sh`, which prefers `postgres:16` on port `5433`, sets `DATABASE_URL=postgres://postgres:test@localhost:5433/postgres`, and executes integration tests by name pattern.
   - If Docker is unavailable, the script falls back to in-process PGlite (`TEST_DB_MODE=pglite`) so integration tests still run in constrained environments.
 - `updateRunStatus` null vs undefined behavior to validate in tests:
-  - Most fields use `!= null`, so passing explicit `null` is treated as "no update" (example: `pr_url: null` leaves `pr_url` unchanged).
-  - `blocked_by` and `pr_has_conflicts` use `!== undefined`, so explicit `null` is applied (example: `blocked_by: null` clears blockers).
+  - Run-record fields use preserve-on-null semantics (`!= null`): passing explicit `null` is treated as "no update" (example: `pr_url: null` leaves `pr_url` unchanged).
+  - `blocked_by` on `dispatch_entries` uses explicit-update semantics (`!== undefined`), so passing `blocked_by: null` clears blockers.

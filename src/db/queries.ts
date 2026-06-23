@@ -410,6 +410,18 @@ export async function updateRunStatus(
   > & { blocked_by?: string[] | null; run_record_id?: string | null }
 ): Promise<DispatchRun | null> {
   const runRecordId = updates.run_record_id ?? undefined;
+  const shouldUpdateStatus = updates.status !== undefined;
+  const shouldUpdateRunId = updates.run_id != null;
+  const shouldUpdateModel = updates.model != null;
+  const shouldUpdateSpawnedAt = updates.spawned_at != null;
+  const shouldUpdateCompletedAt = updates.completed_at != null;
+  const shouldUpdatePrUrl = updates.pr_url != null;
+  const shouldUpdatePrHasConflicts = updates.pr_has_conflicts != null;
+  const shouldUpdatePrDisplayState = updates.pr_display_state != null;
+  const shouldUpdatePrReviewRunning = updates.pr_review_running != null;
+  const shouldUpdatePrRevisionRunning = updates.pr_revision_running != null;
+  const shouldUpdateSessionLink = updates.session_link != null;
+  const shouldUpdateError = updates.error != null;
   const rows = await sql<DispatchRun[]>`
     WITH target AS (
       SELECT id
@@ -422,18 +434,18 @@ export async function updateRunStatus(
     updated AS (
       UPDATE dispatch_runs dr
       SET
-        status       = ${updates.status !== undefined ? updates.status : sql.unsafe("dr.status")},
-        run_id       = ${updates.run_id !== undefined ? updates.run_id : sql.unsafe("dr.run_id")},
-        model        = ${updates.model !== undefined ? updates.model : sql.unsafe("dr.model")},
-        spawned_at   = ${updates.spawned_at !== undefined ? updates.spawned_at : sql.unsafe("dr.spawned_at")},
-        completed_at = ${updates.completed_at !== undefined ? updates.completed_at : sql.unsafe("dr.completed_at")},
-        pr_url       = ${updates.pr_url !== undefined ? updates.pr_url : sql.unsafe("dr.pr_url")},
-        pr_has_conflicts = ${updates.pr_has_conflicts !== undefined ? updates.pr_has_conflicts : sql.unsafe("dr.pr_has_conflicts")},
-        pr_display_state = ${updates.pr_display_state !== undefined ? updates.pr_display_state : sql.unsafe("dr.pr_display_state")},
-        pr_review_running = ${updates.pr_review_running !== undefined ? updates.pr_review_running : sql.unsafe("dr.pr_review_running")},
-        pr_revision_running = ${updates.pr_revision_running !== undefined ? updates.pr_revision_running : sql.unsafe("dr.pr_revision_running")},
-        session_link = ${updates.session_link !== undefined ? updates.session_link : sql.unsafe("dr.session_link")},
-        error        = ${updates.error !== undefined ? updates.error : sql.unsafe("dr.error")},
+        status       = CASE WHEN ${shouldUpdateStatus} THEN ${updates.status ?? null}::text ELSE dr.status END,
+        run_id       = CASE WHEN ${shouldUpdateRunId} THEN ${updates.run_id ?? null} ELSE dr.run_id END,
+        model        = CASE WHEN ${shouldUpdateModel} THEN ${updates.model ?? null} ELSE dr.model END,
+        spawned_at   = CASE WHEN ${shouldUpdateSpawnedAt} THEN ${updates.spawned_at ?? null}::timestamptz ELSE dr.spawned_at END,
+        completed_at = CASE WHEN ${shouldUpdateCompletedAt} THEN ${updates.completed_at ?? null}::timestamptz ELSE dr.completed_at END,
+        pr_url       = CASE WHEN ${shouldUpdatePrUrl} THEN ${updates.pr_url ?? null} ELSE dr.pr_url END,
+        pr_has_conflicts = CASE WHEN ${shouldUpdatePrHasConflicts} THEN ${updates.pr_has_conflicts ?? null}::boolean ELSE dr.pr_has_conflicts END,
+        pr_display_state = CASE WHEN ${shouldUpdatePrDisplayState} THEN ${updates.pr_display_state ?? null}::text ELSE dr.pr_display_state END,
+        pr_review_running = CASE WHEN ${shouldUpdatePrReviewRunning} THEN ${updates.pr_review_running ?? null}::boolean ELSE dr.pr_review_running END,
+        pr_revision_running = CASE WHEN ${shouldUpdatePrRevisionRunning} THEN ${updates.pr_revision_running ?? null}::boolean ELSE dr.pr_revision_running END,
+        session_link = CASE WHEN ${shouldUpdateSessionLink} THEN ${updates.session_link ?? null} ELSE dr.session_link END,
+        error        = CASE WHEN ${shouldUpdateError} THEN ${updates.error ?? null} ELSE dr.error END,
         updated_at   = NOW()
       WHERE dr.id = COALESCE(${runRecordId ?? null}::uuid, (SELECT id FROM target))
       RETURNING dr.*
@@ -451,18 +463,18 @@ export async function updateRunStatus(
   `;
   let updatedRun = rows[0] ?? null;
   const shouldInsertFallbackRun =
-    updates.status !== undefined ||
-    updates.run_id !== undefined ||
-    updates.model !== undefined ||
-    updates.spawned_at !== undefined ||
-    updates.completed_at !== undefined ||
-    updates.pr_url !== undefined ||
-    updates.pr_has_conflicts !== undefined ||
-    updates.pr_display_state !== undefined ||
-    updates.pr_review_running !== undefined ||
-    updates.pr_revision_running !== undefined ||
-    updates.session_link !== undefined ||
-    updates.error !== undefined;
+    shouldUpdateStatus ||
+    shouldUpdateRunId ||
+    shouldUpdateModel ||
+    shouldUpdateSpawnedAt ||
+    shouldUpdateCompletedAt ||
+    shouldUpdatePrUrl ||
+    shouldUpdatePrHasConflicts ||
+    shouldUpdatePrDisplayState ||
+    shouldUpdatePrReviewRunning ||
+    shouldUpdatePrRevisionRunning ||
+    shouldUpdateSessionLink ||
+    shouldUpdateError;
 
   if (!updatedRun && shouldInsertFallbackRun) {
     const fallbackRows = await sql<DispatchRun[]>`
@@ -497,18 +509,18 @@ export async function updateRunStatus(
           ${randomUUID()},
           ${ticketKey},
           'implementation',
-          ${updates.run_id ?? null},
+          ${shouldUpdateRunId ? (updates.run_id ?? null) : null},
           COALESCE(${updates.status ?? null}::text, entry.status),
-          ${updates.model ?? null},
-          ${updates.spawned_at ?? null},
-          ${updates.completed_at ?? null},
-          ${updates.pr_url ?? null},
-          ${updates.pr_has_conflicts ?? null},
-          ${updates.pr_display_state ?? null},
-          ${updates.pr_review_running ?? null},
-          ${updates.pr_revision_running ?? null},
-          ${updates.session_link ?? null},
-          ${updates.error ?? null},
+          ${shouldUpdateModel ? (updates.model ?? null) : null},
+          ${shouldUpdateSpawnedAt ? (updates.spawned_at ?? null) : null},
+          ${shouldUpdateCompletedAt ? (updates.completed_at ?? null) : null},
+          ${shouldUpdatePrUrl ? (updates.pr_url ?? null) : null},
+          ${shouldUpdatePrHasConflicts ? (updates.pr_has_conflicts ?? null) : null},
+          ${shouldUpdatePrDisplayState ? (updates.pr_display_state ?? null) : null},
+          ${shouldUpdatePrReviewRunning ? (updates.pr_review_running ?? null) : null},
+          ${shouldUpdatePrRevisionRunning ? (updates.pr_revision_running ?? null) : null},
+          ${shouldUpdateSessionLink ? (updates.session_link ?? null) : null},
+          ${shouldUpdateError ? (updates.error ?? null) : null},
           NOW()
         FROM entry
         RETURNING *
@@ -534,7 +546,7 @@ export async function updateRunStatus(
     `;
   }
 
-  if (updates.status || updates.completed_at !== undefined) {
+  if (shouldUpdateStatus || shouldUpdateCompletedAt) {
     await recomputeEntryStatus(ticketKey);
   }
   return updatedRun;

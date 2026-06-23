@@ -166,20 +166,9 @@ export async function deleteProjectConfig(projectKey: string): Promise<void> {
   });
 }
 
-function latestRunJoinSql() {
-  return sql.unsafe(`
-    LEFT JOIN LATERAL (
-      SELECT *
-      FROM dispatch_runs dr
-      WHERE dr.ticket_key = de.ticket_key
-      ORDER BY dr.created_at DESC
-      LIMIT 1
-    ) lr ON true
-  `);
-}
 
-function dispatchRunSelectSql() {
-  return sql.unsafe(`
+export async function getAllDispatchRuns(): Promise<DispatchRun[]> {
+  return sql<DispatchRun[]>`
     SELECT
       de.ticket_key,
       de.project_key,
@@ -195,23 +184,36 @@ function dispatchRunSelectSql() {
       lr.model,
       lr.spawned_at,
       lr.completed_at,
-      lr.pr_url,
-      lr.pr_has_conflicts,
-      lr.pr_display_state,
-      lr.pr_review_running,
-      lr.pr_revision_running,
+      COALESCE(lr.pr_url, lpr.pr_url) AS pr_url,
+      COALESCE(lr.pr_has_conflicts, lpr.pr_has_conflicts) AS pr_has_conflicts,
+      COALESCE(lr.pr_display_state, lpr.pr_display_state) AS pr_display_state,
+      COALESCE(lr.pr_review_running, lpr.pr_review_running) AS pr_review_running,
+      COALESCE(lr.pr_revision_running, lpr.pr_revision_running) AS pr_revision_running,
       lr.session_link,
       lr.error,
       de.created_at,
       de.updated_at
     FROM dispatch_entries de
-  `);
-}
-
-export async function getAllDispatchRuns(): Promise<DispatchRun[]> {
-  return sql<DispatchRun[]>`
-    ${dispatchRunSelectSql()}
-    ${latestRunJoinSql()}
+    LEFT JOIN LATERAL (
+      SELECT *
+      FROM dispatch_runs dr
+      WHERE dr.ticket_key = de.ticket_key
+      ORDER BY dr.created_at DESC
+      LIMIT 1
+    ) lr ON true
+    LEFT JOIN LATERAL (
+      SELECT
+        dr.pr_url,
+        dr.pr_has_conflicts,
+        dr.pr_display_state,
+        dr.pr_review_running,
+        dr.pr_revision_running
+      FROM dispatch_runs dr
+      WHERE dr.ticket_key = de.ticket_key
+        AND dr.pr_url IS NOT NULL
+      ORDER BY dr.created_at DESC
+      LIMIT 1
+    ) lpr ON true
     ORDER BY de.created_at DESC
   `;
 }
@@ -239,8 +241,51 @@ export async function getDispatchRunsPage(
   const statuses = filter.statuses ?? [];
   const hideDone = filter.hideDone ?? false;
   return sql<DispatchRun[]>`
-    ${dispatchRunSelectSql()}
-    ${latestRunJoinSql()}
+    SELECT
+      de.ticket_key,
+      de.project_key,
+      de.summary,
+      de.status,
+      de.blocked_by,
+      de.priority,
+      de.ticket_status_name,
+      de.ticket_status_category,
+      lr.id,
+      lr.run_type,
+      lr.run_id,
+      lr.model,
+      lr.spawned_at,
+      lr.completed_at,
+      COALESCE(lr.pr_url, lpr.pr_url) AS pr_url,
+      COALESCE(lr.pr_has_conflicts, lpr.pr_has_conflicts) AS pr_has_conflicts,
+      COALESCE(lr.pr_display_state, lpr.pr_display_state) AS pr_display_state,
+      COALESCE(lr.pr_review_running, lpr.pr_review_running) AS pr_review_running,
+      COALESCE(lr.pr_revision_running, lpr.pr_revision_running) AS pr_revision_running,
+      lr.session_link,
+      lr.error,
+      de.created_at,
+      de.updated_at
+    FROM dispatch_entries de
+    LEFT JOIN LATERAL (
+      SELECT *
+      FROM dispatch_runs dr
+      WHERE dr.ticket_key = de.ticket_key
+      ORDER BY dr.created_at DESC
+      LIMIT 1
+    ) lr ON true
+    LEFT JOIN LATERAL (
+      SELECT
+        dr.pr_url,
+        dr.pr_has_conflicts,
+        dr.pr_display_state,
+        dr.pr_review_running,
+        dr.pr_revision_running
+      FROM dispatch_runs dr
+      WHERE dr.ticket_key = de.ticket_key
+        AND dr.pr_url IS NOT NULL
+      ORDER BY dr.created_at DESC
+      LIMIT 1
+    ) lpr ON true
     WHERE (${projectKey}::text IS NULL OR de.project_key = ${projectKey})
       AND (${statuses.length === 0} OR de.status = ANY(${statuses}::text[]))
       AND (${!hideDone} OR de.ticket_status_category IS DISTINCT FROM 'done')
