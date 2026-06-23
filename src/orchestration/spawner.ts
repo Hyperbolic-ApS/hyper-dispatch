@@ -1,4 +1,4 @@
-import { resolveProjectTokens } from "../config/env.js";
+import { env, resolveProjectTokens } from "../config/env.js";
 import * as jira from "../jira/client.js";
 import { updateRunStatus } from "../db/queries.js";
 import type { ProjectConfig } from "../db/queries.js";
@@ -38,16 +38,26 @@ export function adfToText(node: unknown, depth = 0): string {
  */
 export function buildPrompt(ticketKey: string, issue: JiraIssue): string {
   const summary = issue.fields.summary;
-  const description = issue.fields.description
-    ? adfToText(issue.fields.description)
-    : "";
   const branchName = buildAgentBranchName(ticketKey, summary);
+  const jiraIssueUrl = `${env.JIRA_SITE_URL.replace(/\/+$/, "")}/browse/${ticketKey}`;
 
-  const lines: string[] = [`Implement ${ticketKey}: ${summary}`];
-  lines.push(`Branch name: ${branchName}`);
-  if (description) {
-    lines.push("", description);
-  }
+  const lines: string[] = [
+    `Implement ${ticketKey}: ${summary}`,
+    `Branch name: ${branchName}`,
+    "Use Jira as the source of truth for this task.",
+    `Ticket: ${ticketKey}`,
+    `Jira URL: ${jiraIssueUrl}`,
+    "Before making code changes, use the available Jira tools to read the ticket and any related context needed to implement it. At minimum, fetch:",
+    "- Title/summary",
+    "- Description",
+    "- Direct subtasks, including the same fields listed here for each subtask",
+    "- Attachments (download contents when needed to understand or implement the ticket)",
+    "- Linked work items",
+    "- Comments",
+    "- Parent epic",
+    "Implement the feature described in the ticket. Do not rely on this prompt as the specification beyond identifying the ticket key and the required Jira lookup fields. If Jira context is unavailable, stop and report the blocker rather than guessing.",
+    "Follow the project worker instructions: use the branch name above, keep changes scoped to this ticket, add or update tests, run the required validation commands, commit, create a non-draft PR, and report the PR artifact.",
+  ];
   return lines.join("\n");
 }
 

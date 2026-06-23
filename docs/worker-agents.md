@@ -11,8 +11,10 @@ The Agent Spawner creates a run via the `oz-agent-sdk` with:
 - **model_id**: per-ticket custom field → project default → Oz default (cascade).
 - **skill**: from the project config (one or more skill specs).
 - **mcp_servers**: optional map from project config (`mcp_servers`) when set.
-- **prompt**: constructed from the Jira ticket (key, summary, description, acceptance criteria).
-  - Prompt now includes an explicit `Branch name: …` line derived from the ticket summary slug (first three normalized words), so downstream consumers can reuse the exact same branch-name derivation.
+- **prompt**: constructed from the Jira ticket key and summary with explicit Jira lookup instructions.
+  - Prompt includes an explicit `Branch name: …` line derived from the ticket summary slug (first three normalized words), so downstream consumers can reuse the exact same branch-name derivation.
+  - Prompt includes `Use Jira as the source of truth`, the ticket URL, and a required lookup checklist (summary, description, subtasks, attachments, linked work items, comments, parent epic).
+  - Prompt explicitly tells workers to stop and report a blocker when Jira context is unavailable instead of guessing.
   - Empty-slug contract: if the normalized slug is empty, branch name falls back to `agent/{ticket-key}`.
 
 ## Skill Contract
@@ -112,7 +114,7 @@ Workflow file: `.github/workflows/ci.yml`
 
 The default skill (`.agents/skills/hyperdispatch-worker/SKILL.md`) implements a standard workflow:
 
-1. Parse ticket details from prompt (key, summary, description)
+1. Parse ticket details from prompt (ticket key, summary, branch name, Jira URL) and fetch implementation details directly from Jira
 2. Create branch `agent/{ticket-key}-{short-descriptor}` (keep descriptor concise: 2-3 words, 4 max)
 3. Investigate the codebase
 4. Plan the implementation

@@ -39,6 +39,7 @@ vi.mock("oz-agent-sdk", () => {
 vi.mock("../config/env.js", () => ({
   env: {
     WARP_API_KEY: "test-key",
+    JIRA_SITE_URL: "https://hyperbolic-co.atlassian.net",
   },
   resolveProjectTokens: (config: { github_pat?: string | null; jira_api_token?: string | null; oz_api_key?: string | null }) => ({
     githubToken: config.github_pat ?? "gh-test-key",
@@ -151,7 +152,7 @@ describe("adfToText", () => {
 });
 
 describe("buildPrompt", () => {
-  it("builds prompt from summary only when description is absent", () => {
+  it("builds Jira-source-of-truth prompt with required lookup instructions", () => {
     const issue = makeJiraIssue({
       key: "HYDI-32",
       fields: {
@@ -161,12 +162,24 @@ describe("buildPrompt", () => {
       },
     });
 
-    expect(buildPrompt("HYDI-32", issue)).toBe(
-      "Implement HYDI-32: Summary only\nBranch name: agent/HYDI-32-summary-only"
-    );
+    expect(buildPrompt("HYDI-32", issue)).toBe(`Implement HYDI-32: Summary only
+Branch name: agent/HYDI-32-summary-only
+Use Jira as the source of truth for this task.
+Ticket: HYDI-32
+Jira URL: https://hyperbolic-co.atlassian.net/browse/HYDI-32
+Before making code changes, use the available Jira tools to read the ticket and any related context needed to implement it. At minimum, fetch:
+- Title/summary
+- Description
+- Direct subtasks, including the same fields listed here for each subtask
+- Attachments (download contents when needed to understand or implement the ticket)
+- Linked work items
+- Comments
+- Parent epic
+Implement the feature described in the ticket. Do not rely on this prompt as the specification beyond identifying the ticket key and the required Jira lookup fields. If Jira context is unavailable, stop and report the blocker rather than guessing.
+Follow the project worker instructions: use the branch name above, keep changes scoped to this ticket, add or update tests, run the required validation commands, commit, create a non-draft PR, and report the PR artifact.`);
   });
 
-  it("builds prompt from summary and description", () => {
+  it("does not embed ticket description in the prompt", () => {
     const issue = makeJiraIssue({
       fields: {
         ...makeJiraIssue().fields,
@@ -183,35 +196,12 @@ describe("buildPrompt", () => {
       },
     });
 
-    expect(buildPrompt("HYDI-32", issue)).toBe(
-      "Implement HYDI-32: With description\nBranch name: agent/HYDI-32-with-description\n\nSingle paragraph"
+    const prompt = buildPrompt("HYDI-32", issue);
+    expect(prompt).toContain("Implement HYDI-32: With description");
+    expect(prompt).toContain(
+      "Jira URL: https://hyperbolic-co.atlassian.net/browse/HYDI-32"
     );
-  });
-
-  it("handles multi-paragraph ADF descriptions", () => {
-    const issue = makeJiraIssue({
-      fields: {
-        ...makeJiraIssue().fields,
-        summary: "Multi paragraph",
-        description: {
-          type: "doc",
-          content: [
-            {
-              type: "paragraph",
-              content: [{ type: "text", text: "Paragraph one" }],
-            },
-            {
-              type: "paragraph",
-              content: [{ type: "text", text: "Paragraph two" }],
-            },
-          ],
-        },
-      },
-    });
-
-    expect(buildPrompt("HYDI-32", issue)).toBe(
-      "Implement HYDI-32: Multi paragraph\nBranch name: agent/HYDI-32-multi-paragraph\n\nParagraph one\nParagraph two"
-    );
+    expect(prompt).not.toContain("Single paragraph");
   });
 
   it("falls back to ticket-only branch name when summary slug normalizes to empty", () => {
@@ -223,7 +213,7 @@ describe("buildPrompt", () => {
       },
     });
 
-    expect(buildPrompt("HYDI-32", issue)).toBe(
+    expect(buildPrompt("HYDI-32", issue)).toContain(
       "Implement HYDI-32: !!!\nBranch name: agent/HYDI-32"
     );
   });
@@ -336,7 +326,9 @@ describe("spawnAgent", () => {
     await spawnAgent("HYDI-32", config, issue);
 
     expect(runMock).toHaveBeenCalledWith({
-      prompt: "Implement HYDI-32: Implement tests\nBranch name: agent/HYDI-32-implement-tests",
+      prompt: expect.stringContaining(
+        "Implement HYDI-32: Implement tests\nBranch name: agent/HYDI-32-implement-tests"
+      ),
       config: expect.objectContaining({
         name: "HYDI-32",
         environment_id: config.oz_env_id,
