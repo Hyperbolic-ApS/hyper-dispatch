@@ -249,7 +249,14 @@ export async function reconcilePrActionStates(): Promise<void> {
     owner: string;
     repo: string;
     token: string;
-    prs: { ticketKey: string; pullNumber: number; branchName: string }[];
+    prs: {
+      ticketKey: string;
+      pullNumber: number;
+      branchName: string;
+      runRecordId: string | null;
+      prReviewRunning: boolean | null;
+      prRevisionRunning: boolean | null;
+    }[];
   };
   const repoGroups = new Map<string, RepoGroup>();
   for (const run of runs) {
@@ -270,10 +277,11 @@ export async function reconcilePrActionStates(): Promise<void> {
       ticketKey: run.ticket_key,
       pullNumber: parsed.pullNumber,
       branchName: buildAgentBranchName(run.ticket_key, run.summary),
+      runRecordId: run.id,
+      prReviewRunning: run.pr_review_running,
+      prRevisionRunning: run.pr_revision_running,
     });
   }
-
-  const runByTicket = new Map(runs.map((run) => [run.ticket_key, run]));
 
   // Fetch repos concurrently. getRepoWorkflowRuns failures are caught per-repo
   // and per-PR writes are caught individually below, so a single failure never
@@ -300,20 +308,18 @@ export async function reconcilePrActionStates(): Promise<void> {
           workflowRuns,
           { pullNumber: pr.pullNumber, branchName: pr.branchName }
         );
-        const current = runByTicket.get(pr.ticketKey);
         // Avoid write churn on every 30s sweep: only persist on an actual change.
         // Strict equality (not Boolean coercion) so the first pass over a freshly
         // created PR writes a definite `false` instead of leaving `null` (unknown).
         if (
-          current &&
-          current.pr_review_running === reviewRunning &&
-          current.pr_revision_running === revisionRunning
+          pr.prReviewRunning === reviewRunning &&
+          pr.prRevisionRunning === revisionRunning
         ) {
           continue;
         }
         try {
           await updateRunStatus(pr.ticketKey, {
-            ...(current?.id ? { run_record_id: current.id } : {}),
+            ...(pr.runRecordId ? { run_record_id: pr.runRecordId } : {}),
             pr_review_running: reviewRunning,
             pr_revision_running: revisionRunning,
           });

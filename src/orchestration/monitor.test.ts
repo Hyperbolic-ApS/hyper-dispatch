@@ -1337,6 +1337,55 @@ describe("reconcilePrActionStates", () => {
     });
   });
 
+  it("reconciles active-PR rows per run id when one ticket has multiple runs on the same PR", async () => {
+    getRunsWithActivePrMock.mockResolvedValue([
+      makeDispatchRun({
+        id: "run-latest",
+        ticket_key: "HYDI-93",
+        summary: "Keep badge on latest run",
+        project_key: "HYDI",
+        created_at: new Date("2026-01-02T00:00:00.000Z"),
+        status: "succeeded",
+        pr_url: "https://github.com/warp/hyper-dispatch/pull/93",
+        pr_review_running: false,
+        pr_revision_running: false,
+      }),
+      makeDispatchRun({
+        id: "run-older",
+        ticket_key: "HYDI-93",
+        summary: "Keep badge on latest run",
+        project_key: "HYDI",
+        created_at: new Date("2026-01-01T00:00:00.000Z"),
+        status: "succeeded",
+        pr_url: "https://github.com/warp/hyper-dispatch/pull/93",
+        pr_review_running: true,
+        pr_revision_running: false,
+      }),
+    ]);
+    getProjectConfigMock.mockResolvedValue(makeProjectConfig());
+    listWorkflowRunsForRepoMock.mockResolvedValue({
+      data: {
+        workflow_runs: [
+          {
+            name: "Oz PR Review Commenting",
+            status: "in_progress",
+            pull_requests: [{ number: 93 }],
+          },
+        ],
+      },
+    });
+
+    const { reconcilePrActionStates } = await importMonitor();
+    await reconcilePrActionStates();
+
+    expect(updateRunStatusMock).toHaveBeenCalledTimes(1);
+    expect(updateRunStatusMock).toHaveBeenCalledWith("HYDI-93", {
+      run_record_id: "run-latest",
+      pr_review_running: true,
+      pr_revision_running: false,
+    });
+  });
+
   it("continues to the next PR in a repo group when one PR's write fails", async () => {
     getRunsWithActivePrMock.mockResolvedValue([
       makeDispatchRun({

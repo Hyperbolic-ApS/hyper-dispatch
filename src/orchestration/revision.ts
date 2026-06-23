@@ -9,6 +9,7 @@ import {
   getRunsByPrUrl,
   releaseRevisionSlot,
   tryRecordRevisionEvent,
+  updateRunStatus,
 } from "../db/queries.js";
 import type { ProjectConfig } from "../db/queries.js";
 import * as jira from "../jira/client.js";
@@ -180,10 +181,10 @@ async function resolveTrackedRevisionContext(pr: PullRequestRef): Promise<Tracke
 
 /**
  * Spawn an Oz revision run for the given PR/branch and return the new run id, its
- * run-record id. The run record is inserted only after the Oz spawn succeeds so a
- * spawn failure cannot leave an orphaned `status='running'` row. The resolved
- * `config` is passed in by the caller (which already loaded it) to avoid a
- * redundant `getProjectConfig` round-trip.
+ * run-record id. The run record is inserted before the external Oz spawn so a DB
+ * write failure cannot produce an untracked spawned run. The resolved `config` is
+ * passed in by the caller (which already loaded it) to avoid a redundant
+ * `getProjectConfig` round-trip.
  */
 async function spawnRevisionRun(params: {
   ticketKey: string;
@@ -202,24 +203,37 @@ async function spawnRevisionRun(params: {
   const agentIdentityUid = config.oz_agent_identity_uid?.trim() || undefined;
   const client = getOzClient(ozApiKey);
   const spawnedAt = new Date();
-
-  const runResponse = await client.agent.run({
-    prompt: buildPrompt({
-      mode: params.mode,
-      ticketKey: params.ticketKey,
-      prUrl: params.prUrl,
-      branch: params.branch,
-      reviewState: params.reviewState,
-      feedback: params.feedback,
-    }),
-    ...(agentIdentityUid ? { agent_identity_uid: agentIdentityUid } : {}),
-    config: {
-      name: params.ticketKey,
-      environment_id: config.oz_env_id,
-      ...(model ? { model_id: model } : {}),
-      ...(mcpServers ? { mcp_servers: mcpServers } : {}),
-    },
+  const runRecord = await createRun({
+    ticketKey: params.ticketKey,
+    runType: "revision",
+    status: "running",
+    model: model ?? null,
+    spawnedAt,
   });
+
+  const runResponse = await client.agent
+    .run({
+      prompt: buildPrompt({
+        mode: params.mode,
+        ticketKey: params.ticketKey,
+        prUrl: params.prUrl,
+        branch: params.branch,
+        reviewState: params.reviewState,
+        feedback: params.feedback,
+      }),
+      ...(agentIdentityUid ? { agent_identity_uid: agentIdentityUid } : {}),
+      config: {
+        name: params.ticketKey,
+        environment_id: config.oz_env_id,
+        ...(model ? { model_id: model } : {}),
+        ...(mcpServers ? { mcp_servers: mcpServers } : {}),
+      },
+    })
+    .catch((err: unknown) => {
+      const wrapped = err instanceof Error ? err : new Error(String(err));
+      (wrapped as SpawnRevisionError).runRecordId = runRecord.id;
+      throw wrapped;
+    });
 
   let sessionLink: string | null = null;
   try {
@@ -231,14 +245,11 @@ async function spawnRevisionRun(params: {
       err
     );
   }
-  const runRecord = await createRun({
-    ticketKey: params.ticketKey,
-    runType: "revision",
-    status: "running",
-    runId: runResponse.run_id,
-    model: model ?? null,
-    spawnedAt,
-    sessionLink,
+  await updateRunStatus(params.ticketKey, {
+    run_record_id: runRecord.id,
+    run_id: runResponse.run_id,
+    spawned_at: spawnedAt,
+    session_link: sessionLink,
   });
 
   return { runRecordId: runRecord.id, runId: runResponse.run_id };
@@ -262,6 +273,7 @@ function extractManualInstructions(commentBody: string): string {
 }
 
 type SpawnRevisionParams = Parameters<typeof spawnRevisionRun>[0];
+type SpawnRevisionError = Error & { runRecordId?: string };
 
 type GuardedRevisionOutcome =
   | { status: "spawned"; runId: string }
@@ -307,11 +319,14 @@ async function recordAndSpawnRevision(params: {
     spawnedRunRecordId = run.runRecordId;
     return { status: "spawned", runId: run.runId };
   } catch (err) {
+    const failedRunRecordId =
+      spawnedRunRecordId ??
+      ((err as SpawnRevisionError)?.runRecordId ?? null);
     await releaseRevisionSlot(
       ticketKey,
       claim.previousStatus,
       claim.previousRunId,
-      spawnedRunRecordId
+      failedRunRecordId
     ).catch(() => {});
     await deleteRevisionEvent(params.eventKey).catch(() => {});
     throw err;
