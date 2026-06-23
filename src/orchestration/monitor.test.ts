@@ -748,6 +748,56 @@ describe("checkRuns", () => {
     expect(githubPullGetMock).not.toHaveBeenCalled();
   });
 
+  it("fetches a shared PR once when multiple succeeded runs point at the same pr_url", async () => {
+    const sharedPrUrl = "https://github.com/org/repo/pull/60";
+    getRunsByStatusMock
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([
+        makeDispatchRun({
+          id: "run-60-impl",
+          ticket_key: "HYDI-60",
+          status: "succeeded",
+          run_type: "implementation",
+          pr_url: sharedPrUrl,
+          created_at: new Date("2026-05-01T00:00:00.000Z"),
+        }),
+        makeDispatchRun({
+          id: "run-60-rev",
+          ticket_key: "HYDI-60",
+          status: "succeeded",
+          run_type: "revision",
+          pr_url: sharedPrUrl,
+          created_at: new Date("2026-05-02T00:00:00.000Z"),
+        }),
+      ]);
+    githubPullGetMock.mockResolvedValue({
+      data: {
+        merged_at: null,
+        mergeable_state: "clean",
+        mergeable: true,
+        state: "open",
+        draft: false,
+      },
+    });
+
+    const { checkRuns } = await importMonitor();
+    await checkRuns();
+
+    expect(githubPullGetMock).toHaveBeenCalledTimes(1);
+    expect(updateRunStatusMock).toHaveBeenCalledTimes(2);
+    expect(updateRunStatusMock).toHaveBeenNthCalledWith(1, "HYDI-60", {
+      run_record_id: "run-60-impl",
+      pr_has_conflicts: false,
+      pr_display_state: "open",
+    });
+    expect(updateRunStatusMock).toHaveBeenNthCalledWith(2, "HYDI-60", {
+      run_record_id: "run-60-rev",
+      pr_has_conflicts: false,
+      pr_display_state: "open",
+    });
+    expect(jiraGetIssueMock).not.toHaveBeenCalled();
+  });
+
   it("reconciles PR display state when Jira issue is already done without transitioning", async () => {
     getRunsByStatusMock
       .mockResolvedValueOnce([])
@@ -1333,6 +1383,55 @@ describe("reconcilePrActionStates", () => {
 
     expect(updateRunStatusMock).toHaveBeenCalledWith("HYDI-92", {
       pr_review_running: false,
+      pr_revision_running: false,
+    });
+  });
+
+  it("reconciles active-PR rows per run id when one ticket has multiple runs on the same PR", async () => {
+    getRunsWithActivePrMock.mockResolvedValue([
+      makeDispatchRun({
+        id: "run-latest",
+        ticket_key: "HYDI-93",
+        summary: "Keep badge on latest run",
+        project_key: "HYDI",
+        created_at: new Date("2026-01-02T00:00:00.000Z"),
+        status: "succeeded",
+        pr_url: "https://github.com/warp/hyper-dispatch/pull/93",
+        pr_review_running: false,
+        pr_revision_running: false,
+      }),
+      makeDispatchRun({
+        id: "run-older",
+        ticket_key: "HYDI-93",
+        summary: "Keep badge on latest run",
+        project_key: "HYDI",
+        created_at: new Date("2026-01-01T00:00:00.000Z"),
+        status: "succeeded",
+        pr_url: "https://github.com/warp/hyper-dispatch/pull/93",
+        pr_review_running: true,
+        pr_revision_running: false,
+      }),
+    ]);
+    getProjectConfigMock.mockResolvedValue(makeProjectConfig());
+    listWorkflowRunsForRepoMock.mockResolvedValue({
+      data: {
+        workflow_runs: [
+          {
+            name: "Oz PR Review Commenting",
+            status: "in_progress",
+            pull_requests: [{ number: 93 }],
+          },
+        ],
+      },
+    });
+
+    const { reconcilePrActionStates } = await importMonitor();
+    await reconcilePrActionStates();
+
+    expect(updateRunStatusMock).toHaveBeenCalledTimes(1);
+    expect(updateRunStatusMock).toHaveBeenCalledWith("HYDI-93", {
+      run_record_id: "run-latest",
+      pr_review_running: true,
       pr_revision_running: false,
     });
   });

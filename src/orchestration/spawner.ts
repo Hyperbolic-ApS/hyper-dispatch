@@ -1,6 +1,6 @@
 import { env, resolveProjectTokens } from "../config/env.js";
 import * as jira from "../jira/client.js";
-import { updateRunStatus } from "../db/queries.js";
+import { createRun, updateRunStatus } from "../db/queries.js";
 import type { ProjectConfig } from "../db/queries.js";
 import type { JiraIssue } from "../jira/types.js";
 import type { McpServerConfig } from "oz-agent-sdk/resources/agent/agent";
@@ -101,7 +101,8 @@ export function resolveModel(
 export async function spawnAgent(
   ticketKey: string,
   config: ProjectConfig,
-  issue: JiraIssue
+  issue: JiraIssue,
+  runType: string = "implementation"
 ): Promise<void> {
   const { ozApiKey } = resolveProjectTokens(config);
   const client = getOzClient(ozApiKey);
@@ -119,6 +120,13 @@ export async function spawnAgent(
   const agentIdentityUid = config.oz_agent_identity_uid?.trim()
     ? config.oz_agent_identity_uid.trim()
     : undefined;
+
+  const runRecord = await createRun({
+    ticketKey,
+    runType,
+    status: "running",
+    spawnedAt: new Date(),
+  });
 
   const runResponse = await client.agent.run({
     prompt,
@@ -145,6 +153,7 @@ export async function spawnAgent(
   await updateRunStatus(ticketKey, {
     status: "running",
     run_id: runResponse.run_id,
+    run_record_id: runRecord.id,
     model: model ?? null,
     spawned_at: new Date(),
     session_link: sessionLink,

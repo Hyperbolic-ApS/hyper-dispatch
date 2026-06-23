@@ -180,21 +180,21 @@ async function resolveTrackedRevisionContext(pr: PullRequestRef): Promise<Tracke
 
 /**
  * Spawn an Oz revision run for the given PR/branch and return the new run id, its
- * session link, and the resolved model. This function performs NO database write:
- * the caller (`recordAndSpawnRevision`) owns the `updateRunStatus` call so that a
- * spawn success followed by a DB-write failure shares a single cleanup path. The
- * resolved `config` is passed in by the caller (which already loaded it) to avoid
- * a redundant `getProjectConfig` round-trip.
+ * run-record id. The run record is claimed atomically by claimRevisionSlot before
+ * this function executes, so there is no claim→create gap. The resolved `config`
+ * is passed in by the caller (which already loaded it) to avoid a redundant
+ * `getProjectConfig` round-trip.
  */
 async function spawnRevisionRun(params: {
   ticketKey: string;
+  runRecordId: string;
   config: ProjectConfig;
   branch: string;
   prUrl: string;
   mode: RevisionMode;
   reviewState: string;
   feedback: string;
-}): Promise<{ runId: string; sessionLink: string | null; model: string | null }> {
+}): Promise<{ runRecordId: string; runId: string }> {
   const { config } = params;
   const { ozApiKey } = resolveProjectTokens(config);
   const issue = await jira.getIssue(params.ticketKey);
@@ -202,24 +202,31 @@ async function spawnRevisionRun(params: {
   const mcpServers = config.mcp_servers as Record<string, McpServerConfig> | null;
   const agentIdentityUid = config.oz_agent_identity_uid?.trim() || undefined;
   const client = getOzClient(ozApiKey);
+  const spawnedAt = new Date();
 
-  const runResponse = await client.agent.run({
-    prompt: buildPrompt({
-      mode: params.mode,
-      ticketKey: params.ticketKey,
-      prUrl: params.prUrl,
-      branch: params.branch,
-      reviewState: params.reviewState,
-      feedback: params.feedback,
-    }),
-    ...(agentIdentityUid ? { agent_identity_uid: agentIdentityUid } : {}),
-    config: {
-      name: params.ticketKey,
-      environment_id: config.oz_env_id,
-      ...(model ? { model_id: model } : {}),
-      ...(mcpServers ? { mcp_servers: mcpServers } : {}),
-    },
-  });
+  const runResponse = await client.agent
+    .run({
+      prompt: buildPrompt({
+        mode: params.mode,
+        ticketKey: params.ticketKey,
+        prUrl: params.prUrl,
+        branch: params.branch,
+        reviewState: params.reviewState,
+        feedback: params.feedback,
+      }),
+      ...(agentIdentityUid ? { agent_identity_uid: agentIdentityUid } : {}),
+      config: {
+        name: params.ticketKey,
+        environment_id: config.oz_env_id,
+        ...(model ? { model_id: model } : {}),
+        ...(mcpServers ? { mcp_servers: mcpServers } : {}),
+      },
+    })
+    .catch((err: unknown) => {
+      const wrapped = err instanceof Error ? err : new Error(String(err));
+      (wrapped as SpawnRevisionError).runRecordId = params.runRecordId;
+      throw wrapped;
+    });
 
   let sessionLink: string | null = null;
   try {
@@ -231,8 +238,15 @@ async function spawnRevisionRun(params: {
       err
     );
   }
-
-  return { runId: runResponse.run_id, sessionLink, model: model ?? null };
+  await updateRunStatus(params.ticketKey, {
+    run_record_id: params.runRecordId,
+    run_type: "revision",
+    run_id: runResponse.run_id,
+    model: model ?? null,
+    spawned_at: spawnedAt,
+    session_link: sessionLink,
+  });
+  return { runRecordId: params.runRecordId, runId: runResponse.run_id };
 }
 
 async function getPullRequestHeadBranch(
@@ -252,7 +266,11 @@ function extractManualInstructions(commentBody: string): string {
   return commentBody.replace(/\/revise\b/gi, "").trim();
 }
 
-type SpawnRevisionParams = Parameters<typeof spawnRevisionRun>[0];
+type SpawnRevisionParams = Omit<
+  Parameters<typeof spawnRevisionRun>[0],
+  "runRecordId"
+>;
+type SpawnRevisionError = Error & { runRecordId?: string };
 
 type GuardedRevisionOutcome =
   | { status: "spawned"; runId: string }
@@ -264,14 +282,10 @@ type GuardedRevisionOutcome =
  *  1. Idempotency — a stable per-delivery `eventKey` is recorded so a redelivered
  *     webhook (GitHub retries) does not spawn a duplicate run.
  *  2. Concurrency — an atomic running-run claim ensures rapid successive reviews
- *     cannot start overlapping revision agents on the same branch.
- * On success the tracked run's row is REPURPOSED for the revision: its `run_id`,
- * `model`, `spawned_at`, and `session_link` are overwritten with the revision
- * run's values, so the original dispatch run's id/session link are not preserved
- * (the row always reflects the most recent run — see docs/database.md). If either
- * the spawn or the subsequent DB write fails, the claim (status + original
- * run_id) and the idempotency ledger entry are released so a genuine retry can
- * proceed.
+ *     cannot start overlapping revision agents on the same branch, and it inserts
+ *     the claimed running revision row in the same statement.
+ * If spawn fails, the claim and idempotency entry are released so a genuine retry
+ * can proceed.
  */
 async function recordAndSpawnRevision(params: {
   eventKey: string;
@@ -295,26 +309,28 @@ async function recordAndSpawnRevision(params: {
     // a dropped review, an operator must delete its row from `revision_events`.
     return { status: "in_progress" };
   }
+  let spawnedRunRecordId: string | null = claim.runRecordId;
 
   try {
-    const run = await spawnRevisionRun(params.spawn);
-    // The DB write lives here (not in spawnRevisionRun) so that a write failure
-    // after a successful spawn shares the same release/cleanup path below as a
-    // spawn failure.
-    await updateRunStatus(ticketKey, {
-      status: "running",
-      run_id: run.runId,
-      model: run.model,
-      spawned_at: new Date(),
-      completed_at: null,
-      error: null,
-      session_link: run.sessionLink,
+    if (!claim.runRecordId) {
+      throw new Error("Claimed revision slot is missing run record id");
+    }
+    const run = await spawnRevisionRun({
+      ...params.spawn,
+      runRecordId: claim.runRecordId,
     });
+    spawnedRunRecordId = run.runRecordId;
     return { status: "spawned", runId: run.runId };
   } catch (err) {
-    await releaseRevisionSlot(ticketKey, claim.previousStatus, claim.previousRunId).catch(
-      () => {}
-    );
+    const failedRunRecordId =
+      spawnedRunRecordId ??
+      ((err as SpawnRevisionError)?.runRecordId ?? null);
+    await releaseRevisionSlot(
+      ticketKey,
+      claim.previousStatus,
+      claim.previousRunId,
+      failedRunRecordId
+    ).catch(() => {});
     await deleteRevisionEvent(params.eventKey).catch(() => {});
     throw err;
   }

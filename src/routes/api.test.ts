@@ -3,11 +3,13 @@ import { makeDispatchRun } from "../test/fixtures.js";
 
 const getAllDispatchRunsMock = vi.fn();
 const getRunCountsByStatusMock = vi.fn();
+const getRunHistoryForTicketsMock = vi.fn();
 const annotateRunsWithProdDeploymentStatusMock = vi.fn();
 
 vi.mock("../db/config-queries.js", () => ({
   getAllDispatchRuns: getAllDispatchRunsMock,
   getRunCountsByStatus: getRunCountsByStatusMock,
+  getRunHistoryForTickets: getRunHistoryForTicketsMock,
 }));
 
 vi.mock("../coolify/prod-deployment.js", () => ({
@@ -18,6 +20,7 @@ describe("apiRouter", () => {
   it("returns runs and counts with coolify prod deployment status", async () => {
     getAllDispatchRunsMock.mockResolvedValue([makeDispatchRun()]);
     getRunCountsByStatusMock.mockResolvedValue([{ status: "running", count: "1" }]);
+    getRunHistoryForTicketsMock.mockResolvedValue([]);
     annotateRunsWithProdDeploymentStatusMock.mockImplementation(async (runs) =>
       runs.map((run: ReturnType<typeof makeDispatchRun>) => ({
         ...run,

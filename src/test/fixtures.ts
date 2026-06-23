@@ -41,7 +41,9 @@ export function makeDispatchRun(
   overrides: Partial<DispatchRun> = {}
 ): DispatchRun {
   const run: DispatchRun = {
+    id: null,
     ticket_key: "HYDI-31",
+    run_type: "implementation",
     project_key: "HYDI",
     summary: "Default fixture summary",
     run_id: "run_123",

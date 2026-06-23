@@ -123,7 +123,7 @@ async function reconcileSucceededRunPrs(): Promise<void> {
   if (succeededRuns.length === 0) return;
 
   const githubClient = getGithubClient();
-
+  const runsByPrUrl = new Map<string, typeof succeededRuns>();
   for (const run of succeededRuns) {
     if (!run.pr_url) continue;
 
@@ -135,11 +135,19 @@ async function reconcileSucceededRunPrs(): Promise<void> {
     if (run.pr_display_state === "merged" || run.pr_display_state === "closed") {
       continue;
     }
+    const groupedRuns = runsByPrUrl.get(run.pr_url) ?? [];
+    groupedRuns.push(run);
+    runsByPrUrl.set(run.pr_url, groupedRuns);
+  }
 
-    const parsed = parseGithubPullRequestUrl(run.pr_url);
+  for (const [prUrl, runsForPr] of runsByPrUrl.entries()) {
+    const representativeRun = runsForPr.reduce((latest, current) =>
+      current.created_at > latest.created_at ? current : latest
+    );
+    const parsed = parseGithubPullRequestUrl(prUrl);
     if (!parsed) {
       console.warn(
-        `[monitor] Could not parse GitHub PR URL for ${run.ticket_key}: ${run.pr_url}`
+        `[monitor] Could not parse GitHub PR URL for ${representativeRun.ticket_key}: ${prUrl}`
       );
       continue;
     }
@@ -170,11 +178,11 @@ async function reconcileSucceededRunPrs(): Promise<void> {
           await markPullRequestReadyForReview(githubClient, pullRequest.node_id);
           prDisplayState = "open";
           console.log(
-            `[monitor] Marked draft PR ready for review for ${run.ticket_key}: ${run.pr_url}`
+            `[monitor] Marked draft PR ready for review for ${representativeRun.ticket_key}: ${prUrl}`
           );
         } catch (err) {
           console.warn(
-            `[monitor] Failed to mark draft PR ready for review for ${run.ticket_key}:`,
+            `[monitor] Failed to mark draft PR ready for review for ${representativeRun.ticket_key}:`,
             err
           );
         }
@@ -188,35 +196,46 @@ async function reconcileSucceededRunPrs(): Promise<void> {
       // clear the action-state flags: getRunsWithActivePr no longer returns the
       // run, so reconcilePrActionStates won't refresh them — without this they'd
       // retain a stale (possibly true) value indefinitely.
-      await updateRunStatus(run.ticket_key, {
-        pr_has_conflicts: hasMergeConflicts,
-        pr_display_state: prDisplayState,
-        ...(isTerminalPr
-          ? { pr_review_running: false, pr_revision_running: false }
-          : {}),
-      });
+      for (const run of runsForPr) {
+        await updateRunStatus(run.ticket_key, {
+          ...(run.id ? { run_record_id: run.id } : {}),
+          pr_has_conflicts: hasMergeConflicts,
+          pr_display_state: prDisplayState,
+          ...(isTerminalPr
+            ? { pr_review_running: false, pr_revision_running: false }
+            : {}),
+        });
+      }
 
       if (!pullRequest.merged_at) continue;
 
       // Gate only the Jira transition on the Done check to avoid repeated
       // transition attempts once the issue is already done.
-      try {
-        const issue = await jira.getIssue(run.ticket_key, ["status"]);
-        if (issue.fields.status.statusCategory.key === "done") {
+      const latestRunByTicket = new Map<string, (typeof runsForPr)[number]>();
+      for (const run of runsForPr) {
+        const existing = latestRunByTicket.get(run.ticket_key);
+        if (!existing || run.created_at > existing.created_at) {
+          latestRunByTicket.set(run.ticket_key, run);
+        }
+      }
+      for (const run of latestRunByTicket.values()) {
+        try {
+          const issue = await jira.getIssue(run.ticket_key, ["status"]);
+          if (issue.fields.status.statusCategory.key === "done") {
+            continue;
+          }
+        } catch (err) {
+          console.warn(
+            `[monitor] Failed to load Jira status for ${run.ticket_key}:`,
+            err
+          );
           continue;
         }
-      } catch (err) {
-        console.warn(
-          `[monitor] Failed to load Jira status for ${run.ticket_key}:`,
-          err
-        );
-        continue;
+        await transitionMergedPrToDone(run, { logPrefix: "[monitor]" });
       }
-
-      await transitionMergedPrToDone(run, { logPrefix: "[monitor]" });
     } catch (err) {
       console.warn(
-        `[monitor] Failed to process merged PR for ${run.ticket_key}:`,
+        `[monitor] Failed to process merged PR for ${representativeRun.ticket_key}:`,
         err
       );
     }
@@ -248,7 +267,14 @@ export async function reconcilePrActionStates(): Promise<void> {
     owner: string;
     repo: string;
     token: string;
-    prs: { ticketKey: string; pullNumber: number; branchName: string }[];
+    prs: {
+      ticketKey: string;
+      pullNumber: number;
+      branchName: string;
+      runRecordId: string | null;
+      prReviewRunning: boolean | null;
+      prRevisionRunning: boolean | null;
+    }[];
   };
   const repoGroups = new Map<string, RepoGroup>();
   for (const run of runs) {
@@ -269,10 +295,11 @@ export async function reconcilePrActionStates(): Promise<void> {
       ticketKey: run.ticket_key,
       pullNumber: parsed.pullNumber,
       branchName: buildAgentBranchName(run.ticket_key, run.summary),
+      runRecordId: run.id,
+      prReviewRunning: run.pr_review_running,
+      prRevisionRunning: run.pr_revision_running,
     });
   }
-
-  const runByTicket = new Map(runs.map((run) => [run.ticket_key, run]));
 
   // Fetch repos concurrently. getRepoWorkflowRuns failures are caught per-repo
   // and per-PR writes are caught individually below, so a single failure never
@@ -299,19 +326,18 @@ export async function reconcilePrActionStates(): Promise<void> {
           workflowRuns,
           { pullNumber: pr.pullNumber, branchName: pr.branchName }
         );
-        const current = runByTicket.get(pr.ticketKey);
         // Avoid write churn on every 30s sweep: only persist on an actual change.
         // Strict equality (not Boolean coercion) so the first pass over a freshly
         // created PR writes a definite `false` instead of leaving `null` (unknown).
         if (
-          current &&
-          current.pr_review_running === reviewRunning &&
-          current.pr_revision_running === revisionRunning
+          pr.prReviewRunning === reviewRunning &&
+          pr.prRevisionRunning === revisionRunning
         ) {
           continue;
         }
         try {
           await updateRunStatus(pr.ticketKey, {
+            ...(pr.runRecordId ? { run_record_id: pr.runRecordId } : {}),
             pr_review_running: reviewRunning,
             pr_revision_running: revisionRunning,
           });
@@ -374,6 +400,7 @@ export async function checkRuns(): Promise<void> {
           state === "CANCELLED";
         if (!isTerminalState && !run.session_link && ozRun.session_link) {
           await updateRunStatus(run.ticket_key, {
+            ...(run.id ? { run_record_id: run.id } : {}),
             session_link: ozRun.session_link,
           });
         }
@@ -383,6 +410,7 @@ export async function checkRuns(): Promise<void> {
           const sessionLink = ozRun.session_link ?? null;
 
           await updateRunStatus(run.ticket_key, {
+            ...(run.id ? { run_record_id: run.id } : {}),
             status: "succeeded",
             completed_at: now,
             pr_url: prUrl,
@@ -432,6 +460,7 @@ export async function checkRuns(): Promise<void> {
             ozRun.status_message?.message ?? `Run ended with state: ${state}`;
 
           await updateRunStatus(run.ticket_key, {
+            ...(run.id ? { run_record_id: run.id } : {}),
             status: "failed",
             completed_at: now,
             error: errorMsg,
@@ -442,6 +471,7 @@ export async function checkRuns(): Promise<void> {
         } else if (state === "CANCELLED") {
           // Treat external cancellation as stale
           await updateRunStatus(run.ticket_key, {
+            ...(run.id ? { run_record_id: run.id } : {}),
             status: "stale",
             completed_at: now,
             error: "Run was cancelled externally.",
@@ -462,6 +492,7 @@ export async function checkRuns(): Promise<void> {
               }
 
               await updateRunStatus(run.ticket_key, {
+                ...(run.id ? { run_record_id: run.id } : {}),
                 status: "stale",
                 completed_at: now,
                 error: `Run exceeded max duration of ${env.MAX_RUN_DURATION_HOURS}h.`,

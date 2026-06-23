@@ -1,6 +1,7 @@
 import { sql } from "./connection.js";
-import type { DispatchRun } from "./queries.js";
-export type { DispatchRun };
+import type { DispatchRun } from "./dispatch-run.js";
+import type { RunRecord } from "./queries.js";
+export type { DispatchRun } from "./dispatch-run.js";
 
 export interface ProjectConfig {
   project_key: string;
@@ -47,7 +48,6 @@ export interface ProjectConfigInput {
   jira_api_token?: string | null;
   active?: boolean;
 }
-
 
 export interface RunStatusCount {
   status: string;
@@ -125,9 +125,7 @@ export async function updateProjectConfig(
 ): Promise<ProjectConfig | null> {
   const current = await getProjectConfig(projectKey);
   if (!current) return null;
-
   const merged = { ...current, ...updates };
-
   const rows = await sql<ProjectConfig[]>`
     UPDATE project_configs SET
       jira_cloud_id  = ${merged.jira_cloud_id},
@@ -155,15 +153,10 @@ export async function updateProjectConfig(
   return rows[0] ?? null;
 }
 
-export async function deleteProjectConfig(
-  projectKey: string
-): Promise<void> {
-  // Run both deletes in a single transaction so a failure on the second
-  // statement rolls back the first — otherwise a partial failure would wipe a
-  // project's run history while leaving its config row intact.
+export async function deleteProjectConfig(projectKey: string): Promise<void> {
   await sql.begin(async (tx) => {
     await tx`
-      DELETE FROM dispatch_runs
+      DELETE FROM dispatch_entries
       WHERE project_key = ${projectKey}
     `;
     await tx`
@@ -173,38 +166,73 @@ export async function deleteProjectConfig(
   });
 }
 
+
 export async function getAllDispatchRuns(): Promise<DispatchRun[]> {
   return sql<DispatchRun[]>`
-    SELECT * FROM dispatch_runs ORDER BY created_at DESC
+    SELECT
+      de.ticket_key,
+      de.project_key,
+      de.summary,
+      de.status,
+      de.blocked_by,
+      de.priority,
+      de.ticket_status_name,
+      de.ticket_status_category,
+      lr.id,
+      lr.run_type,
+      lr.run_id,
+      lr.model,
+      lr.spawned_at,
+      lr.completed_at,
+      COALESCE(lr.pr_url, lpr.pr_url) AS pr_url,
+      COALESCE(lr.pr_has_conflicts, lpr.pr_has_conflicts) AS pr_has_conflicts,
+      COALESCE(lr.pr_display_state, lpr.pr_display_state) AS pr_display_state,
+      COALESCE(lr.pr_review_running, lpr.pr_review_running) AS pr_review_running,
+      COALESCE(lr.pr_revision_running, lpr.pr_revision_running) AS pr_revision_running,
+      lr.session_link,
+      lr.error,
+      de.created_at,
+      de.updated_at
+    FROM dispatch_entries de
+    LEFT JOIN LATERAL (
+      SELECT *
+      FROM dispatch_runs dr
+      WHERE dr.ticket_key = de.ticket_key
+      ORDER BY dr.created_at DESC
+      LIMIT 1
+    ) lr ON true
+    LEFT JOIN LATERAL (
+      SELECT
+        dr.pr_url,
+        dr.pr_has_conflicts,
+        dr.pr_display_state,
+        dr.pr_review_running,
+        dr.pr_revision_running
+      FROM dispatch_runs dr
+      WHERE dr.ticket_key = de.ticket_key
+        AND dr.pr_url IS NOT NULL
+      ORDER BY dr.created_at DESC
+      LIMIT 1
+    ) lpr ON true
+    ORDER BY de.created_at DESC
   `;
 }
 
 export async function getRunCountsByStatus(): Promise<RunStatusCount[]> {
   return sql<RunStatusCount[]>`
-    SELECT status, COUNT(*)::TEXT as count FROM dispatch_runs GROUP BY status
+    SELECT status, COUNT(*)::TEXT as count FROM dispatch_entries GROUP BY status
   `;
 }
 
-/**
- * Default dashboard page size. Kept modest so a single render/transfer stays small
- * regardless of how large dispatch_runs grows.
- */
 export const DEFAULT_DASHBOARD_PAGE_SIZE = 50;
+export const RUN_HISTORY_PER_TICKET_LIMIT = 25;
 
 export interface DispatchRunFilter {
-  /** Restrict to a single project (null/undefined = all projects). */
   projectKey?: string | null;
-  /** Restrict to these agent statuses (empty = all statuses). */
   statuses?: string[];
-  /** Exclude runs whose Jira ticket status category is 'done'. */
   hideDone?: boolean;
 }
 
-// Each filter is always present in the SQL but becomes a no-op when unset, so we
-// avoid dynamic WHERE-clause composition while keeping every value parameterized.
-// - projectKey null  -> `NULL::text IS NULL` short-circuits to true
-// - statuses empty   -> the `${empty}` boolean is true
-// - hideDone false   -> the `${!hideDone}` boolean is true
 export async function getDispatchRunsPage(
   filter: DispatchRunFilter,
   limit: number,
@@ -214,16 +242,59 @@ export async function getDispatchRunsPage(
   const statuses = filter.statuses ?? [];
   const hideDone = filter.hideDone ?? false;
   return sql<DispatchRun[]>`
-    SELECT * FROM dispatch_runs
-    WHERE (${projectKey}::text IS NULL OR project_key = ${projectKey})
-      AND (${statuses.length === 0} OR status = ANY(${statuses}::text[]))
-      AND (${!hideDone} OR ticket_status_category IS DISTINCT FROM 'done')
-    ORDER BY created_at DESC
+    SELECT
+      de.ticket_key,
+      de.project_key,
+      de.summary,
+      de.status,
+      de.blocked_by,
+      de.priority,
+      de.ticket_status_name,
+      de.ticket_status_category,
+      lr.id,
+      lr.run_type,
+      lr.run_id,
+      lr.model,
+      lr.spawned_at,
+      lr.completed_at,
+      COALESCE(lr.pr_url, lpr.pr_url) AS pr_url,
+      COALESCE(lr.pr_has_conflicts, lpr.pr_has_conflicts) AS pr_has_conflicts,
+      COALESCE(lr.pr_display_state, lpr.pr_display_state) AS pr_display_state,
+      COALESCE(lr.pr_review_running, lpr.pr_review_running) AS pr_review_running,
+      COALESCE(lr.pr_revision_running, lpr.pr_revision_running) AS pr_revision_running,
+      lr.session_link,
+      lr.error,
+      de.created_at,
+      de.updated_at
+    FROM dispatch_entries de
+    LEFT JOIN LATERAL (
+      SELECT *
+      FROM dispatch_runs dr
+      WHERE dr.ticket_key = de.ticket_key
+      ORDER BY dr.created_at DESC
+      LIMIT 1
+    ) lr ON true
+    LEFT JOIN LATERAL (
+      SELECT
+        dr.pr_url,
+        dr.pr_has_conflicts,
+        dr.pr_display_state,
+        dr.pr_review_running,
+        dr.pr_revision_running
+      FROM dispatch_runs dr
+      WHERE dr.ticket_key = de.ticket_key
+        AND dr.pr_url IS NOT NULL
+      ORDER BY dr.created_at DESC
+      LIMIT 1
+    ) lpr ON true
+    WHERE (${projectKey}::text IS NULL OR de.project_key = ${projectKey})
+      AND (${statuses.length === 0} OR de.status = ANY(${statuses}::text[]))
+      AND (${!hideDone} OR de.ticket_status_category IS DISTINCT FROM 'done')
+    ORDER BY de.created_at DESC
     LIMIT ${limit} OFFSET ${offset}
   `;
 }
 
-/** Total number of runs matching a filter (for pagination page counts). */
 export async function countDispatchRuns(
   filter: DispatchRunFilter
 ): Promise<number> {
@@ -231,35 +302,71 @@ export async function countDispatchRuns(
   const statuses = filter.statuses ?? [];
   const hideDone = filter.hideDone ?? false;
   const rows = await sql<Array<{ count: string }>>`
-    SELECT COUNT(*)::TEXT AS count FROM dispatch_runs
-    WHERE (${projectKey}::text IS NULL OR project_key = ${projectKey})
-      AND (${statuses.length === 0} OR status = ANY(${statuses}::text[]))
-      AND (${!hideDone} OR ticket_status_category IS DISTINCT FROM 'done')
+    SELECT COUNT(*)::TEXT AS count FROM dispatch_entries de
+    WHERE (${projectKey}::text IS NULL OR de.project_key = ${projectKey})
+      AND (${statuses.length === 0} OR de.status = ANY(${statuses}::text[]))
+      AND (${!hideDone} OR de.ticket_status_category IS DISTINCT FROM 'done')
   `;
   return parseInt(rows[0]?.count ?? "0", 10);
 }
 
-/**
- * Per-status counts for the dashboard stat bar, scoped by project + hideDone but
- * NOT by the status-tag filter (so selecting a status tag does not change the bar).
- */
 export async function getStatusCounts(
   filter: Pick<DispatchRunFilter, "projectKey" | "hideDone">
 ): Promise<RunStatusCount[]> {
   const projectKey = filter.projectKey ?? null;
   const hideDone = filter.hideDone ?? false;
   return sql<RunStatusCount[]>`
-    SELECT status, COUNT(*)::TEXT AS count FROM dispatch_runs
-    WHERE (${projectKey}::text IS NULL OR project_key = ${projectKey})
-      AND (${!hideDone} OR ticket_status_category IS DISTINCT FROM 'done')
+    SELECT status, COUNT(*)::TEXT AS count FROM dispatch_entries de
+    WHERE (${projectKey}::text IS NULL OR de.project_key = ${projectKey})
+      AND (${!hideDone} OR de.ticket_status_category IS DISTINCT FROM 'done')
     GROUP BY status
   `;
 }
 
-/** Distinct project keys present in dispatch_runs (for the project dropdown). */
 export async function getDistinctRunProjectKeys(): Promise<string[]> {
   const rows = await sql<Array<{ project_key: string }>>`
-    SELECT DISTINCT project_key FROM dispatch_runs ORDER BY project_key ASC
+    SELECT DISTINCT project_key FROM dispatch_entries ORDER BY project_key ASC
   `;
   return rows.map((row) => row.project_key);
+}
+
+export async function getRunHistoryForTickets(
+  ticketKeys: string[],
+  perTicketLimit: number = RUN_HISTORY_PER_TICKET_LIMIT
+): Promise<RunRecord[]> {
+  if (ticketKeys.length === 0) return [];
+  const boundedPerTicketLimit = Math.max(1, perTicketLimit);
+  return sql<RunRecord[]>`
+    WITH ranked AS (
+      SELECT
+        dr.*,
+        ROW_NUMBER() OVER (
+          PARTITION BY dr.ticket_key
+          ORDER BY dr.created_at DESC
+        ) AS row_num
+      FROM dispatch_runs dr
+      WHERE dr.ticket_key = ANY(${ticketKeys}::text[])
+    )
+    SELECT
+      id,
+      ticket_key,
+      run_type,
+      run_id,
+      status,
+      model,
+      spawned_at,
+      completed_at,
+      pr_url,
+      pr_has_conflicts,
+      pr_display_state,
+      pr_review_running,
+      pr_revision_running,
+      session_link,
+      error,
+      created_at,
+      updated_at
+    FROM ranked
+    WHERE row_num <= ${boundedPerTicketLimit}
+    ORDER BY ticket_key ASC, created_at DESC
+  `;
 }

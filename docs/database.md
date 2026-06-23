@@ -1,6 +1,6 @@
 # Database
 
-HyperDispatch uses PostgreSQL for persistent state. Three tables serve both orchestration logic and the dashboard.
+HyperDispatch uses PostgreSQL for persistent state. Four tables serve orchestration logic, API responses, and dashboard rendering.
 
 ## Tables
 
@@ -30,31 +30,42 @@ Stores per-project configuration. Managed via the config UI.
 | `created_at` | `TIMESTAMPTZ` | Row creation time |
 | `updated_at` | `TIMESTAMPTZ` | Last update time |
 
-### `dispatch_runs`
-
-Tracks ticket → agent run state. Managed by the orchestration loop.
+### `dispatch_entries`
+Tracks ticket-level state. One row per Jira ticket key. Managed by webhook + scheduler + monitor reconciliation.
 
 | Column | Type | Description |
 |---|---|---|
 | `ticket_key` | `TEXT` PK | Jira issue key (e.g., "PROJ-123") |
 | `project_key` | `TEXT` FK | References `project_configs.project_key` |
 | `summary` | `TEXT` | Ticket summary for dashboard display |
-| `run_id` | `TEXT` | Oz run ID (null if blocked/queued) |
 | `status` | `TEXT` | `blocked`, `blocked_cycle`, `queued`, `running`, `succeeded`, `failed`, `stale` |
 | `blocked_by` | `TEXT[]` | Blocking ticket keys (when status = blocked) |
-| `model` | `TEXT` | Model used for this run |
 | `priority` | `INTEGER` | From Jira priority (for queue ordering) |
-| `spawned_at` | `TIMESTAMPTZ` | When the agent was spawned |
-| `completed_at` | `TIMESTAMPTZ` | When the run completed |
-| `pr_url` | `TEXT` | Pull request URL |
-| `pr_has_conflicts` | `BOOLEAN` | Whether GitHub currently reports merge conflicts for the PR (`true`/`false`/`null` unknown) |
-| `pr_display_state` | `TEXT` | Persisted PR display state for dashboard rendering (`open`/`draft`/`merged`/`closed`/`null` unknown), DB-constrained to the four non-null states |
-| `pr_review_running` | `BOOLEAN` | Whether the PR review workflow is currently in-flight (`true`/`false`/`null` unknown); resolved out-of-band by the run monitor so the dashboard renders the badge without live GitHub calls |
-| `pr_revision_running` | `BOOLEAN` | Whether the PR revision workflow is currently in-flight (`true`/`false`/`null` unknown); resolved out-of-band by the run monitor |
-| `session_link` | `TEXT` | Oz session link for live monitoring |
-| `error` | `TEXT` | Last failure reason |
 | `ticket_status_name` | `TEXT` | Persisted Jira workflow status name (e.g. `To Do`, `In Progress`, `Done`); written by the scheduler's reconcile loop so the dashboard never calls Jira on render |
 | `ticket_status_category` | `TEXT` | Persisted Jira status category key (e.g. `new`, `in-flight`, `done`); used by the dashboard for badge color and by `hideDone` filtering (`hideDone` excludes rows whose category is `done`; null categories are shown) |
+| `created_at` | `TIMESTAMPTZ` | Row creation time |
+| `updated_at` | `TIMESTAMPTZ` | Last update time |
+
+### `dispatch_runs`
+Tracks individual agent runs for a ticket. Multiple rows per ticket (`dispatch_entries.ticket_key`). Managed by spawner, monitor, and revision flows.
+
+| Column | Type | Description |
+|---|---|---|
+| `id` | `UUID` PK | Run record identifier |
+| `ticket_key` | `TEXT` FK | References `dispatch_entries.ticket_key` (`ON DELETE CASCADE`) |
+| `run_type` | `TEXT` | Run category (`implementation`, `revision`; extensible) |
+| `run_id` | `TEXT` | Oz run ID (null before/if spawn metadata not bound yet) |
+| `status` | `TEXT` | `blocked`, `blocked_cycle`, `queued`, `running`, `succeeded`, `failed`, `stale` |
+| `model` | `TEXT` | Model used for this run |
+| `spawned_at` | `TIMESTAMPTZ` | When the run was spawned |
+| `completed_at` | `TIMESTAMPTZ` | When the run completed |
+| `pr_url` | `TEXT` | Pull request URL for this run |
+| `pr_has_conflicts` | `BOOLEAN` | Whether GitHub currently reports merge conflicts (`true`/`false`/`null` unknown) |
+| `pr_display_state` | `TEXT` | Persisted PR display state (`open`/`draft`/`merged`/`closed`) |
+| `pr_review_running` | `BOOLEAN` | Whether PR review workflow is currently in-flight (`true`/`false`/`null`) |
+| `pr_revision_running` | `BOOLEAN` | Whether PR revision workflow is currently in-flight (`true`/`false`/`null`) |
+| `session_link` | `TEXT` | Oz session link for this run |
+| `error` | `TEXT` | Last failure reason for this run |
 | `created_at` | `TIMESTAMPTZ` | Row creation time |
 | `updated_at` | `TIMESTAMPTZ` | Last update time |
 
@@ -71,23 +82,29 @@ Idempotency ledger for PR revision webhook events. One row per processed deliver
 
 ## Indexes
 
-- `idx_status` on `dispatch_runs(status)` — for run monitor queries and concurrency counting.
-- `idx_project` on `dispatch_runs(project_key)` — for per-project dashboard filtering.
-- `idx_dispatch_runs_created_at` on `dispatch_runs(created_at DESC)` — supports the dashboard's default ordering and keeps `LIMIT`/`OFFSET` pagination cheap as the table grows.
+- `idx_dispatch_entries_status` on `dispatch_entries(status)` — for scheduler queue and entry-level status reads.
+- `idx_dispatch_entries_project` on `dispatch_entries(project_key)` — for per-project dashboard/API filtering.
+- `idx_dispatch_entries_created_at` on `dispatch_entries(created_at DESC)` — supports entry-level ordering.
+- `idx_dispatch_runs_ticket` on `dispatch_runs(ticket_key)` — for run-history fetches by ticket.
+- `idx_dispatch_runs_status` on `dispatch_runs(status)` — for monitor polling and running-run counts.
+- `idx_dispatch_runs_created_at` on `dispatch_runs(created_at DESC)` — supports latest-run selection and run-history ordering.
 - `idx_revision_events_ticket` on `revision_events(ticket_key)` — for looking up revision events by ticket.
 - `idx_revision_events_created_at` on `revision_events(created_at)` — supports efficient range deletes when purging old rows (see retention note below).
 
 ## Status transition notes
 
-- `removeBlocker(ticketKey, blockerKey)` removes a blocker from `blocked_by`.
-- If that removal empties `blocked_by`, only runs currently in `blocked` auto-transition to `queued`.
-- Runs in `blocked_cycle` remain `blocked_cycle` after blocker removal (cycle status is not auto-cleared by this query path).
-- `claimRunForSpawn(ticketKey)` atomically transitions a row from `queued` → `running` and returns whether the claim succeeded. This is used to prevent duplicate dispatches across concurrent triggers.
-- `releaseSpawnClaim(ticketKey)` reverts `running` → `queued` only when `run_id IS NULL` (failed pre-spawn path), so claimed rows tied to real Oz runs are never accidentally released.
-- `claimRevisionSlot(ticketKey)` atomically transitions a run to `running` and clears `run_id`, but only when the run is in a terminal state (`succeeded`/`failed`/`stale`), returning the prior status and run id. It returns `claimed: false` for runs that are already `running` (overlapping revision) or owned by the scheduler (`queued`/`blocked`/`blocked_cycle`), so a revision never steals a row mid-dispatch. Clearing `run_id` makes the monitor skip the row (via its `!run.run_id` guard) until `recordAndSpawnRevision` binds the new run id. `releaseRevisionSlot(ticketKey, previousStatus, previousRunId)` restores both the prior status and run id if the spawn or its DB write fails (otherwise the run monitor clears the `running` state when the spawned run terminates), so no row is left stranded in `running` with a NULL `run_id`.
-- A PR revision reuses the tracked `dispatch_runs` row rather than creating a new one: on a successful spawn, `recordAndSpawnRevision` overwrites the row's `run_id`, `model`, `spawned_at`, and `session_link` with the revision run's values. The original dispatch run's run id and session link are therefore not preserved — the row always reflects the most recent (revision) run. Auditing the original dispatch run would require a separate column or a `revision_events` extension.
-- Scheduler errors after `spawnAgent` invocation are persisted as `failed` instead of being re-queued; if that failure-state write also fails, claim rollback is attempted so rows remain recoverable and do not stay stranded in `running` indefinitely.
-- `upsertDispatchRun` conflict updates do not allow stale incoming `queued` writes to overwrite rows already in `running` or `succeeded`.
+- `removeBlocker(ticketKey, blockerKey)` removes a blocker from `dispatch_entries.blocked_by`.
+- If blocker removal empties `blocked_by`, only entries currently in `blocked` auto-transition to `queued`.
+- Entries in `blocked_cycle` remain `blocked_cycle` after blocker removal.
+- `claimRunForSpawn(ticketKey)` atomically claims a queued entry for dispatch (`queued` → `running`) and prevents duplicate scheduler dispatches.
+- `releaseSpawnClaim(ticketKey)` reverts a claimed entry (`running` → `queued`) only if no run id has been bound on the active run.
+- `createRun(ticketKey, runType)` inserts a new run record for implementation spawn attempts (revision rows are now claimed via `claimRevisionSlot`; see below).
+- `updateRunStatus` writes run-level fields and can target a specific run record id (`run_record_id`) so monitor/webhook updates only mutate the intended run row. If no run row exists yet **and no explicit `run_record_id` target was supplied**, it creates one from the supplied fields (using the entry status when `status` is omitted) so metadata like `error`, `session_link`, and PR fields are not silently dropped.
+  - When an explicit `run_record_id` is supplied but no row matches, `updateRunStatus` returns `null` and does not fabricate a new run row.
+  - For run-record fields, explicit `null` is treated as "preserve existing value" (same as omission). Explicit clearing is only supported for entry-level `blocked_by` via `blocked_by: null`.
+- `recomputeEntryStatus(ticketKey)` derives `dispatch_entries.status` from run history so entry-level status remains consistent with the latest active/terminal run state.
+- `claimRevisionSlot` atomically flips the entry to `running` **and inserts a `dispatch_runs` row (`run_type='revision'`, `status='running'`) in the same SQL statement** when no running run exists and the latest run is terminal, so concurrent revision triggers cannot both claim and there is no claim→create gap.
+- `releaseRevisionSlot` recomputes entry status and can optionally delete a failed revision run record, making the ticket re-claimable after spawn/create failures.
 
 ## Retention
 `revision_events` rows are written for every processed revision webhook delivery and are **never auto-deleted** (a successful revision's event key is kept permanently so a later redelivery of the same review/comment stays de-duplicated). The table grows roughly with the number of revision triggers, so operators should periodically purge old rows, e.g.:
@@ -97,4 +114,4 @@ DELETE FROM revision_events WHERE created_at < NOW() - INTERVAL '90 days';
 The `idx_revision_events_created_at` index keeps this range delete cheap. A 90-day window is far longer than GitHub's webhook redelivery horizon, so purging beyond it cannot reintroduce duplicate revision runs.
 ## Migrations
 
-The schema is applied on startup by `runMigrations()` (`src/db/migrate.ts`): it executes `src/db/schema.sql` (idempotent `CREATE TABLE IF NOT EXISTS` / `CREATE INDEX IF NOT EXISTS`) followed by additive `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` statements. New tables and indexes are added to `schema.sql`; new columns on existing tables are also mirrored in the additive block, so repeated runs are safe.
+The schema is applied on startup by `runMigrations()` (`src/db/migrate.ts`): it executes `src/db/schema.sql` (idempotent `CREATE TABLE IF NOT EXISTS` / `CREATE INDEX IF NOT EXISTS`) followed by additive `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` statements. Legacy single-table state (`dispatch_runs` as ticket-level row) is migrated into the split model inside one transaction (rename legacy table → apply schema → backfill `dispatch_entries` + per-run `dispatch_runs` → drop legacy table), so a crash cannot leave a half-migrated database.
