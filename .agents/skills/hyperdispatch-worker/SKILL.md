@@ -7,6 +7,34 @@ description: "Default worker skill for HyperDispatch-managed agent runs. Impleme
 
 You are a worker agent dispatched by HyperDispatch. Your prompt contains a Jira ticket to implement. Follow this workflow exactly.
 
+## Connecting to Jira (REST API)
+
+You do not have a Jira MCP — talk to Jira Cloud directly over its REST API. Credentials are provided as environment variables; never print, echo, or log them (reference them only as `$VAR`):
+- `JIRA_API_TOKEN` — a **scoped** API token (starts with `ATSTT…`).
+- `JIRA_CLOUD_ID` — the Jira Cloud instance ID.
+- `JIRA_SITE_URL` — the human site URL (e.g. `https://your-org.atlassian.net`); used for `/browse/` links only, never for API calls.
+- `JIRA_EMAIL` — the service-account email (informational; NOT used for auth below).
+
+**Authenticate with a Bearer token against the Atlassian API gateway, keyed by cloud ID — not basic auth against the site URL.** This scoped token returns `401` with `curl -u email:token` and/or when hitting `$JIRA_SITE_URL/rest/...` directly.
+
+```sh
+# Base URL for ALL API calls (api.atlassian.com gateway, keyed by cloud ID)
+JIRA_API="https://api.atlassian.com/ex/jira/${JIRA_CLOUD_ID}"
+
+# Example: fetch an issue
+curl -s \
+  -H "Authorization: Bearer ${JIRA_API_TOKEN}" \
+  -H "Accept: application/json" \
+  "${JIRA_API}/rest/api/3/issue/${TICKET}?fields=summary,status,description"
+```
+
+Verify connectivity with `GET ${JIRA_API}/rest/api/3/serverInfo` (expect HTTP `200`).
+
+Pitfalls:
+- Do NOT use basic auth (`curl -u "$JIRA_EMAIL:$JIRA_API_TOKEN"`) and do NOT hit `$JIRA_SITE_URL/rest/...` — both fail with `401`/`Unauthorized` for this scoped token.
+- The token is scoped: some endpoints (e.g. `/myself`) may return `401 "scope does not match"` even though the token is valid — stick to the issue/project/field endpoints you actually need.
+- `GET /rest/api/3/search` is removed (returns `410`); use `POST ${JIRA_API}/rest/api/3/search/jql` with a JSON body instead.
+
 ## 1. Parse the Ticket
 
 Extract from your prompt:
@@ -172,7 +200,7 @@ Push and create a pull request:
 git push -u origin "$(git branch --show-current)"
 gh pr create \
   --title "{ticket-key}: {summary}" \
-  --body "Implements [{ticket-key}]({jira-base-url}/browse/{ticket-key})
+  --body "Implements [{ticket-key}](${JIRA_SITE_URL}/browse/{ticket-key})
 
 ## Changes
 
@@ -191,7 +219,7 @@ gh pr view --json isDraft --jq '.isDraft'   # expect: false
 
 `gh pr ready` acts on the PR for the current branch (or pass the URL/number printed by `gh pr create`). It is a no-op when the PR is already ready, so it is always safe to run. If `isDraft` is still `true`, retry `gh pr ready` before continuing.
 
-The PR body must include a link to the Jira ticket. Use the Jira base URL from the environment variable `JIRA_BASE_URL` if available, otherwise use the URL from the prompt context.
+The PR body must include a link to the Jira ticket. Build the `/browse/{ticket-key}` link from the `JIRA_SITE_URL` environment variable (the human site URL, not the `api.atlassian.com` gateway); fall back to the URL from the prompt context if it is unset.
 For UI-touching tickets, also include:
 - Iteration trail (each iteration's screenshot paths + one-paragraph rationale)
 - Any unresolved blockers if the 4-iteration cap was reached
@@ -203,12 +231,12 @@ Do not upload intermediate screenshots to Jira; keep the trail in the PR only.
 If the ticket is UI-touching and final screenshots exist, upload them after opening the PR:
 
 ```sh
-curl -u "$JIRA_EMAIL:$JIRA_API_TOKEN" \
-  -X POST \
+curl -X POST \
+  -H "Authorization: Bearer ${JIRA_API_TOKEN}" \
   -H "X-Atlassian-Token: no-check" \
   -F "file=@./.agent/screenshots/${TICKET}-final-desktop.png" \
   -F "file=@./.agent/screenshots/${TICKET}-final-mobile.png" \
-  "${JIRA_BASE_URL}/rest/api/3/issue/${TICKET}/attachments"
+  "https://api.atlassian.com/ex/jira/${JIRA_CLOUD_ID}/rest/api/3/issue/${TICKET}/attachments"
 ```
 
 Then post a Jira comment (via `addCommentToJiraIssue`) that references the uploaded images, for example:
