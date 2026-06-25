@@ -657,7 +657,7 @@ describe.skipIf(!process.env.RUN_DB_TESTS)("queries integration", () => {
     expect(projected?.pr_display_state).toBe("open");
     expect(projected?.pr_has_conflicts).toBe(false);
   });
-  it("integration: createRun inherits existing PR metadata for the same ticket", async () => {
+  it("integration: createRun inherits the latest known PR metadata when the newest row has null PR fields", async () => {
     await queries.upsertDispatchRun({
       ticketKey: "HYDI-901",
       projectKey: "HYDI",
@@ -678,12 +678,29 @@ describe.skipIf(!process.env.RUN_DB_TESTS)("queries integration", () => {
       pr_review_running: true,
       pr_revision_running: false,
     });
+    const nullMetadataRun = await queries.createRun({
+      ticketKey: "HYDI-901",
+      runType: "revision",
+      status: "failed",
+      runId: "run-901-null",
+      completedAt: new Date("2026-01-01T09:30:00.000Z"),
+    });
+    await connection.sql.unsafe(`
+      UPDATE dispatch_runs
+      SET
+        pr_url = NULL,
+        pr_has_conflicts = NULL,
+        pr_display_state = NULL,
+        pr_review_running = NULL,
+        pr_revision_running = NULL
+      WHERE id = '${nullMetadataRun.id}';
+    `);
 
     const followUpRun = await queries.createRun({
       ticketKey: "HYDI-901",
       runType: "revision",
       status: "running",
-      runId: "run-901-rev",
+      runId: "run-901-recover",
       spawnedAt: new Date("2026-01-01T10:00:00.000Z"),
     });
 
@@ -694,7 +711,7 @@ describe.skipIf(!process.env.RUN_DB_TESTS)("queries integration", () => {
     expect(followUpRun.pr_revision_running).toBe(false);
   });
 
-  it("integration: claimRevisionSlot seeds the new revision row with the ticket's latest PR metadata", async () => {
+  it("integration: claimRevisionSlot seeds revision rows from the latest known PR metadata when newest row is null", async () => {
     await queries.upsertDispatchRun({
       ticketKey: "HYDI-902",
       projectKey: "HYDI",
@@ -715,12 +732,29 @@ describe.skipIf(!process.env.RUN_DB_TESTS)("queries integration", () => {
       pr_review_running: true,
       pr_revision_running: false,
     });
+    const nullMetadataRun = await queries.createRun({
+      ticketKey: "HYDI-902",
+      runType: "revision",
+      status: "failed",
+      runId: "run-902-null",
+      completedAt: new Date("2026-01-01T10:30:00.000Z"),
+    });
+    await connection.sql.unsafe(`
+      UPDATE dispatch_runs
+      SET
+        pr_url = NULL,
+        pr_has_conflicts = NULL,
+        pr_display_state = NULL,
+        pr_review_running = NULL,
+        pr_revision_running = NULL
+      WHERE id = '${nullMetadataRun.id}';
+    `);
 
     const claim = await queries.claimRevisionSlot("HYDI-902");
     expect(claim).toMatchObject({
       claimed: true,
-      previousStatus: "succeeded",
-      previousRunId: "run-902-impl",
+      previousStatus: "failed",
+      previousRunId: "run-902-null",
       runRecordId: expect.any(String),
     });
 
@@ -803,6 +837,62 @@ describe.skipIf(!process.env.RUN_DB_TESTS)("queries integration", () => {
     expect(persisted?.run_type).toBe("revision");
     expect(persisted?.error).toBe("spawn failed before run binding");
     expect(persisted?.pr_url).toBe("https://github.com/hyperbolic-co/hyper-dispatch/pull/72");
+  });
+
+  it("integration: updateRunStatus fallback inherits latest known PR metadata when stale run_record_id is provided and PR fields are omitted", async () => {
+    await queries.upsertDispatchRun({
+      ticketKey: "HYDI-74",
+      projectKey: "HYDI",
+      status: "succeeded",
+    });
+    const implementationRun = await queries.createRun({
+      ticketKey: "HYDI-74",
+      runType: "implementation",
+      status: "succeeded",
+      runId: "run-74-impl",
+      completedAt: new Date("2026-01-01T10:00:00.000Z"),
+    });
+    await queries.updateRunStatus("HYDI-74", {
+      run_record_id: implementationRun.id,
+      pr_url: "https://github.com/hyperbolic-co/hyper-dispatch/pull/74",
+      pr_display_state: "open",
+      pr_has_conflicts: false,
+      pr_review_running: true,
+      pr_revision_running: false,
+    });
+    const nullMetadataRun = await queries.createRun({
+      ticketKey: "HYDI-74",
+      runType: "revision",
+      status: "failed",
+      runId: "run-74-null",
+      completedAt: new Date("2026-01-01T10:30:00.000Z"),
+    });
+    await connection.sql.unsafe(`
+      UPDATE dispatch_runs
+      SET
+        pr_url = NULL,
+        pr_has_conflicts = NULL,
+        pr_display_state = NULL,
+        pr_review_running = NULL,
+        pr_revision_running = NULL
+      WHERE id = '${nullMetadataRun.id}';
+    `);
+
+    const fallback = await queries.updateRunStatus("HYDI-74", {
+      run_record_id: "11111111-2222-4333-8444-555555555555",
+      run_type: "revision",
+      status: "failed",
+      error: "stale run_record_id",
+    });
+    expect(fallback).not.toBeNull();
+    expect(fallback?.run_type).toBe("revision");
+    expect(fallback?.status).toBe("failed");
+    expect(fallback?.error).toBe("stale run_record_id");
+    expect(fallback?.pr_url).toBe("https://github.com/hyperbolic-co/hyper-dispatch/pull/74");
+    expect(fallback?.pr_display_state).toBe("open");
+    expect(fallback?.pr_has_conflicts).toBe(false);
+    expect(fallback?.pr_review_running).toBe(true);
+    expect(fallback?.pr_revision_running).toBe(false);
   });
 
   it("integration: updateRunStatus does not fabricate a run when explicit run_record_id is missing", async () => {

@@ -141,6 +141,13 @@ export async function createRun(input: CreateRunInput): Promise<RunRecord> {
         dr.pr_revision_running
       FROM dispatch_runs dr
       WHERE dr.ticket_key = ${input.ticketKey}
+        AND (
+          dr.pr_url IS NOT NULL
+          OR dr.pr_has_conflicts IS NOT NULL
+          OR dr.pr_display_state IS NOT NULL
+          OR dr.pr_review_running IS NOT NULL
+          OR dr.pr_revision_running IS NOT NULL
+        )
       ORDER BY dr.created_at DESC
       LIMIT 1
     )
@@ -304,15 +311,29 @@ export async function claimRevisionSlot(
     WITH latest AS (
       SELECT
         status,
-        run_id,
-        pr_url,
-        pr_has_conflicts,
-        pr_display_state,
-        pr_review_running,
-        pr_revision_running
+        run_id
       FROM dispatch_runs
       WHERE ticket_key = ${ticketKey}
       ORDER BY created_at DESC
+      LIMIT 1
+    ),
+    latest_pr AS (
+      SELECT
+        dr.pr_url,
+        dr.pr_has_conflicts,
+        dr.pr_display_state,
+        dr.pr_review_running,
+        dr.pr_revision_running
+      FROM dispatch_runs dr
+      WHERE dr.ticket_key = ${ticketKey}
+        AND (
+          dr.pr_url IS NOT NULL
+          OR dr.pr_has_conflicts IS NOT NULL
+          OR dr.pr_display_state IS NOT NULL
+          OR dr.pr_review_running IS NOT NULL
+          OR dr.pr_revision_running IS NOT NULL
+        )
+      ORDER BY dr.created_at DESC
       LIMIT 1
     ),
     claimed AS (
@@ -354,13 +375,13 @@ export async function claimRevisionSlot(
         'revision',
         'running',
         NOW(),
-        latest.pr_url,
-        latest.pr_has_conflicts,
-        latest.pr_display_state,
-        latest.pr_review_running,
-        latest.pr_revision_running
+        latest_pr.pr_url,
+        latest_pr.pr_has_conflicts,
+        latest_pr.pr_display_state,
+        latest_pr.pr_review_running,
+        latest_pr.pr_revision_running
       FROM claimed
-      LEFT JOIN latest ON true
+      LEFT JOIN latest_pr ON true
       RETURNING id
     )
     SELECT
@@ -530,8 +551,19 @@ export async function updateRunStatus(
     shouldUpdatePrRevisionRunning ||
     shouldUpdateSessionLink ||
     shouldUpdateError;
+  let shouldInsertFallbackForMissingTarget = !hasExplicitRunRecordId;
+  if (!updatedRun && shouldInsertFallbackRun && hasExplicitRunRecordId) {
+    const historyRows = await sql<Array<{ has_runs: boolean }>>`
+      SELECT EXISTS (
+        SELECT 1
+        FROM dispatch_runs
+        WHERE ticket_key = ${ticketKey}
+      ) AS has_runs
+    `;
+    shouldInsertFallbackForMissingTarget = historyRows[0]?.has_runs ?? false;
+  }
 
-  if (!updatedRun && shouldInsertFallbackRun && !hasExplicitRunRecordId) {
+  if (!updatedRun && shouldInsertFallbackRun && shouldInsertFallbackForMissingTarget) {
     const fallbackRows = await sql<DispatchRun[]>`
       WITH entry AS (
         UPDATE dispatch_entries
@@ -550,6 +582,13 @@ export async function updateRunStatus(
           dr.pr_revision_running
         FROM dispatch_runs dr
         WHERE dr.ticket_key = ${ticketKey}
+          AND (
+            dr.pr_url IS NOT NULL
+            OR dr.pr_has_conflicts IS NOT NULL
+            OR dr.pr_display_state IS NOT NULL
+            OR dr.pr_review_running IS NOT NULL
+            OR dr.pr_revision_running IS NOT NULL
+          )
         ORDER BY dr.created_at DESC
         LIMIT 1
       ),
