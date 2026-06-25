@@ -9,7 +9,7 @@ import {
   DEFAULT_DASHBOARD_PAGE_SIZE,
   type DispatchRunFilter,
 } from "../db/config-queries.js";
-import { deleteRun } from "../db/queries.js";
+import { deleteRun, getProjectConfig, updateRunStatus } from "../db/queries.js";
 import { env } from "../config/env.js";
 import { resolveProjectTokens } from "../config/env.js";
 import { brandIconSvg, faviconDataUri } from "./branding.js";
@@ -22,8 +22,16 @@ import {
   parseGithubPullRequestUrl,
 } from "../github/pull-requests.js";
 import { buildAgentBranchName } from "../orchestration/branch-name.js";
+import { getOzClient } from "../orchestration/oz-client.js";
 
 export const dashboardRouter = new Hono();
+const RUNNING_OZ_STATES = new Set([
+  "QUEUED",
+  "PENDING",
+  "CLAIMED",
+  "INPROGRESS",
+  "BLOCKED",
+]);
 const spawnedAtDateTimeFormatter = new Intl.DateTimeFormat("en-GB", {
   year: "2-digit",
   month: "2-digit",
@@ -206,6 +214,18 @@ function buildDashboardRedirect(
   return `/dashboard?${params.toString()}`;
 }
 
+function readDashboardActionFilters(body: Record<string, unknown>): {
+  project: string | null;
+  hideDone: string | null;
+  status: string | null;
+} {
+  return {
+    project: typeof body.project === "string" ? body.project : null,
+    hideDone: typeof body.hideDone === "string" ? body.hideDone : null,
+    status: typeof body.status === "string" ? body.status : null,
+  };
+}
+
 const CSS = `
   body { font-family: system-ui, sans-serif; margin: 0; padding: 20px; background: #f9fafb; color: #111; }
   .header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; gap: 16px; }
@@ -248,6 +268,8 @@ const CSS = `
   .row-menu-btn:hover { background: #f9fafb; }
   .row-menu-list { display: none; position: absolute; right: 0; top: calc(100% + 4px); min-width: 90px; background: #fff; border: 1px solid #d1d5db; border-radius: 6px; box-shadow: 0 8px 20px rgba(0,0,0,0.08); z-index: 20; padding: 4px; }
   .row-menu.open .row-menu-list { display: block; }
+  .row-menu-action { display: block; width: 100%; border: none; background: transparent; color: #111827; text-align: left; border-radius: 4px; font-size: 0.8rem; padding: 6px 8px; cursor: pointer; }
+  .row-menu-action:hover { background: #f3f4f6; }
   .row-menu-delete { display: block; width: 100%; border: none; background: transparent; color: #b91c1c; text-align: left; border-radius: 4px; font-size: 0.8rem; padding: 6px 8px; cursor: pointer; }
   .row-menu-delete:hover { background: #fee2e2; }
   .pagination { display: flex; align-items: center; gap: 12px; margin-top: 16px; font-size: 0.875rem; color: #374151; }
@@ -264,15 +286,98 @@ const CSS = `
   .error-token-wrap:focus-within .error-tooltip,
   .error-token-wrap[data-open="true"] .error-tooltip { display: block; }
 `;
+dashboardRouter.post("/:ticketKey/resync", async (c) => {
+  const ticketKey = c.req.param("ticketKey");
+  const body = await c.req.parseBody();
+  const filters = readDashboardActionFilters(body as Record<string, unknown>);
+  const runs = await getAllDispatchRuns();
+  const run = runs.find((item) => item.ticket_key === ticketKey);
+
+  if (!run) {
+    return c.redirect(
+      buildDashboardRedirect(filters, {
+        type: "error",
+        message: `Run ${ticketKey} was not found.`,
+      })
+    );
+  }
+  if (!run.run_id) {
+    return c.redirect(
+      buildDashboardRedirect(filters, {
+        type: "error",
+        message: `Run ${ticketKey} has no run_id to resync from Oz.`,
+      })
+    );
+  }
+
+  try {
+    const config = await getProjectConfig(run.project_key);
+    const ozApiKey = config ? resolveProjectTokens(config).ozApiKey : env.WARP_API_KEY;
+    const client = getOzClient(ozApiKey);
+    const ozRun = await client.agent.runs.retrieve(run.run_id);
+    const state = ozRun.state;
+    const now = new Date();
+    const sessionLink = ozRun.session_link ?? null;
+
+    if (state === "SUCCEEDED") {
+      await updateRunStatus(ticketKey, {
+        status: "succeeded",
+        completed_at: now,
+        error: null,
+        session_link: sessionLink,
+      });
+    } else if (state === "FAILED" || state === "ERROR") {
+      await updateRunStatus(ticketKey, {
+        status: "failed",
+        completed_at: now,
+        error: ozRun.status_message?.message ?? `Run ended with state: ${state}`,
+        session_link: sessionLink,
+      });
+    } else if (state === "CANCELLED") {
+      await updateRunStatus(ticketKey, {
+        status: "stale",
+        completed_at: now,
+        error: "Run was cancelled externally.",
+        session_link: sessionLink,
+      });
+    } else if (RUNNING_OZ_STATES.has(state)) {
+      await updateRunStatus(ticketKey, {
+        status: "running",
+        completed_at: null,
+        error: null,
+        session_link: sessionLink,
+      });
+    } else {
+      await updateRunStatus(ticketKey, {
+        status: "running",
+        completed_at: null,
+        error: null,
+        session_link: sessionLink,
+      });
+    }
+
+    return c.redirect(
+      buildDashboardRedirect(filters, {
+        type: "success",
+        message: `Resynced ${ticketKey} from Oz (${state}).`,
+      })
+    );
+  } catch (err) {
+    console.warn(`[dashboard] Failed to resync ${ticketKey} from Oz:`, err);
+    const message = err instanceof Error ? err.message : "Unknown Oz error";
+    return c.redirect(
+      buildDashboardRedirect(filters, {
+        type: "error",
+        message: `Failed to resync ${ticketKey} from Oz: ${message}`,
+      })
+    );
+  }
+});
 
 dashboardRouter.post("/:ticketKey/delete", async (c) => {
   const ticketKey = c.req.param("ticketKey");
   const body = await c.req.parseBody();
-  const filters = {
-    project: typeof body.project === "string" ? body.project : null,
-    hideDone: typeof body.hideDone === "string" ? body.hideDone : null,
-    status: typeof body.status === "string" ? body.status : null,
-  };
+  const filters = readDashboardActionFilters(body as Record<string, unknown>);
   const force = body.force === "1";
   const [runs, configs] = await Promise.all([getAllDispatchRuns(), listProjectConfigs()]);
   const run = runs.find((item) => item.ticket_key === ticketKey);
@@ -507,6 +612,7 @@ function renderDashboardContent(view: DashboardView): string {
           ${selectedProject ? `<input type="hidden" name="project" value="${escapedSelectedProject}">` : ""}
           ${hideDone ? '<input type="hidden" name="hideDone" value="1">' : ""}
           ${selectedStatus ? `<input type="hidden" name="status" value="${escapeHtml(selectedStatus)}">` : ""}
+          <button class="row-menu-action" type="submit" formaction="/dashboard/${encodedTicketKey}/resync" role="menuitem">Resync from Oz</button>
           <button class="row-menu-delete" type="submit" role="menuitem">Delete</button>
           ${showForceDelete ? `<button class="row-menu-delete" type="submit" name="force" value="1" role="menuitem" data-confirm-message="Force delete ${escapedTicketKey}? This skips the open-PR safety check and only removes the run from the dashboard.">Force delete</button>` : ""}
         </form>
