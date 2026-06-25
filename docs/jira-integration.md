@@ -4,7 +4,7 @@ HyperDispatch interacts with Jira Cloud via the REST API v3 and the Agile REST A
 
 ## Authentication
 
-Basic auth using a service account email + API token (`JIRA_EMAIL` + `JIRA_API_TOKEN`). All requests go to `JIRA_BASE_URL`.
+A **scoped** API token (`JIRA_API_TOKEN`) sent as a Bearer token to the Atlassian API gateway, keyed by `JIRA_CLOUD_ID`. All API requests go to `https://api.atlassian.com/ex/jira/{JIRA_CLOUD_ID}` (see `src/jira/client.ts`). Basic auth (`email:token`) and requests against `JIRA_SITE_URL/rest/...` are rejected with `401` by this token type. `JIRA_SITE_URL` is the human site URL and is used only for `/browse/{key}` links, not API calls.
 
 ## APIs Used
 
