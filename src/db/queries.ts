@@ -132,6 +132,18 @@ export async function upsertDispatchRun(
 
 export async function createRun(input: CreateRunInput): Promise<RunRecord> {
   const rows = await sql<RunRecord[]>`
+    WITH latest_pr AS (
+      SELECT
+        dr.pr_url,
+        dr.pr_has_conflicts,
+        dr.pr_display_state,
+        dr.pr_review_running,
+        dr.pr_revision_running
+      FROM dispatch_runs dr
+      WHERE dr.ticket_key = ${input.ticketKey}
+      ORDER BY dr.created_at DESC
+      LIMIT 1
+    )
     INSERT INTO dispatch_runs (
       id,
       ticket_key,
@@ -141,9 +153,15 @@ export async function createRun(input: CreateRunInput): Promise<RunRecord> {
       model,
       spawned_at,
       completed_at,
+      pr_url,
+      pr_has_conflicts,
+      pr_display_state,
+      pr_review_running,
+      pr_revision_running,
       session_link,
       error
-    ) VALUES (
+    )
+    SELECT
       ${randomUUID()},
       ${input.ticketKey},
       ${input.runType ?? "implementation"},
@@ -152,9 +170,15 @@ export async function createRun(input: CreateRunInput): Promise<RunRecord> {
       ${input.model ?? null},
       ${input.spawnedAt ?? null},
       ${input.completedAt ?? null},
+      latest_pr.pr_url,
+      latest_pr.pr_has_conflicts,
+      latest_pr.pr_display_state,
+      latest_pr.pr_review_running,
+      latest_pr.pr_revision_running,
       ${input.sessionLink ?? null},
       ${input.error ?? null}
-    )
+    FROM (SELECT 1) seed
+    LEFT JOIN latest_pr ON true
     RETURNING *
   `;
   return rows[0]!;
@@ -278,7 +302,14 @@ export async function claimRevisionSlot(
     }>
   >`
     WITH latest AS (
-      SELECT status, run_id
+      SELECT
+        status,
+        run_id,
+        pr_url,
+        pr_has_conflicts,
+        pr_display_state,
+        pr_review_running,
+        pr_revision_running
       FROM dispatch_runs
       WHERE ticket_key = ${ticketKey}
       ORDER BY created_at DESC
@@ -310,15 +341,26 @@ export async function claimRevisionSlot(
         ticket_key,
         run_type,
         status,
-        spawned_at
+        spawned_at,
+        pr_url,
+        pr_has_conflicts,
+        pr_display_state,
+        pr_review_running,
+        pr_revision_running
       )
       SELECT
         ${runRecordId}::uuid,
         claimed.ticket_key,
         'revision',
         'running',
-        NOW()
+        NOW(),
+        latest.pr_url,
+        latest.pr_has_conflicts,
+        latest.pr_display_state,
+        latest.pr_review_running,
+        latest.pr_revision_running
       FROM claimed
+      LEFT JOIN latest ON true
       RETURNING id
     )
     SELECT
@@ -499,6 +541,18 @@ export async function updateRunStatus(
         WHERE ticket_key = ${ticketKey}
         RETURNING *
       ),
+      latest_pr AS (
+        SELECT
+          dr.pr_url,
+          dr.pr_has_conflicts,
+          dr.pr_display_state,
+          dr.pr_review_running,
+          dr.pr_revision_running
+        FROM dispatch_runs dr
+        WHERE dr.ticket_key = ${ticketKey}
+        ORDER BY dr.created_at DESC
+        LIMIT 1
+      ),
       inserted AS (
         INSERT INTO dispatch_runs (
           id,
@@ -527,15 +581,35 @@ export async function updateRunStatus(
           ${shouldUpdateModel ? (updates.model ?? null) : null},
           ${shouldUpdateSpawnedAt ? (updates.spawned_at ?? null) : null},
           ${shouldUpdateCompletedAt ? (updates.completed_at ?? null) : null},
-          ${shouldUpdatePrUrl ? (updates.pr_url ?? null) : null},
-          ${shouldUpdatePrHasConflicts ? (updates.pr_has_conflicts ?? null) : null},
-          ${shouldUpdatePrDisplayState ? (updates.pr_display_state ?? null) : null},
-          ${shouldUpdatePrReviewRunning ? (updates.pr_review_running ?? null) : null},
-          ${shouldUpdatePrRevisionRunning ? (updates.pr_revision_running ?? null) : null},
+          CASE
+            WHEN ${shouldUpdatePrUrl} THEN ${updates.pr_url ?? null}
+            ELSE latest_pr.pr_url
+          END,
+          CASE
+            WHEN ${shouldUpdatePrHasConflicts}
+              THEN ${updates.pr_has_conflicts ?? null}
+            ELSE latest_pr.pr_has_conflicts
+          END,
+          CASE
+            WHEN ${shouldUpdatePrDisplayState}
+              THEN ${updates.pr_display_state ?? null}
+            ELSE latest_pr.pr_display_state
+          END,
+          CASE
+            WHEN ${shouldUpdatePrReviewRunning}
+              THEN ${updates.pr_review_running ?? null}
+            ELSE latest_pr.pr_review_running
+          END,
+          CASE
+            WHEN ${shouldUpdatePrRevisionRunning}
+              THEN ${updates.pr_revision_running ?? null}
+            ELSE latest_pr.pr_revision_running
+          END,
           ${shouldUpdateSessionLink ? (updates.session_link ?? null) : null},
           ${shouldUpdateError ? (updates.error ?? null) : null},
           NOW()
         FROM entry
+        LEFT JOIN latest_pr ON true
         RETURNING *
       )
       SELECT

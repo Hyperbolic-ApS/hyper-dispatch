@@ -657,6 +657,86 @@ describe.skipIf(!process.env.RUN_DB_TESTS)("queries integration", () => {
     expect(projected?.pr_display_state).toBe("open");
     expect(projected?.pr_has_conflicts).toBe(false);
   });
+  it("integration: createRun inherits existing PR metadata for the same ticket", async () => {
+    await queries.upsertDispatchRun({
+      ticketKey: "HYDI-901",
+      projectKey: "HYDI",
+      status: "queued",
+    });
+    const initialRun = await queries.createRun({
+      ticketKey: "HYDI-901",
+      runType: "implementation",
+      status: "succeeded",
+      runId: "run-901-impl",
+      completedAt: new Date("2026-01-01T09:00:00.000Z"),
+    });
+    await queries.updateRunStatus("HYDI-901", {
+      run_record_id: initialRun.id,
+      pr_url: "https://github.com/hyperbolic-co/hyper-dispatch/pull/901",
+      pr_display_state: "open",
+      pr_has_conflicts: false,
+      pr_review_running: true,
+      pr_revision_running: false,
+    });
+
+    const followUpRun = await queries.createRun({
+      ticketKey: "HYDI-901",
+      runType: "revision",
+      status: "running",
+      runId: "run-901-rev",
+      spawnedAt: new Date("2026-01-01T10:00:00.000Z"),
+    });
+
+    expect(followUpRun.pr_url).toBe("https://github.com/hyperbolic-co/hyper-dispatch/pull/901");
+    expect(followUpRun.pr_display_state).toBe("open");
+    expect(followUpRun.pr_has_conflicts).toBe(false);
+    expect(followUpRun.pr_review_running).toBe(true);
+    expect(followUpRun.pr_revision_running).toBe(false);
+  });
+
+  it("integration: claimRevisionSlot seeds the new revision row with the ticket's latest PR metadata", async () => {
+    await queries.upsertDispatchRun({
+      ticketKey: "HYDI-902",
+      projectKey: "HYDI",
+      status: "succeeded",
+    });
+    const implementationRun = await queries.createRun({
+      ticketKey: "HYDI-902",
+      runType: "implementation",
+      status: "succeeded",
+      runId: "run-902-impl",
+      completedAt: new Date("2026-01-01T10:00:00.000Z"),
+    });
+    await queries.updateRunStatus("HYDI-902", {
+      run_record_id: implementationRun.id,
+      pr_url: "https://github.com/hyperbolic-co/hyper-dispatch/pull/902",
+      pr_display_state: "open",
+      pr_has_conflicts: false,
+      pr_review_running: true,
+      pr_revision_running: false,
+    });
+
+    const claim = await queries.claimRevisionSlot("HYDI-902");
+    expect(claim).toMatchObject({
+      claimed: true,
+      previousStatus: "succeeded",
+      previousRunId: "run-902-impl",
+      runRecordId: expect.any(String),
+    });
+
+    const rows = await queries.getRunsForTicket("HYDI-902");
+    const insertedRevision = rows.find((row) => row.id === claim.runRecordId);
+    expect(insertedRevision).toBeDefined();
+    expect(insertedRevision?.run_type).toBe("revision");
+    expect(insertedRevision?.status).toBe("running");
+    expect(insertedRevision?.pr_url).toBe(
+      "https://github.com/hyperbolic-co/hyper-dispatch/pull/902"
+    );
+    expect(insertedRevision?.pr_display_state).toBe("open");
+    expect(insertedRevision?.pr_has_conflicts).toBe(false);
+    expect(insertedRevision?.pr_review_running).toBe(true);
+    expect(insertedRevision?.pr_revision_running).toBe(false);
+  });
 
   it("integration: getRunHistoryForTickets caps history per ticket", async () => {
     await queries.upsertDispatchRun({
