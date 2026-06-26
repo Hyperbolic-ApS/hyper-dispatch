@@ -84,7 +84,7 @@ CREATE INDEX IF NOT EXISTS idx_revision_events_created_at ON revision_events(cre
 -- Primary key is (pr_url, finding_key) — stable across rounds (finding_key is sha1-based).
 CREATE TABLE IF NOT EXISTS review_findings (
   finding_key      TEXT NOT NULL,
-  ticket_key       TEXT NOT NULL REFERENCES dispatch_entries(ticket_key),
+  ticket_key       TEXT NOT NULL REFERENCES dispatch_entries(ticket_key) ON DELETE CASCADE,
   pr_url           TEXT NOT NULL,
   severity         TEXT,
   title            TEXT,

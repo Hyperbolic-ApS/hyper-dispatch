@@ -180,7 +180,7 @@ export async function runMigrations(): Promise<void> {
   await sql.unsafe(`
     CREATE TABLE IF NOT EXISTS review_findings (
       finding_key      TEXT NOT NULL,
-      ticket_key       TEXT NOT NULL REFERENCES dispatch_entries(ticket_key),
+      ticket_key       TEXT NOT NULL REFERENCES dispatch_entries(ticket_key) ON DELETE CASCADE,
       pr_url           TEXT NOT NULL,
       severity         TEXT,
       title            TEXT,
