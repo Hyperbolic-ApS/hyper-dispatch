@@ -70,6 +70,127 @@ export interface CreateRunInput {
 }
 
 
+// ---------------------------------------------------------------------------
+// Revision state + findings ledger
+// ---------------------------------------------------------------------------
+
+export interface ParsedFinding {
+  key: string;
+  severity?: string;
+  title: string;
+  path: string;
+}
+
+export interface FindingRow {
+  finding_key: string;
+  severity: string | null;
+  title: string | null;
+  status: string;
+  disposition: string | null;
+  first_seen_round: number;
+  last_seen_round: number;
+}
+
+/**
+ * Returns the revision state for a ticket.
+ * `round` is derived: COUNT(*) of dispatch_runs WHERE run_type='revision'.
+ * Returns null when no dispatch_entries row exists for the ticket.
+ */
+export async function getRevisionState(ticketKey: string): Promise<{
+  round: number;
+  budget: number;
+  needsHuman: boolean;
+  reviewTier: string | null;
+} | null> {
+  const entries = await sql<
+    Array<{ revision_budget: number; needs_human: boolean; review_tier: string | null }>
+  >`
+    SELECT revision_budget, needs_human, review_tier
+    FROM dispatch_entries
+    WHERE ticket_key = ${ticketKey}
+  `;
+  const entry = entries[0];
+  if (!entry) return null;
+
+  const countRows = await sql<Array<{ count: string }>>`
+    SELECT COUNT(*) AS count
+    FROM dispatch_runs
+    WHERE ticket_key = ${ticketKey}
+      AND run_type = 'revision'
+  `;
+  const round = parseInt(countRows[0]?.count ?? "0", 10);
+
+  return {
+    round,
+    budget: entry.revision_budget,
+    needsHuman: entry.needs_human,
+    reviewTier: entry.review_tier,
+  };
+}
+
+export async function setNeedsHuman(ticketKey: string, value: boolean): Promise<void> {
+  await sql`
+    UPDATE dispatch_entries
+    SET needs_human = ${value}, updated_at = NOW()
+    WHERE ticket_key = ${ticketKey}
+  `;
+}
+
+export async function setReviewTier(ticketKey: string, tier: string): Promise<void> {
+  await sql`
+    UPDATE dispatch_entries
+    SET review_tier = ${tier}, updated_at = NOW()
+    WHERE ticket_key = ${ticketKey}
+  `;
+}
+
+/**
+ * Upsert findings into review_findings. Returns the keys whose first_seen_round
+ * is earlier than the current round (i.e. findings that persisted across rounds).
+ */
+export async function upsertFindings(
+  prUrl: string,
+  ticketKey: string,
+  round: number,
+  findings: ParsedFinding[]
+): Promise<{ repeated: string[] }> {
+  const repeated: string[] = [];
+  for (const f of findings) {
+    const rows = await sql<Array<{ first_seen_round: number }>>`
+      INSERT INTO review_findings (finding_key, ticket_key, pr_url, severity, title, first_seen_round, last_seen_round)
+      VALUES (${f.key}, ${ticketKey}, ${prUrl}, ${f.severity ?? null}, ${f.title}, ${round}, ${round})
+      ON CONFLICT (pr_url, finding_key) DO UPDATE
+        SET last_seen_round = ${round}, status = 'open', updated_at = NOW()
+      RETURNING first_seen_round
+    `;
+    if ((rows[0]?.first_seen_round ?? round) < round) {
+      repeated.push(f.key);
+    }
+  }
+  return { repeated };
+}
+
+export async function getOpenFindings(prUrl: string): Promise<FindingRow[]> {
+  return sql<FindingRow[]>`
+    SELECT finding_key, severity, title, status, disposition, first_seen_round, last_seen_round
+    FROM review_findings
+    WHERE pr_url = ${prUrl}
+    ORDER BY first_seen_round, finding_key
+  `;
+}
+
+export async function markFindingsResolved(prUrl: string, keys: string[]): Promise<void> {
+  if (keys.length === 0) return;
+  await sql`
+    UPDATE review_findings
+    SET status = 'resolved', updated_at = NOW()
+    WHERE pr_url = ${prUrl}
+      AND finding_key = ANY(${keys})
+  `;
+}
+
+// ---------------------------------------------------------------------------
+
 export async function getProjectConfig(
   projectKey: string
 ): Promise<ProjectConfig | null> {
