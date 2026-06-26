@@ -997,3 +997,36 @@ git commit -m "feat(orchestration): tier-floored reviser model with escalate-on-
 - Reviewer skill source location — `pr-review-commenting` is hosted (not in this repo); Tasks 6/7 content is exact, applied at the skill source.
 
 **Type consistency:** `ParsedFinding` (queries.ts) used identically in Tasks 2/3/5. `FindingRow` shared by Tasks 2/10. `GateDecision.action` strings match the switch in Task 5. `TIER_MODELS` order identical in Tasks 7-context and 11. ✓
+
+---
+
+## ADDENDUM — Multi-run architecture re-fit (rebased onto `origin/main`)
+
+The original plan targeted the single-row `dispatch_runs` (one row per ticket). `origin/main`
+has since landed **HYDI-29 multi-run (#78)** and **HYDI-44 webhook move (#69)**: per-ticket state
+now lives in **`dispatch_entries`** (PK `ticket_key`, one row/ticket) and **`dispatch_runs`** is
+per-run (PK `id`, `run_type` ∈ implementation/revision, FK → `dispatch_entries`). Each revision
+already creates its own `dispatch_runs` row (`run_type='revision'`) via `claimRevisionSlot`.
+
+Design decisions for the re-fit (confirmed with the maintainer):
+
+1. **`round` is derived, not stored** — `round = COUNT(*) FROM dispatch_runs WHERE ticket_key=$1
+   AND run_type='revision'`. There is **no `revision_round` column** and **no `incrementRevisionRound`**.
+   Confirmed safe: a `run_type='revision'` row corresponds 1:1 to a consumed revision round. This
+   also removes the redelivery double-count bug entirely.
+2. **`revision_budget` (default 2), `needs_human` (default false), `review_tier`** are columns on
+   **`dispatch_entries`** (per-ticket, single row), queried by `ticket_key`.
+3. **`review_findings`** is unchanged except `ticket_key` references `dispatch_entries(ticket_key)`.
+
+Task deltas vs the body above:
+- **Task 1 (migration/schema):** add the 3 columns to `dispatch_entries` (not `dispatch_runs`); keep
+  `review_findings`; drop `revision_round`. Fit main's `migrate.ts` (it uses `additiveColumnMigrationSql`
+  + a legacy-migration branch — add a new additive block in both the legacy and else paths, or after).
+- **Task 2 (queries):** `getRevisionState(ticketKey)` returns `{ round, budget, needsHuman, reviewTier }`
+  where `round` = the revision-run count and the rest come from `dispatch_entries`; `setNeedsHuman`/
+  `setReviewTier` write `dispatch_entries`; **remove `incrementRevisionRound`**. `upsertFindings`/
+  `getOpenFindings`/`markFindingsResolved` unchanged.
+- **Task 4 (gate):** unchanged — still takes `round`/`budget` as inputs.
+- **Task 5 (handler):** wire the gate as planned but **do not call `incrementRevisionRound`** (the
+  spawned `run_type='revision'` row IS the round). `prState` from `getRunsByPrUrl(...)[0].pr_display_state`.
+- **Tasks 3, 6, 7, 8, 9, 10, 11:** logic unchanged; Task 11 reads `review_tier` from `dispatch_entries`.
