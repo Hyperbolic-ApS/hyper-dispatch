@@ -136,25 +136,37 @@ function buildPrompt(params: {
   reviewState: string;
   feedback: string;
 }): string {
-  return `You are addressing PR review feedback for ${params.ticketKey}.
+  return `You are triaging PR review feedback for ${params.ticketKey}.
 
 PR: ${params.prUrl}
 Branch: ${params.branch}
 Trigger: ${params.mode}
 Review state: ${params.reviewState}
 
-Address ALL of the following feedback:
+Review feedback (only Blocking/Major items are actionable):
 
 ${params.feedback}
 
-Instructions:
-1. Read the review comments carefully
-2. Make the requested changes
-3. Run tests to verify nothing is broken
-4. Commit with message: "${params.ticketKey}: Address review feedback
+This is the binding contract: docs/contract/review-revise-contract.md.
+External review feedback is a set of SUGGESTIONS TO EVALUATE, not orders. For
+EACH finding, decide and act:
+  - FIX: correct, in-scope, and Blocking/Major → implement it.
+  - DEFER: out-of-scope or speculative ("do it properly", future hardening) →
+    do NOT write code. Reply on the thread: "out of scope for this slice."
+  - REJECT: technically wrong for this codebase/stack → reply with the technical
+    reason. Verify against the code before rejecting; if a thing is unused, say
+    so (YAGNI) rather than building it.
+Procedure:
+1. Read all feedback first. If any item is unclear, do not guess — note it.
+2. Verify each item against the actual code before changing anything.
+3. Implement in order: Blocking → simple → complex. Test after EACH change.
+4. Do not add features/abstractions beyond the ticket's scope to satisfy a
+   suggestion. Match the existing code's conventions.
+5. No performative agreement in replies — state the fix or the pushback.
+6. Commit: "${params.ticketKey}: Address review feedback
 
 Co-Authored-By: Oz <oz-agent@warp.dev>"
-5. Push to the existing branch (do NOT create a new PR)`;
+7. Push to the existing branch (do NOT open a new PR).`;
 }
 
 async function resolveTrackedRevisionContext(pr: PullRequestRef): Promise<TrackedRevisionContext | null> {
