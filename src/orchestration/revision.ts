@@ -499,8 +499,12 @@ export async function handleGithubRevisionWebhook(params: {
       actionable
     );
     const reviewOctokit = new Octokit({ auth: context.githubToken });
-    await dismissSupersededReviews(reviewOctokit, context.pr, reviewId).catch(() => {});
-    await projectLedger(reviewOctokit, context.pr, context.pr.htmlUrl).catch(() => {});
+    await dismissSupersededReviews(reviewOctokit, context.pr, reviewId).catch((err) =>
+      console.warn("[revision] dismissSupersededReviews failed:", err)
+    );
+    await projectLedger(reviewOctokit, context.pr, context.pr.htmlUrl).catch((err) =>
+      console.warn("[revision] projectLedger failed:", err)
+    );
     return {
       action: "spawned",
       mode: "auto_review_submitted",

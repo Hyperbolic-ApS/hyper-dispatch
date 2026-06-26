@@ -345,6 +345,10 @@ describe("handleGithubRevisionWebhook", () => {
     );
     expect(upsertFindingsMock).not.toHaveBeenCalled();
     expect(projectLedgerMock).toHaveBeenCalled();
+    // The Jira transition runs in try/catch; assert it actually fires to the
+    // configured In Review column using the transition id the mock returns.
+    expect(jiraGetTransitionsMock).toHaveBeenCalledWith("HYDI-44");
+    expect(jiraTransitionIssueMock).toHaveBeenCalledWith("HYDI-44", "trans-123");
   });
 
   it("builds a triage prompt (fix/defer/reject) not 'address all'", async () => {
@@ -464,6 +468,10 @@ describe("handleGithubRevisionWebhook", () => {
       reason: "revision already in progress for this PR",
     });
     expect(runMock).not.toHaveBeenCalled();
+    // No budget-burn on the in_progress path: findings/ledger writes are skipped.
+    expect(upsertFindingsMock).not.toHaveBeenCalled();
+    expect(projectLedgerMock).not.toHaveBeenCalled();
+    expect(dismissSupersededReviewsMock).not.toHaveBeenCalled();
   });
 
   it("releases the slot and idempotency record when spawning fails", async () => {
