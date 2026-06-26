@@ -31,6 +31,9 @@ CREATE TABLE IF NOT EXISTS dispatch_entries (
   priority       INTEGER DEFAULT 0,
   ticket_status_name TEXT,
   ticket_status_category TEXT,
+  revision_budget INTEGER NOT NULL DEFAULT 2,
+  needs_human    BOOLEAN NOT NULL DEFAULT FALSE,
+  review_tier    TEXT,
   created_at     TIMESTAMPTZ DEFAULT NOW(),
   updated_at     TIMESTAMPTZ DEFAULT NOW()
 );
@@ -76,3 +79,22 @@ CREATE INDEX IF NOT EXISTS idx_revision_events_ticket ON revision_events(ticket_
 -- Supports efficient range deletes when purging old rows (no automatic TTL; see
 -- docs/database.md — operators periodically prune rows older than a retention window).
 CREATE INDEX IF NOT EXISTS idx_revision_events_created_at ON revision_events(created_at);
+
+-- Content-addressed finding ledger. Each row tracks one reviewer finding across rounds.
+-- Primary key is (pr_url, finding_key) — stable across rounds (finding_key is sha1-based).
+CREATE TABLE IF NOT EXISTS review_findings (
+  finding_key      TEXT NOT NULL,
+  ticket_key       TEXT NOT NULL REFERENCES dispatch_entries(ticket_key),
+  pr_url           TEXT NOT NULL,
+  severity         TEXT,
+  title            TEXT,
+  status           TEXT NOT NULL DEFAULT 'open',
+  disposition      TEXT,
+  first_seen_round INTEGER NOT NULL,
+  last_seen_round  INTEGER NOT NULL,
+  updated_at       TIMESTAMPTZ DEFAULT NOW(),
+  PRIMARY KEY (pr_url, finding_key)
+);
+
+CREATE INDEX IF NOT EXISTS idx_review_findings_ticket ON review_findings(ticket_key);
+CREATE INDEX IF NOT EXISTS idx_review_findings_pr_url ON review_findings(pr_url);
