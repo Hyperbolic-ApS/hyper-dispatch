@@ -4,6 +4,7 @@ import { resolveProjectTokens } from "../config/env.js";
 import {
   claimRevisionSlot,
   deleteRevisionEvent,
+  getOpenFindings,
   getProjectConfig,
   getRevisionState,
   getRunsByPrUrl,
@@ -20,7 +21,7 @@ import { actionableFindings, parseFindings } from "./findings.js";
 import { projectLedger } from "./ledger.js";
 import { getOzClient } from "./oz-client.js";
 import { decideReviewAction } from "./review-gate.js";
-import { resolveModel } from "./spawner.js";
+import { resolveRevisionModel } from "./spawner.js";
 
 const TICKET_KEY_REGEX = /^agents?\/([A-Z][A-Z0-9]+-\d+)(?:-[a-z0-9-]+)?$/;
 const REVISE_COMMAND_REGEX = /\/revise\b/i;
@@ -217,11 +218,16 @@ async function spawnRevisionRun(params: {
   mode: RevisionMode;
   reviewState: string;
   feedback: string;
+  floorTier?: string | null;
+  escalate?: boolean;
 }): Promise<{ runRecordId: string; runId: string }> {
   const { config } = params;
   const { ozApiKey } = resolveProjectTokens(config);
   const issue = await jira.getIssue(params.ticketKey);
-  const model = resolveModel(issue, config);
+  const model = resolveRevisionModel(issue, config, {
+    floorTier: params.floorTier ?? null,
+    escalate: params.escalate ?? false,
+  });
   const mcpServers = config.mcp_servers as Record<string, McpServerConfig> | null;
   const agentIdentityUid = config.oz_agent_identity_uid?.trim() || undefined;
   const client = getOzClient(ozApiKey);
@@ -467,6 +473,13 @@ export async function handleGithubRevisionWebhook(params: {
     }
 
     // decision.action === "revise"
+    // Read-only repeat check: detect whether any actionable finding was already
+    // seen in a prior round. This is a SELECT — no upsert before spawn — so a
+    // deduped/dropped delivery cannot burn a budget round or corrupt the ledger.
+    const existingFindings = await getOpenFindings(context.pr.htmlUrl);
+    const existingKeys = new Set(existingFindings.map((f) => f.finding_key));
+    const escalate = actionable.some((f) => existingKeys.has(f.key));
+
     // Spawn FIRST: the idempotency (tryRecordRevisionEvent) and concurrency
     // (claimRevisionSlot) guards live inside recordAndSpawnRevision. Writing the
     // round/findings before those guards would burn a budget round whenever a
@@ -484,6 +497,8 @@ export async function handleGithubRevisionWebhook(params: {
         mode: "auto_review_submitted",
         reviewState,
         feedback,
+        floorTier: state?.reviewTier ?? null,
+        escalate,
       },
     });
     if (outcome.status === "duplicate") {

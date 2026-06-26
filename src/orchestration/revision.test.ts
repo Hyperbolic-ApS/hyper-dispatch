@@ -12,11 +12,13 @@ const {
   getRevisionStateMock,
   setNeedsHumanMock,
   upsertFindingsMock,
+  getOpenFindingsMock,
   jiraGetIssueMock,
   jiraGetTransitionsMock,
   jiraTransitionIssueMock,
   resolveProjectTokensMock,
   resolveModelMock,
+  resolveRevisionModelMock,
   runMock,
   retrieveRunMock,
   octokitPaginateMock,
@@ -35,11 +37,13 @@ const {
   getRevisionStateMock: vi.fn(),
   setNeedsHumanMock: vi.fn(),
   upsertFindingsMock: vi.fn(),
+  getOpenFindingsMock: vi.fn(),
   jiraGetIssueMock: vi.fn(),
   jiraGetTransitionsMock: vi.fn(),
   jiraTransitionIssueMock: vi.fn(),
   resolveProjectTokensMock: vi.fn(),
   resolveModelMock: vi.fn(),
+  resolveRevisionModelMock: vi.fn(),
   runMock: vi.fn(),
   retrieveRunMock: vi.fn(),
   octokitPaginateMock: vi.fn(),
@@ -60,6 +64,7 @@ vi.mock("../db/queries.js", () => ({
   getRevisionState: getRevisionStateMock,
   setNeedsHuman: setNeedsHumanMock,
   upsertFindings: upsertFindingsMock,
+  getOpenFindings: getOpenFindingsMock,
 }));
 
 vi.mock("../jira/client.js", () => ({
@@ -74,6 +79,7 @@ vi.mock("../config/env.js", () => ({
 
 vi.mock("./spawner.js", () => ({
   resolveModel: resolveModelMock,
+  resolveRevisionModel: resolveRevisionModelMock,
 }));
 
 vi.mock("./oz-client.js", () => ({
@@ -124,11 +130,13 @@ describe("handleGithubRevisionWebhook", () => {
     getRevisionStateMock.mockReset();
     setNeedsHumanMock.mockReset();
     upsertFindingsMock.mockReset();
+    getOpenFindingsMock.mockReset();
     jiraGetIssueMock.mockReset();
     jiraGetTransitionsMock.mockReset();
     jiraTransitionIssueMock.mockReset();
     resolveProjectTokensMock.mockReset();
     resolveModelMock.mockReset();
+    resolveRevisionModelMock.mockReset();
     runMock.mockReset();
     retrieveRunMock.mockReset();
     octokitPaginateMock.mockReset();
@@ -155,6 +163,8 @@ describe("handleGithubRevisionWebhook", () => {
     });
     jiraTransitionIssueMock.mockResolvedValue(undefined);
     resolveModelMock.mockReturnValue("auto");
+    resolveRevisionModelMock.mockReturnValue("auto");
+    getOpenFindingsMock.mockResolvedValue([]);
     runMock.mockResolvedValue({ run_id: "run_revision_1" });
     updateRunStatusMock.mockResolvedValue(null);
     retrieveRunMock.mockResolvedValue({ session_link: "https://warp.dev/run_revision_1" });
@@ -388,6 +398,79 @@ describe("handleGithubRevisionWebhook", () => {
     expect(prompt).not.toContain("Address ALL");
     expect(prompt).toMatch(/fix.*defer.*reject/is);
     expect(prompt).toContain("out of scope for this slice");
+  });
+
+  it("escalates model tier when a prior finding key recurs (escalate-on-repeat)", async () => {
+    // reviewTier="auto" is the floor; REV-001 already exists in the DB → escalate=true
+    // resolveRevisionModel should be called with { floorTier: "auto", escalate: true }
+    // and return "auto-genius" (one tier above "auto")
+    getRunsByPrUrlMock.mockResolvedValue([
+      makeDispatchRun({
+        ticket_key: "HYDI-44",
+        project_key: "HYDI",
+        pr_url: "https://github.com/org/repo/pull/44",
+        pr_display_state: "open",
+      }),
+    ]);
+    getRevisionStateMock.mockResolvedValue({
+      round: 1,
+      budget: 2,
+      needsHuman: false,
+      reviewTier: "auto",
+    });
+    // Simulate an existing open finding with key "REV-001" from a prior round
+    getOpenFindingsMock.mockResolvedValue([
+      {
+        finding_key: "REV-001",
+        severity: "Major",
+        title: "Fix the handler",
+        status: "open",
+        disposition: null,
+        first_seen_round: 1,
+        last_seen_round: 1,
+      },
+    ]);
+    // Configure the mock to return "auto-genius" when escalate=true
+    resolveRevisionModelMock.mockImplementation(
+      (_issue: unknown, _config: unknown, opts: { floorTier: string | null; escalate: boolean }) =>
+        opts.escalate ? "auto-genius" : "auto"
+    );
+    runMock.mockResolvedValue({ run_id: "run_revision_escalated" });
+    updateRunStatusMock.mockResolvedValue(null);
+    retrieveRunMock.mockResolvedValue({ session_link: "https://warp.dev/run_escalated" });
+    // The review body contains REV-001, which matches the existing finding key
+    octokitPaginateMock.mockResolvedValue([
+      { path: "src/foo.ts", line: 1, body: "[REV-001] Fix the handler." },
+    ]);
+
+    const { handleGithubRevisionWebhook } = await import("./revision.js");
+    const result = await handleGithubRevisionWebhook({
+      event: "pull_request_review",
+      payload: {
+        action: "submitted",
+        repository: { owner: { login: "org" }, name: "repo" },
+        pull_request: {
+          number: 44,
+          html_url: "https://github.com/org/repo/pull/44",
+          head: { ref: "agent/HYDI-44-pr-revision-webhook" },
+        },
+        review: {
+          id: 1234,
+          state: "changes_requested",
+          body: "1. [REV-001] Fix the handler.",
+        },
+      },
+    });
+
+    expect(result.action).toBe("spawned");
+    // resolveRevisionModel must be called with the repeat signal and floor tier
+    expect(resolveRevisionModelMock).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      { floorTier: "auto", escalate: true }
+    );
+    // The escalated model must flow through to the Oz run config
+    expect(runMock.mock.calls[0][0].config.model_id).toBe("auto-genius");
   });
 
   it("ignores a duplicate submitted-review delivery without spawning", async () => {

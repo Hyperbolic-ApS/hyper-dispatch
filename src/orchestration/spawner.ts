@@ -90,6 +90,45 @@ export function resolveModel(
   return config.default_model ?? undefined;
 }
 
+// ─── Revision model resolution ─────────────────────────────────────────────
+
+/**
+ * Ordered tier names. The index is the "rank" used for floor/escalate logic.
+ */
+export const TIER_MODELS = [
+  "auto-open",
+  "auto-efficient",
+  "auto",
+  "auto-genius",
+] as const;
+
+function rank(model: string | null | undefined): number {
+  const idx = TIER_MODELS.indexOf(
+    (model ?? "") as (typeof TIER_MODELS)[number]
+  );
+  return idx < 0 ? -1 : idx;
+}
+
+/**
+ * Resolve the model to use for a revision run:
+ *   1. Start from the per-ticket/default model (`resolveModel`).
+ *   2. Floor at `opts.floorTier` (the review tier that triggered the revision).
+ *   3. If `opts.escalate` is true (a finding repeated across rounds), bump one tier.
+ *   4. If both base and floorTier are outside the tier list, return base unchanged
+ *      so the Oz workspace default takes effect.
+ */
+export function resolveRevisionModel(
+  issue: JiraIssue,
+  config: ProjectConfig,
+  opts: { floorTier: string | null; escalate: boolean }
+): string | undefined {
+  const base = resolveModel(issue, config);
+  let idx = Math.max(rank(base), rank(opts.floorTier));
+  if (opts.escalate) idx = Math.min(idx + 1, TIER_MODELS.length - 1);
+  if (idx < 0) return base; // both unranked → leave Oz default
+  return TIER_MODELS[idx]!;
+}
+
 // ─── Main export ───────────────────────────────────────────────────────────
 
 /**
