@@ -5,14 +5,21 @@ import {
   claimRevisionSlot,
   deleteRevisionEvent,
   getProjectConfig,
+  getRevisionState,
   getRunsByPrUrl,
   releaseRevisionSlot,
+  setNeedsHuman,
   tryRecordRevisionEvent,
   updateRunStatus,
+  upsertFindings,
 } from "../db/queries.js";
-import type { ProjectConfig } from "../db/queries.js";
+import type { DispatchRun, ProjectConfig } from "../db/queries.js";
 import * as jira from "../jira/client.js";
+import { dismissSupersededReviews } from "../github/reviews.js";
+import { actionableFindings, parseFindings } from "./findings.js";
+import { projectLedger } from "./ledger.js";
 import { getOzClient } from "./oz-client.js";
+import { decideReviewAction } from "./review-gate.js";
 import { resolveModel } from "./spawner.js";
 
 const TICKET_KEY_REGEX = /^agents?\/([A-Z][A-Z0-9]+-\d+)(?:-[a-z0-9-]+)?$/;
@@ -34,10 +41,13 @@ interface TrackedRevisionContext {
   projectKey: string;
   projectConfig: ProjectConfig;
   githubToken: string;
+  prDisplayState: DispatchRun["pr_display_state"];
 }
 
 type RevisionDecision =
   | { action: "ignored"; reason: string }
+  | { action: "approve_terminal" }
+  | { action: "escalated_human"; reason: string }
   | {
       action: "spawned";
       mode: RevisionMode;
@@ -187,6 +197,7 @@ async function resolveTrackedRevisionContext(pr: PullRequestRef): Promise<Tracke
     projectKey: projectConfig.project_key,
     projectConfig,
     githubToken,
+    prDisplayState: trackedRun.pr_display_state,
   };
 }
 
@@ -348,6 +359,37 @@ async function recordAndSpawnRevision(params: {
   }
 }
 
+async function escalateToHuman(
+  ctx: TrackedRevisionContext,
+  reason: string,
+  findings: { title: string; severity?: string }[]
+): Promise<void> {
+  await setNeedsHuman(ctx.ticketKey, true);
+  const octokit = new Octokit({ auth: ctx.githubToken });
+  const open = findings.map((f) => `- [${f.severity ?? "?"}] ${f.title}`).join("\n");
+  await octokit.rest.issues.createComment({
+    owner: ctx.pr.owner,
+    repo: ctx.pr.repo,
+    issue_number: ctx.pr.pullNumber,
+    body: `⚠️ **Auto-revision stopped — needs human review**\n\nReason: ${reason}\n\nRemaining findings:\n${open}\n\nReply with \`/revise\` to resume auto-revision after triaging.`,
+  });
+  try {
+    const transitions = await jira.getTransitions(ctx.ticketKey);
+    const target = transitions.transitions.find(
+      (t) => t.name.trim().toLowerCase() === ctx.projectConfig.in_review_column_name.toLowerCase()
+    );
+    if (target) await jira.transitionIssue(ctx.ticketKey, target.id);
+  } catch (err) {
+    console.warn(
+      `[revision] Failed to transition ${ctx.ticketKey} to In Review during escalation:`,
+      err
+    );
+  }
+  await projectLedger(octokit, ctx.pr, ctx.pr.htmlUrl).catch((err) => {
+    console.warn(`[revision] Failed to project ledger during escalation for ${ctx.ticketKey}:`, err);
+  });
+}
+
 export async function handleGithubRevisionWebhook(params: {
   event: string;
   payload: unknown;
@@ -397,14 +439,40 @@ export async function handleGithubRevisionWebhook(params: {
       context.pr,
       reviewId
     );
-    const actionItems = extractActionItemIds([
+    const findings = parseFindings([
       reviewBody,
       ...inlineReviewComments.map((comment) => comment.body),
     ]);
-    if (actionItems.length === 0) {
-      return { action: "ignored", reason: "review has no action items" };
+    const actionable = actionableFindings(findings);
+    const state = await getRevisionState(context.ticketKey);
+
+    const decision = decideReviewAction({
+      reviewState,
+      actionableCount: actionable.length,
+      round: state?.round ?? 0,
+      budget: state?.budget ?? 2,
+      prState: context.prDisplayState,
+      needsHuman: state?.needsHuman ?? false,
+    });
+
+    if (decision.action === "approve_terminal") {
+      return { action: "approve_terminal" };
+    }
+    if (decision.action === "ignore") {
+      return { action: "ignored", reason: decision.reason };
+    }
+    if (decision.action === "escalate_human") {
+      await escalateToHuman(context, decision.reason, actionable);
+      return { action: "escalated_human", reason: decision.reason };
     }
 
+    // decision.action === "revise"
+    // Spawn FIRST: the idempotency (tryRecordRevisionEvent) and concurrency
+    // (claimRevisionSlot) guards live inside recordAndSpawnRevision. Writing the
+    // round/findings before those guards would burn a budget round whenever a
+    // redelivered or concurrent webhook is deduped/dropped without ever running a
+    // revision. The round/findings writes therefore happen only after the slot is
+    // actually claimed and the run is spawned.
     const feedback = buildAutoFeedback(reviewBody, inlineReviewComments);
     const outcome = await recordAndSpawnRevision({
       eventKey: `review:${reviewId}`,
@@ -424,12 +492,21 @@ export async function handleGithubRevisionWebhook(params: {
     if (outcome.status === "in_progress") {
       return { action: "ignored", reason: "revision already in progress for this PR" };
     }
+    await upsertFindings(
+      context.pr.htmlUrl,
+      context.ticketKey,
+      (state?.round ?? 0) + 1,
+      actionable
+    );
+    const reviewOctokit = new Octokit({ auth: context.githubToken });
+    await dismissSupersededReviews(reviewOctokit, context.pr, reviewId).catch(() => {});
+    await projectLedger(reviewOctokit, context.pr, context.pr.htmlUrl).catch(() => {});
     return {
       action: "spawned",
       mode: "auto_review_submitted",
       ticketKey: context.ticketKey,
       runId: outcome.runId,
-      actionItemCount: actionItems.length,
+      actionItemCount: actionable.length,
     };
   }
 

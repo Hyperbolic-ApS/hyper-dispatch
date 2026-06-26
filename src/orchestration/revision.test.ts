@@ -9,13 +9,21 @@ const {
   deleteRevisionEventMock,
   claimRevisionSlotMock,
   releaseRevisionSlotMock,
+  getRevisionStateMock,
+  setNeedsHumanMock,
+  upsertFindingsMock,
   jiraGetIssueMock,
+  jiraGetTransitionsMock,
+  jiraTransitionIssueMock,
   resolveProjectTokensMock,
   resolveModelMock,
   runMock,
   retrieveRunMock,
   octokitPaginateMock,
   octokitPullGetMock,
+  octokitCreateCommentMock,
+  projectLedgerMock,
+  dismissSupersededReviewsMock,
 } = vi.hoisted(() => ({
   getProjectConfigMock: vi.fn(),
   getRunsByPrUrlMock: vi.fn(),
@@ -24,13 +32,21 @@ const {
   deleteRevisionEventMock: vi.fn(),
   claimRevisionSlotMock: vi.fn(),
   releaseRevisionSlotMock: vi.fn(),
+  getRevisionStateMock: vi.fn(),
+  setNeedsHumanMock: vi.fn(),
+  upsertFindingsMock: vi.fn(),
   jiraGetIssueMock: vi.fn(),
+  jiraGetTransitionsMock: vi.fn(),
+  jiraTransitionIssueMock: vi.fn(),
   resolveProjectTokensMock: vi.fn(),
   resolveModelMock: vi.fn(),
   runMock: vi.fn(),
   retrieveRunMock: vi.fn(),
   octokitPaginateMock: vi.fn(),
   octokitPullGetMock: vi.fn(),
+  octokitCreateCommentMock: vi.fn(),
+  projectLedgerMock: vi.fn(),
+  dismissSupersededReviewsMock: vi.fn(),
 }));
 
 vi.mock("../db/queries.js", () => ({
@@ -41,10 +57,15 @@ vi.mock("../db/queries.js", () => ({
   deleteRevisionEvent: deleteRevisionEventMock,
   claimRevisionSlot: claimRevisionSlotMock,
   releaseRevisionSlot: releaseRevisionSlotMock,
+  getRevisionState: getRevisionStateMock,
+  setNeedsHuman: setNeedsHumanMock,
+  upsertFindings: upsertFindingsMock,
 }));
 
 vi.mock("../jira/client.js", () => ({
   getIssue: jiraGetIssueMock,
+  getTransitions: jiraGetTransitionsMock,
+  transitionIssue: jiraTransitionIssueMock,
 }));
 
 vi.mock("../config/env.js", () => ({
@@ -66,12 +87,25 @@ vi.mock("./oz-client.js", () => ({
   })),
 }));
 
+vi.mock("./ledger.js", () => ({
+  projectLedger: projectLedgerMock,
+}));
+
+vi.mock("../github/reviews.js", () => ({
+  dismissSupersededReviews: dismissSupersededReviewsMock,
+}));
+
 vi.mock("@octokit/rest", () => ({
   Octokit: class MockOctokit {
     rest = {
       pulls: {
         listCommentsForReview: vi.fn(),
         get: octokitPullGetMock,
+      },
+      issues: {
+        createComment: octokitCreateCommentMock,
+        listComments: vi.fn(),
+        updateComment: vi.fn(),
       },
     };
     paginate = octokitPaginateMock;
@@ -87,13 +121,21 @@ describe("handleGithubRevisionWebhook", () => {
     deleteRevisionEventMock.mockReset();
     claimRevisionSlotMock.mockReset();
     releaseRevisionSlotMock.mockReset();
+    getRevisionStateMock.mockReset();
+    setNeedsHumanMock.mockReset();
+    upsertFindingsMock.mockReset();
     jiraGetIssueMock.mockReset();
+    jiraGetTransitionsMock.mockReset();
+    jiraTransitionIssueMock.mockReset();
     resolveProjectTokensMock.mockReset();
     resolveModelMock.mockReset();
     runMock.mockReset();
     retrieveRunMock.mockReset();
     octokitPaginateMock.mockReset();
     octokitPullGetMock.mockReset();
+    octokitCreateCommentMock.mockReset();
+    projectLedgerMock.mockReset();
+    dismissSupersededReviewsMock.mockReset();
 
     const config = makeProjectConfig({
       project_key: "HYDI",
@@ -108,6 +150,10 @@ describe("handleGithubRevisionWebhook", () => {
       ozApiKey: "oz-token",
     });
     jiraGetIssueMock.mockResolvedValue(makeJiraIssue({ key: "HYDI-44" }));
+    jiraGetTransitionsMock.mockResolvedValue({
+      transitions: [{ id: "trans-123", name: "In Review" }],
+    });
+    jiraTransitionIssueMock.mockResolvedValue(undefined);
     resolveModelMock.mockReturnValue("auto");
     runMock.mockResolvedValue({ run_id: "run_revision_1" });
     updateRunStatusMock.mockResolvedValue(null);
@@ -121,6 +167,17 @@ describe("handleGithubRevisionWebhook", () => {
       runRecordId: "revision-record-claimed",
     });
     releaseRevisionSlotMock.mockResolvedValue(undefined);
+    getRevisionStateMock.mockResolvedValue({
+      round: 0,
+      budget: 2,
+      needsHuman: false,
+      reviewTier: null,
+    });
+    setNeedsHumanMock.mockResolvedValue(undefined);
+    upsertFindingsMock.mockResolvedValue({ repeated: [] });
+    projectLedgerMock.mockResolvedValue(undefined);
+    dismissSupersededReviewsMock.mockResolvedValue(undefined);
+    octokitCreateCommentMock.mockResolvedValue({});
   });
 
   it("spawns a revision run when submitted review contains action items", async () => {
@@ -129,6 +186,7 @@ describe("handleGithubRevisionWebhook", () => {
         ticket_key: "HYDI-44",
         project_key: "HYDI",
         pr_url: "https://github.com/org/repo/pull/44",
+        pr_display_state: "open",
       }),
     ]);
     octokitPaginateMock.mockResolvedValue([
@@ -152,7 +210,7 @@ describe("handleGithubRevisionWebhook", () => {
         },
         review: {
           id: 999,
-          state: "COMMENTED",
+          state: "changes_requested",
           body: "### Action Plan For Implementing Agent\n1. [REV-001] Fix the handler.",
         },
       },
@@ -183,6 +241,149 @@ describe("handleGithubRevisionWebhook", () => {
     // Project config is fetched once (resolveTrackedRevisionContext); the spawn
     // reuses it rather than re-fetching.
     expect(getProjectConfigMock).toHaveBeenCalledTimes(1);
+    // Findings are upserted after spawn
+    expect(upsertFindingsMock).toHaveBeenCalledWith(
+      "https://github.com/org/repo/pull/44",
+      "HYDI-44",
+      1,
+      expect.any(Array)
+    );
+    // Superseded reviews are dismissed and ledger projected
+    expect(dismissSupersededReviewsMock).toHaveBeenCalled();
+    expect(projectLedgerMock).toHaveBeenCalled();
+  });
+
+  it("returns approve_terminal when the review is approved", async () => {
+    getRunsByPrUrlMock.mockResolvedValue([
+      makeDispatchRun({
+        ticket_key: "HYDI-44",
+        project_key: "HYDI",
+        pr_url: "https://github.com/org/repo/pull/44",
+        pr_display_state: "open",
+      }),
+    ]);
+    octokitPaginateMock.mockResolvedValue([]);
+
+    const { handleGithubRevisionWebhook } = await import("./revision.js");
+    const result = await handleGithubRevisionWebhook({
+      event: "pull_request_review",
+      payload: {
+        action: "submitted",
+        repository: { owner: { login: "org" }, name: "repo" },
+        pull_request: {
+          number: 44,
+          html_url: "https://github.com/org/repo/pull/44",
+          head: { ref: "agent/HYDI-44-pr-revision-webhook" },
+        },
+        review: {
+          id: 888,
+          state: "approved",
+          body: "LGTM, no actionable findings.",
+        },
+      },
+    });
+
+    expect(result).toEqual({ action: "approve_terminal" });
+    expect(runMock).not.toHaveBeenCalled();
+    expect(upsertFindingsMock).not.toHaveBeenCalled();
+  });
+
+  it("escalates to human when revision budget is exhausted", async () => {
+    getRunsByPrUrlMock.mockResolvedValue([
+      makeDispatchRun({
+        ticket_key: "HYDI-44",
+        project_key: "HYDI",
+        pr_url: "https://github.com/org/repo/pull/44",
+        pr_display_state: "open",
+      }),
+    ]);
+    // Budget spent: round=2 >= budget=2
+    getRevisionStateMock.mockResolvedValue({
+      round: 2,
+      budget: 2,
+      needsHuman: false,
+      reviewTier: null,
+    });
+    octokitPaginateMock.mockResolvedValue([
+      {
+        path: "src/foo.ts",
+        line: 10,
+        body: "**[REV-001] Unresolved issue**",
+      },
+    ]);
+
+    const { handleGithubRevisionWebhook } = await import("./revision.js");
+    const result = await handleGithubRevisionWebhook({
+      event: "pull_request_review",
+      payload: {
+        action: "submitted",
+        repository: { owner: { login: "org" }, name: "repo" },
+        pull_request: {
+          number: 44,
+          html_url: "https://github.com/org/repo/pull/44",
+          head: { ref: "agent/HYDI-44-pr-revision-webhook" },
+        },
+        review: {
+          id: 777,
+          state: "changes_requested",
+          body: "Still failing.",
+        },
+      },
+    });
+
+    expect(result).toEqual({
+      action: "escalated_human",
+      reason: "revision budget (2) exhausted",
+    });
+    expect(runMock).not.toHaveBeenCalled();
+    expect(setNeedsHumanMock).toHaveBeenCalledWith("HYDI-44", true);
+    // Comment body must contain "budget"
+    expect(octokitCreateCommentMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        body: expect.stringContaining("budget"),
+      })
+    );
+    expect(upsertFindingsMock).not.toHaveBeenCalled();
+    expect(projectLedgerMock).toHaveBeenCalled();
+  });
+
+  it("builds a triage prompt (fix/defer/reject) not 'address all'", async () => {
+    getRunsByPrUrlMock.mockResolvedValue([
+      makeDispatchRun({
+        ticket_key: "HYDI-44",
+        project_key: "HYDI",
+        pr_url: "https://github.com/org/repo/pull/44",
+        pr_display_state: "open",
+      }),
+    ]);
+    octokitPaginateMock.mockResolvedValue([
+      { path: "src/foo.ts", line: 1, body: "[REV-001] Fix the handler." },
+    ]);
+
+    const { handleGithubRevisionWebhook } = await import("./revision.js");
+    await handleGithubRevisionWebhook({
+      event: "pull_request_review",
+      payload: {
+        action: "submitted",
+        repository: { owner: { login: "org" }, name: "repo" },
+        pull_request: {
+          number: 44,
+          html_url: "https://github.com/org/repo/pull/44",
+          head: { ref: "agent/HYDI-44-pr-revision-webhook" },
+        },
+        review: {
+          id: 999,
+          state: "changes_requested",
+          body: "Please fix.",
+        },
+      },
+    });
+
+    expect(runMock).toHaveBeenCalledTimes(1);
+    const prompt = runMock.mock.calls[0][0].prompt as string;
+    expect(prompt).not.toContain("Address ALL");
+    expect(prompt).toMatch(/fix.*defer.*reject/is);
+    expect(prompt).toContain("out of scope for this slice");
   });
 
   it("ignores a duplicate submitted-review delivery without spawning", async () => {
@@ -191,6 +392,7 @@ describe("handleGithubRevisionWebhook", () => {
         ticket_key: "HYDI-44",
         project_key: "HYDI",
         pr_url: "https://github.com/org/repo/pull/44",
+        pr_display_state: "open",
       }),
     ]);
     octokitPaginateMock.mockResolvedValue([
@@ -209,7 +411,7 @@ describe("handleGithubRevisionWebhook", () => {
           html_url: "https://github.com/org/repo/pull/44",
           head: { ref: "agent/HYDI-44-pr-revision-webhook" },
         },
-        review: { id: 999, state: "COMMENTED", body: "1. [REV-001] Fix it." },
+        review: { id: 999, state: "changes_requested", body: "1. [REV-001] Fix it." },
       },
     });
 
@@ -219,6 +421,8 @@ describe("handleGithubRevisionWebhook", () => {
     });
     expect(claimRevisionSlotMock).not.toHaveBeenCalled();
     expect(runMock).not.toHaveBeenCalled();
+    // upsertFindings must NOT be called for duplicate deliveries
+    expect(upsertFindingsMock).not.toHaveBeenCalled();
   });
 
   it("ignores a submitted review when a revision is already in progress", async () => {
@@ -227,6 +431,7 @@ describe("handleGithubRevisionWebhook", () => {
         ticket_key: "HYDI-44",
         project_key: "HYDI",
         pr_url: "https://github.com/org/repo/pull/44",
+        pr_display_state: "open",
       }),
     ]);
     octokitPaginateMock.mockResolvedValue([
@@ -250,7 +455,7 @@ describe("handleGithubRevisionWebhook", () => {
           html_url: "https://github.com/org/repo/pull/44",
           head: { ref: "agent/HYDI-44-pr-revision-webhook" },
         },
-        review: { id: 1001, state: "COMMENTED", body: "1. [REV-001] Fix it." },
+        review: { id: 1001, state: "changes_requested", body: "1. [REV-001] Fix it." },
       },
     });
 
@@ -267,6 +472,7 @@ describe("handleGithubRevisionWebhook", () => {
         ticket_key: "HYDI-44",
         project_key: "HYDI",
         pr_url: "https://github.com/org/repo/pull/44",
+        pr_display_state: "open",
       }),
     ]);
     octokitPaginateMock.mockResolvedValue([
@@ -286,7 +492,7 @@ describe("handleGithubRevisionWebhook", () => {
             html_url: "https://github.com/org/repo/pull/44",
             head: { ref: "agent/HYDI-44-pr-revision-webhook" },
           },
-          review: { id: 999, state: "COMMENTED", body: "1. [REV-001] Fix it." },
+          review: { id: 999, state: "changes_requested", body: "1. [REV-001] Fix it." },
         },
       })
     ).rejects.toThrow("spawn failed");
@@ -306,6 +512,7 @@ describe("handleGithubRevisionWebhook", () => {
         ticket_key: "HYDI-44",
         project_key: "HYDI",
         pr_url: "https://github.com/org/repo/pull/44",
+        pr_display_state: "open",
       }),
     ]);
     octokitPaginateMock.mockResolvedValue([
@@ -327,7 +534,7 @@ describe("handleGithubRevisionWebhook", () => {
             html_url: "https://github.com/org/repo/pull/44",
             head: { ref: "agent/HYDI-44-pr-revision-webhook" },
           },
-          review: { id: 999, state: "COMMENTED", body: "1. [REV-001] Fix it." },
+          review: { id: 999, state: "changes_requested", body: "1. [REV-001] Fix it." },
         },
       })
     ).rejects.toThrow("jira lookup failed");
@@ -351,7 +558,7 @@ describe("handleGithubRevisionWebhook", () => {
           html_url: "https://github.com/org/repo/pull/44",
           head: { ref: "agent/HYDI-44-pr-revision-webhook" },
         },
-        review: { id: 999, state: "COMMENTED", body: "1. [REV-001] Fix it." },
+        review: { id: 999, state: "changes_requested", body: "1. [REV-001] Fix it." },
       },
     });
 
@@ -366,12 +573,13 @@ describe("handleGithubRevisionWebhook", () => {
     expect(runMock).toHaveBeenCalledTimes(1);
   });
 
-  it("skips spawning when submitted review has no action items", async () => {
+  it("ignores a changes_requested review with no actionable findings", async () => {
     getRunsByPrUrlMock.mockResolvedValue([
       makeDispatchRun({
         ticket_key: "HYDI-44",
         project_key: "HYDI",
         pr_url: "https://github.com/org/repo/pull/44",
+        pr_display_state: "open",
       }),
     ]);
     octokitPaginateMock.mockResolvedValue([
@@ -395,7 +603,7 @@ describe("handleGithubRevisionWebhook", () => {
         },
         review: {
           id: 999,
-          state: "COMMENTED",
+          state: "changes_requested",
           body: "No blocking issues.",
         },
       },
@@ -403,7 +611,7 @@ describe("handleGithubRevisionWebhook", () => {
 
     expect(result).toEqual({
       action: "ignored",
-      reason: "review has no action items",
+      reason: "no actionable (Major+) findings",
     });
     expect(runMock).not.toHaveBeenCalled();
   });
