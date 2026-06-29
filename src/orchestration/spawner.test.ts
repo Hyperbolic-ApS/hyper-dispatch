@@ -64,6 +64,7 @@ import {
   adfToText,
   buildPrompt,
   resolveModel,
+  resolveRevisionModel,
   spawnAgent,
 } from "./spawner.js";
 
@@ -286,6 +287,59 @@ describe("resolveModel", () => {
     });
 
     expect(resolveModel(issue, config)).toBeUndefined();
+  });
+});
+
+describe("resolveRevisionModel", () => {
+  it("floors the reviser model at the review tier when base is unranked", () => {
+    const issue = makeJiraIssue();
+    const config = makeProjectConfig({ model_field_id: null, default_model: null });
+    expect(
+      resolveRevisionModel(issue, config, { floorTier: "auto", escalate: false })
+    ).toBe("auto");
+  });
+
+  it("escalates one tier when a finding repeated", () => {
+    const issue = makeJiraIssue();
+    const config = makeProjectConfig({ model_field_id: null, default_model: null });
+    // floorTier="auto-efficient" (rank 1) + escalate → rank 2 = "auto"
+    expect(
+      resolveRevisionModel(issue, config, { floorTier: "auto-efficient", escalate: true })
+    ).toBe("auto");
+  });
+
+  it("never downgrades below the ticket/default model", () => {
+    const issue = makeJiraIssue();
+    const config = makeProjectConfig({ model_field_id: null, default_model: "auto-genius" });
+    // base="auto-genius" (rank 3), floorTier="auto-open" (rank 0) → max = 3 → "auto-genius"
+    expect(
+      resolveRevisionModel(issue, config, { floorTier: "auto-open", escalate: false })
+    ).toBe("auto-genius");
+  });
+
+  it("returns base unchanged when both base and floorTier are outside the tier list", () => {
+    const issue = makeJiraIssue();
+    const config = makeProjectConfig({ model_field_id: null, default_model: "claude-custom" });
+    expect(
+      resolveRevisionModel(issue, config, { floorTier: null, escalate: false })
+    ).toBe("claude-custom");
+  });
+
+  it("caps escalation at auto-genius (the highest tier)", () => {
+    const issue = makeJiraIssue();
+    const config = makeProjectConfig({ model_field_id: null, default_model: "auto-genius" });
+    expect(
+      resolveRevisionModel(issue, config, { floorTier: "auto-genius", escalate: true })
+    ).toBe("auto-genius");
+  });
+
+  it("returns custom base model unchanged when escalate=true (non-tier base not overridden)", () => {
+    const issue = makeJiraIssue();
+    const config = makeProjectConfig({ model_field_id: null, default_model: "claude-custom-model" });
+    // escalate=true with a floorTier must not downgrade or override the custom non-tier base
+    expect(
+      resolveRevisionModel(issue, config, { floorTier: "auto-open", escalate: true })
+    ).toBe("claude-custom-model");
   });
 });
 

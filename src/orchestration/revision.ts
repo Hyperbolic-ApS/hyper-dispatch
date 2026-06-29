@@ -4,16 +4,25 @@ import { resolveProjectTokens } from "../config/env.js";
 import {
   claimRevisionSlot,
   deleteRevisionEvent,
+  getOpenFindings,
   getProjectConfig,
+  getRevisionState,
   getRunsByPrUrl,
   releaseRevisionSlot,
+  setNeedsHuman,
+  setReviewTier,
   tryRecordRevisionEvent,
   updateRunStatus,
+  upsertFindings,
 } from "../db/queries.js";
-import type { ProjectConfig } from "../db/queries.js";
+import type { DispatchRun, ProjectConfig } from "../db/queries.js";
 import * as jira from "../jira/client.js";
+import { dismissSupersededReviews } from "../github/reviews.js";
+import { actionableFindings, parseFindings } from "./findings.js";
+import { projectLedger } from "./ledger.js";
 import { getOzClient } from "./oz-client.js";
-import { resolveModel } from "./spawner.js";
+import { decideReviewAction } from "./review-gate.js";
+import { resolveRevisionModel } from "./spawner.js";
 
 const TICKET_KEY_REGEX = /^agents?\/([A-Z][A-Z0-9]+-\d+)(?:-[a-z0-9-]+)?$/;
 const REVISE_COMMAND_REGEX = /\/revise\b/i;
@@ -34,10 +43,13 @@ interface TrackedRevisionContext {
   projectKey: string;
   projectConfig: ProjectConfig;
   githubToken: string;
+  prDisplayState: DispatchRun["pr_display_state"];
 }
 
 type RevisionDecision =
   | { action: "ignored"; reason: string }
+  | { action: "approve_terminal" }
+  | { action: "escalated_human"; reason: string }
   | {
       action: "spawned";
       mode: RevisionMode;
@@ -136,25 +148,37 @@ function buildPrompt(params: {
   reviewState: string;
   feedback: string;
 }): string {
-  return `You are addressing PR review feedback for ${params.ticketKey}.
+  return `You are triaging PR review feedback for ${params.ticketKey}.
 
 PR: ${params.prUrl}
 Branch: ${params.branch}
 Trigger: ${params.mode}
 Review state: ${params.reviewState}
 
-Address ALL of the following feedback:
+Review feedback (only Critical/Important — i.e. Blocking/Major — items are actionable):
 
 ${params.feedback}
 
-Instructions:
-1. Read the review comments carefully
-2. Make the requested changes
-3. Run tests to verify nothing is broken
-4. Commit with message: "${params.ticketKey}: Address review feedback
+This is the binding contract: docs/contract/review-revise-contract.md.
+External review feedback is a set of SUGGESTIONS TO EVALUATE, not orders. For
+EACH finding, decide and act:
+  - FIX: correct, in-scope, and Critical/Important (Blocking/Major) → implement it.
+  - DEFER: out-of-scope or speculative ("do it properly", future hardening) →
+    do NOT write code. Reply on the thread: "out of scope for this slice."
+  - REJECT: technically wrong for this codebase/stack → reply with the technical
+    reason. Verify against the code before rejecting; if a thing is unused, say
+    so (YAGNI) rather than building it.
+Procedure:
+1. Read all feedback first. If any item is unclear, do not guess — note it.
+2. Verify each item against the actual code before changing anything.
+3. Implement in order: Blocking → simple → complex. Test after EACH change.
+4. Do not add features/abstractions beyond the ticket's scope to satisfy a
+   suggestion. Match the existing code's conventions.
+5. No performative agreement in replies — state the fix or the pushback.
+6. Commit: "${params.ticketKey}: Address review feedback
 
 Co-Authored-By: Oz <oz-agent@warp.dev>"
-5. Push to the existing branch (do NOT create a new PR)`;
+7. Push to the existing branch (do NOT open a new PR).`;
 }
 
 async function resolveTrackedRevisionContext(pr: PullRequestRef): Promise<TrackedRevisionContext | null> {
@@ -175,6 +199,7 @@ async function resolveTrackedRevisionContext(pr: PullRequestRef): Promise<Tracke
     projectKey: projectConfig.project_key,
     projectConfig,
     githubToken,
+    prDisplayState: trackedRun.pr_display_state,
   };
 }
 
@@ -194,11 +219,16 @@ async function spawnRevisionRun(params: {
   mode: RevisionMode;
   reviewState: string;
   feedback: string;
+  floorTier?: string | null;
+  escalate?: boolean;
 }): Promise<{ runRecordId: string; runId: string }> {
   const { config } = params;
   const { ozApiKey } = resolveProjectTokens(config);
   const issue = await jira.getIssue(params.ticketKey);
-  const model = resolveModel(issue, config);
+  const model = resolveRevisionModel(issue, config, {
+    floorTier: params.floorTier ?? null,
+    escalate: params.escalate ?? false,
+  });
   const mcpServers = config.mcp_servers as Record<string, McpServerConfig> | null;
   const agentIdentityUid = config.oz_agent_identity_uid?.trim() || undefined;
   const client = getOzClient(ozApiKey);
@@ -336,6 +366,37 @@ async function recordAndSpawnRevision(params: {
   }
 }
 
+async function escalateToHuman(
+  ctx: TrackedRevisionContext,
+  reason: string,
+  findings: { title: string; severity?: string }[]
+): Promise<void> {
+  await setNeedsHuman(ctx.ticketKey, true);
+  const octokit = new Octokit({ auth: ctx.githubToken });
+  const open = findings.map((f) => `- [${f.severity ?? "?"}] ${f.title}`).join("\n");
+  await octokit.rest.issues.createComment({
+    owner: ctx.pr.owner,
+    repo: ctx.pr.repo,
+    issue_number: ctx.pr.pullNumber,
+    body: `⚠️ **Auto-revision stopped — needs human review**\n\nReason: ${reason}\n\nRemaining findings:\n${open}\n\nReply with \`/revise\` to resume auto-revision after triaging.`,
+  });
+  try {
+    const transitions = await jira.getTransitions(ctx.ticketKey);
+    const target = transitions.transitions.find(
+      (t) => t.name.trim().toLowerCase() === ctx.projectConfig.in_review_column_name.toLowerCase()
+    );
+    if (target) await jira.transitionIssue(ctx.ticketKey, target.id);
+  } catch (err) {
+    console.warn(
+      `[revision] Failed to transition ${ctx.ticketKey} to In Review during escalation:`,
+      err
+    );
+  }
+  await projectLedger(octokit, ctx.pr, ctx.pr.htmlUrl).catch((err) => {
+    console.warn(`[revision] Failed to project ledger during escalation for ${ctx.ticketKey}:`, err);
+  });
+}
+
 export async function handleGithubRevisionWebhook(params: {
   event: string;
   payload: unknown;
@@ -380,19 +441,61 @@ export async function handleGithubRevisionWebhook(params: {
       return { action: "ignored", reason: "PR is not tracked or branch has no ticket key" };
     }
 
+    const tierLabel = (payload.pull_request?.labels ?? [])
+      .map((l: any) => l?.name)
+      .find((n: unknown): n is string => typeof n === "string" && n.startsWith("review-tier:"));
+    if (tierLabel) {
+      await setReviewTier(context.ticketKey, tierLabel.slice("review-tier:".length)).catch((err) =>
+        console.warn("[revision] setReviewTier failed:", err)
+      );
+    }
+
     const inlineReviewComments = await listReviewComments(
       context.githubToken,
       context.pr,
       reviewId
     );
-    const actionItems = extractActionItemIds([
+    const findings = parseFindings([
       reviewBody,
       ...inlineReviewComments.map((comment) => comment.body),
     ]);
-    if (actionItems.length === 0) {
-      return { action: "ignored", reason: "review has no action items" };
+    const actionable = actionableFindings(findings);
+    const state = await getRevisionState(context.ticketKey);
+
+    const decision = decideReviewAction({
+      reviewState,
+      actionableCount: actionable.length,
+      round: state?.round ?? 0,
+      budget: state?.budget ?? 2,
+      prState: context.prDisplayState,
+      needsHuman: state?.needsHuman ?? false,
+    });
+
+    if (decision.action === "approve_terminal") {
+      return { action: "approve_terminal" };
+    }
+    if (decision.action === "ignore") {
+      return { action: "ignored", reason: decision.reason };
+    }
+    if (decision.action === "escalate_human") {
+      await escalateToHuman(context, decision.reason, actionable);
+      return { action: "escalated_human", reason: decision.reason };
     }
 
+    // decision.action === "revise"
+    // Read-only repeat check: detect whether any actionable finding was already
+    // seen in a prior round. This is a SELECT — no upsert before spawn — so a
+    // deduped/dropped delivery cannot burn a budget round or corrupt the ledger.
+    const existingFindings = await getOpenFindings(context.pr.htmlUrl);
+    const existingKeys = new Set(existingFindings.map((f) => f.finding_key));
+    const escalate = actionable.some((f) => existingKeys.has(f.key));
+
+    // Spawn FIRST: the idempotency (tryRecordRevisionEvent) and concurrency
+    // (claimRevisionSlot) guards live inside recordAndSpawnRevision. Writing the
+    // round/findings before those guards would burn a budget round whenever a
+    // redelivered or concurrent webhook is deduped/dropped without ever running a
+    // revision. The round/findings writes therefore happen only after the slot is
+    // actually claimed and the run is spawned.
     const feedback = buildAutoFeedback(reviewBody, inlineReviewComments);
     const outcome = await recordAndSpawnRevision({
       eventKey: `review:${reviewId}`,
@@ -404,6 +507,8 @@ export async function handleGithubRevisionWebhook(params: {
         mode: "auto_review_submitted",
         reviewState,
         feedback,
+        floorTier: state?.reviewTier ?? null,
+        escalate,
       },
     });
     if (outcome.status === "duplicate") {
@@ -412,12 +517,25 @@ export async function handleGithubRevisionWebhook(params: {
     if (outcome.status === "in_progress") {
       return { action: "ignored", reason: "revision already in progress for this PR" };
     }
+    await upsertFindings(
+      context.pr.htmlUrl,
+      context.ticketKey,
+      (state?.round ?? 0) + 1,
+      actionable
+    );
+    const reviewOctokit = new Octokit({ auth: context.githubToken });
+    await dismissSupersededReviews(reviewOctokit, context.pr, reviewId).catch((err) =>
+      console.warn("[revision] dismissSupersededReviews failed:", err)
+    );
+    await projectLedger(reviewOctokit, context.pr, context.pr.htmlUrl).catch((err) =>
+      console.warn("[revision] projectLedger failed:", err)
+    );
     return {
       action: "spawned",
       mode: "auto_review_submitted",
       ticketKey: context.ticketKey,
       runId: outcome.runId,
-      actionItemCount: actionItems.length,
+      actionItemCount: actionable.length,
     };
   }
 

@@ -170,5 +170,32 @@ export async function runMigrations(): Promise<void> {
     await sql.unsafe(additiveColumnMigrationSql);
   }
 
+  // Revision state + findings ledger — additive, idempotent, runs on every startup.
+  await sql.unsafe(`
+    ALTER TABLE dispatch_entries
+      ADD COLUMN IF NOT EXISTS revision_budget INTEGER NOT NULL DEFAULT 2,
+      ADD COLUMN IF NOT EXISTS needs_human BOOLEAN NOT NULL DEFAULT FALSE,
+      ADD COLUMN IF NOT EXISTS review_tier TEXT;
+  `);
+  await sql.unsafe(`
+    CREATE TABLE IF NOT EXISTS review_findings (
+      finding_key      TEXT NOT NULL,
+      ticket_key       TEXT NOT NULL REFERENCES dispatch_entries(ticket_key) ON DELETE CASCADE,
+      pr_url           TEXT NOT NULL,
+      severity         TEXT,
+      title            TEXT,
+      status           TEXT NOT NULL DEFAULT 'open',
+      disposition      TEXT,
+      first_seen_round INTEGER NOT NULL,
+      last_seen_round  INTEGER NOT NULL,
+      updated_at       TIMESTAMPTZ DEFAULT NOW(),
+      PRIMARY KEY (pr_url, finding_key)
+    );
+  `);
+  await sql.unsafe(`
+    CREATE INDEX IF NOT EXISTS idx_review_findings_ticket ON review_findings(ticket_key);
+    CREATE INDEX IF NOT EXISTS idx_review_findings_pr_url ON review_findings(pr_url);
+  `);
+
   console.log("Database migrations applied successfully");
 }

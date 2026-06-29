@@ -90,7 +90,7 @@ describe.skipIf(!process.env.RUN_DB_TESTS)("queries integration", () => {
 
   async function resetTables() {
     await connection.sql.unsafe(`
-      TRUNCATE TABLE dispatch_runs, dispatch_entries, project_configs, revision_events RESTART IDENTITY CASCADE;
+      TRUNCATE TABLE review_findings, dispatch_runs, dispatch_entries, project_configs, revision_events RESTART IDENTITY CASCADE;
     `);
 
     await connection.sql.unsafe(`
@@ -920,6 +920,40 @@ describe.skipIf(!process.env.RUN_DB_TESTS)("queries integration", () => {
     expect(projected?.status).toBe("queued");
   });
 
+  it("integration: getRevisionState reflects budget defaults and derives round from revision-run count", async () => {
+    await queries.upsertDispatchRun({
+      ticketKey: "HYDI-9901",
+      projectKey: "HYDI",
+      status: "queued",
+    });
+
+    const before = await (queries as any).getRevisionState("HYDI-9901");
+    expect(before).not.toBeNull();
+    expect(before).toMatchObject({ round: 0, budget: 2, needsHuman: false, reviewTier: null });
+
+    await queries.createRun({
+      ticketKey: "HYDI-9901",
+      runType: "revision",
+      status: "running",
+    });
+
+    const after = await (queries as any).getRevisionState("HYDI-9901");
+    expect(after?.round).toBe(1);
+  });
+
+  it("integration: upsertFindings detects repeated findings across rounds", async () => {
+    await queries.upsertDispatchRun({
+      ticketKey: "HYDI-9902",
+      projectKey: "HYDI",
+      status: "queued",
+    });
+
+    const f = { key: "k1", severity: "Major", title: "Fix the thing", path: "src/a.ts" };
+    await (queries as any).upsertFindings("https://github.com/test/repo/pull/1", "HYDI-9902", 1, [f]);
+    const result = await (queries as any).upsertFindings("https://github.com/test/repo/pull/1", "HYDI-9902", 2, [f]);
+    expect(result.repeated).toEqual(["k1"]);
+  });
+
   it("integration: getRunsBlockedBy returns only runs containing the blocker key", async () => {
     await queries.upsertDispatchRun({
       ticketKey: "HYDI-80",
@@ -941,6 +975,34 @@ describe.skipIf(!process.env.RUN_DB_TESTS)("queries integration", () => {
 
     const blocked = await queries.getRunsBlockedBy("HYDI-82");
     expect(blocked.map((run) => run.ticket_key)).toEqual(["HYDI-80"]);
+  });
+
+  it("integration: deleteRun cascades to review_findings and does not throw FK violation", async () => {
+    const ticketKey = "HYDI-9910";
+    const prUrl = "https://github.com/hyperbolic-co/hyper-dispatch/pull/9910";
+
+    await queries.upsertDispatchRun({
+      ticketKey,
+      projectKey: "HYDI",
+      status: "succeeded",
+    });
+
+    await (queries as any).upsertFindings(prUrl, ticketKey, 1, [
+      { key: "fk-cascade-finding", severity: "Major", title: "Must cascade", path: "src/x.ts" },
+    ]);
+
+    // Confirm the finding was inserted before deletion
+    const before = await (queries as any).getOpenFindings(prUrl);
+    expect(before).toHaveLength(1);
+
+    // deleteRun deletes from dispatch_entries; without ON DELETE CASCADE this throws a FK violation
+    await expect(queries.deleteRun(ticketKey)).resolves.toBeUndefined();
+
+    // The CASCADE should have removed the review_findings row
+    const after = await connection.sql.unsafe(
+      `SELECT * FROM review_findings WHERE pr_url = '${prUrl}'`
+    );
+    expect(after).toHaveLength(0);
   });
 
   it("integration: getActiveRunCount counts only running runs", async () => {
