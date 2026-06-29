@@ -6,12 +6,12 @@
 
 **Architecture:** Three actors share one contract: a severity taxonomy (only `Major+` is actionable), a terminal verdict (GitHub `APPROVE` ends the loop), and content-addressed finding IDs tracked in an append-only DB ledger that is *projected* to one sticky PR comment. The reviewer emits the verdict + severity-tagged findings and applies YAGNI/scope discipline; the reviser triages each finding (fix / defer / reject) instead of blindly implementing all; the harness gates auto-revision on `review.state` + severity + a per-PR budget, escalates to `needs-human` when the budget is spent or findings stop converging, and runs the reviser at a model tier matched to (and escalating above) the review tier.
 
-**Tech Stack:** TypeScript (Node ≥ 20, ESM), Hono webhook service, `postgres` (`postgres-js`) via `src/db`, `@octokit/rest`, `oz-agent-sdk`, Vitest. Reviewer/reviser behavior is an Oz hosted skill (`pr-review-commenting`) + an inline prompt in `src/orchestration/revision.ts`. CI model selection is `.github/scripts/select-review-tier.py` + `.github/review-tiers.yml`.
+**Tech Stack:** TypeScript (Node ≥ 20, ESM), Hono webhook service, `postgres` (`postgres-js`) via `src/db`, `@octokit/rest`, `oz-agent-sdk`, Vitest. Reviewer/reviser behavior is the in-repo Oz skills (`pr-technical-review` and `pr-review-commenting` at `.agents/skills/`) + an inline prompt in `src/orchestration/revision.ts`. CI model selection is `.github/scripts/select-review-tier.py` + `.github/review-tiers.yml`.
 
 ## Global Constraints
 
 - **Repo for harness/CI/DB changes:** `hyper-dispatch` (this checkout). Plan-doc paths below are relative to the repo root.
-- **Reviewer skill source:** `pr-review-commenting` is a **hosted Oz skill**, not in this repo. Its prompt/contract edits (Phase 2) are made wherever that skill is authored (the Warp/Oz skills registry the team controls). The plan specifies the exact contract text to add; the implementer applies it at the skill source.
+- **Reviewer skill source:** `pr-technical-review` and `pr-review-commenting` are **in-repo Oz skills** at `.agents/skills/`. Contract edits are made directly to the `SKILL.md` files in this repository.
 - **Severity taxonomy (verbatim, shared by all three actors):** `Blocking` > `Major` > `Minor` > `Nit`. **Only `Blocking` and `Major` are "actionable"** (carry action-item markers and may trigger auto-revision). `Minor`/`Nit` are advisory-only.
 - **Terminal signal:** a GitHub review submitted with state `APPROVED`. The reviewer MUST submit `APPROVED` when zero actionable findings remain. A GitHub review's state is immutable after submission — verdicts are therefore append-only (new review per round); superseded `CHANGES_REQUESTED` reviews are **dismissed**, never edited.
 - **Auto-revision trigger (all must hold):** `review.state == "changes_requested"` AND ≥1 actionable finding AND budget remaining AND PR is `open`. `commented` reviews never auto-revise. `approved` reviews terminate the loop.
@@ -44,7 +44,7 @@
 - `src/orchestration/spawner.ts` — `resolveModel` gains a `floorTier`/`escalate` path for revisions.
 - `.github/workflows/oz-pr-review-commenting.yml` — persist the selected tier onto the PR (so the harness can floor the reviser model) and pass the contract to the reviewer prompt.
 - `.github/review-tiers.yml` — no model changes; add a comment cross-referencing the contract (reviewer must read it).
-- `pr-review-commenting` hosted skill (external) — verdict + severity + YAGNI/scope + stable IDs + thin-verdict/dismiss/resolve behavior.
+- `.agents/skills/pr-technical-review/SKILL.md` and `.agents/skills/pr-review-commenting/SKILL.md` (in-repo) — verdict + severity + YAGNI/scope + stable IDs + thin-verdict/dismiss/resolve behavior.
 
 ---
 
@@ -557,12 +557,12 @@ git commit -m "feat(orchestration): verdict+severity+budget gate with human esca
 
 ## Phase 2 — Reviewer skill: terminal verdict, severity, YAGNI, stable IDs
 
-> Applied at the `pr-review-commenting` hosted-skill source (external to this repo) + the workflow that invokes it.
+> Applied directly to the in-repo skills at `.agents/skills/` + the workflow that invokes them.
 
 ### Task 6: Rewrite the reviewer skill contract
 
 **Files:**
-- Modify: `pr-review-commenting` hosted skill prompt (external skill source)
+- Modify: `.agents/skills/pr-technical-review/SKILL.md` and `.agents/skills/pr-review-commenting/SKILL.md` (in-repo)
 - Reference: `docs/contract/review-revise-contract.md` (Task 0)
 
 **Interfaces:**
