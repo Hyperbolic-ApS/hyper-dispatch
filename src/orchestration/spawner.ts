@@ -123,9 +123,12 @@ export function resolveRevisionModel(
   opts: { floorTier: string | null; escalate: boolean }
 ): string | undefined {
   const base = resolveModel(issue, config);
-  let idx = Math.max(rank(base), rank(opts.floorTier));
+  const baseRank = rank(base);
+  // An explicit non-tier (custom) base model is respected as-is — never overridden by tier floor/escalate.
+  if (base && baseRank < 0) return base;
+  let idx = Math.max(baseRank, rank(opts.floorTier));
+  if (idx < 0) return base;                 // nothing ranked → Oz default
   if (opts.escalate) idx = Math.min(idx + 1, TIER_MODELS.length - 1);
-  if (idx < 0) return base; // both unranked → leave Oz default
   return TIER_MODELS[idx]!;
 }
 

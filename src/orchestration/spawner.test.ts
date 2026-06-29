@@ -332,6 +332,15 @@ describe("resolveRevisionModel", () => {
       resolveRevisionModel(issue, config, { floorTier: "auto-genius", escalate: true })
     ).toBe("auto-genius");
   });
+
+  it("returns custom base model unchanged when escalate=true (non-tier base not overridden)", () => {
+    const issue = makeJiraIssue();
+    const config = makeProjectConfig({ model_field_id: null, default_model: "claude-custom-model" });
+    // escalate=true with a floorTier must not downgrade or override the custom non-tier base
+    expect(
+      resolveRevisionModel(issue, config, { floorTier: "auto-open", escalate: true })
+    ).toBe("claude-custom-model");
+  });
 });
 
 describe("spawnAgent", () => {
