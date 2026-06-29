@@ -10,7 +10,8 @@ import {
   upsertDispatchRun,
 } from "./queries.js";
 
-const shouldRunDbTests = process.env.RUN_DB_TESTS === "1";
+const shouldRunDbTests =
+  process.env.RUN_DB_TESTS === "1" && process.env.TEST_DB_MODE !== "pglite";
 
 if (shouldRunDbTests) {
   describe("db queries integration", () => {
@@ -129,7 +130,9 @@ if (shouldRunDbTests) {
 } else {
   describe("db queries integration guard", () => {
     it("runs db integration tests only when RUN_DB_TESTS=1", () => {
-      expect(process.env.RUN_DB_TESTS).not.toBe("1");
+      expect(
+        process.env.RUN_DB_TESTS !== "1" || process.env.TEST_DB_MODE === "pglite"
+      ).toBe(true);
     });
   });
 }

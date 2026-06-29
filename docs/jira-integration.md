@@ -4,7 +4,7 @@ HyperDispatch interacts with Jira Cloud via the REST API v3 and the Agile REST A
 
 ## Authentication
 
-Basic auth using a service account email + API token (`JIRA_EMAIL` + `JIRA_API_TOKEN`). All requests go to `JIRA_BASE_URL`.
+A **scoped** API token (`JIRA_API_TOKEN`) sent as a Bearer token to the Atlassian API gateway, keyed by `JIRA_CLOUD_ID`. All API requests go to `https://api.atlassian.com/ex/jira/{JIRA_CLOUD_ID}` (see `src/jira/client.ts`). Basic auth (`email:token`) and requests against `JIRA_SITE_URL/rest/...` are rejected with `401` by this token type. `JIRA_SITE_URL` is the human site URL and is used only for `/browse/{key}` links, not API calls.
 
 ## APIs Used
 
@@ -61,7 +61,7 @@ In addition to webhook-triggered ingestion, the scheduler loop performs a Jira r
 When a worker run completes successfully, HyperDispatch stores the PR URL artifact, posts a Jira comment with that PR URL, and moves the issue to `In Review`.
 Newly created worker PRs are forced out of draft state by the monitor, not the webhook. The GitHub `opened` event fires the instant the worker creates the PR — before the run's `pr_url` is persisted (it is only recorded once the Oz run reaches `SUCCEEDED`), so an `opened`-triggered lookup cannot reliably find the run. Instead, when the monitor reconciles a tracked `succeeded` run whose PR is still a draft, it marks the PR ready-for-review via the GitHub GraphQL `markPullRequestReadyForReview` mutation (keyed by the PR's `node_id`) and persists `pr_display_state: "open"`. GitHub's REST "update a pull request" endpoint cannot change a PR's draft state, so GraphQL is required. The mutation reuses the PR fetch the monitor already performs and is safe to retry: it runs only while the PR reads back as a draft.
 When GitHub sends a signed `pull_request` webhook with `action: "closed"` and `pull_request.merged: true`, HyperDispatch immediately transitions the matching Jira issue to `Done` and unblocks dependent runs.
-The monitor still polls GitHub for `succeeded` runs with PR URLs as a backfill path and uses the same idempotent transition helper, so duplicate webhook/monitor observations remain safe. To keep this sweep bounded as succeeded runs accumulate, the monitor skips the GitHub re-fetch for runs already in a terminal PR display state (`merged`/`closed`): their conflict/display metadata no longer changes and the Done transition was already attempted in the cycle that first observed the terminal state.
+The monitor still polls GitHub for `succeeded` runs with PR URLs as a backfill path and uses the same idempotent transition helper, so duplicate webhook/monitor observations remain safe. To keep this sweep bounded as succeeded runs accumulate, the monitor skips the GitHub re-fetch for runs already in a terminal PR display state (`merged`/`closed`): their conflict/display metadata no longer changes and the Done transition was already attempted in the cycle that first observed the terminal state. Within each sweep, succeeded-run reconciliation is de-duplicated by `pr_url`, so multiple run rows that reference the same PR share one GitHub `pulls.get` fetch for that cycle.
 
 ## PR Review Revision Triggers
 
@@ -70,7 +70,8 @@ Signed GitHub webhook events also drive in-app PR revision runs:
 - Submitted review content is scanned for actionable items (`REV-###` IDs / action-list entries); if none are present, no Oz revision run is spawned.
 - `issue_comment` with `/revise ...` triggers manual revision; HyperDispatch still reads ticket context but forwards only the explicit `/revise` instruction text to the revision run.
 - `pull_request_review_comment` events are ignored for spawning so inline-comment replies/subcomments do not create duplicate revision runs.
-- Revision spawns are deduplicated by GitHub review/comment id (`revision_events` ledger) and guarded by an atomic running-run claim, so webhook redeliveries and rapid successive reviews cannot spawn duplicate or overlapping revision runs on the same branch.
+- Revision spawns are deduplicated by GitHub review/comment id (`revision_events` ledger) and guarded by an atomic revision-slot claim that updates the ticket to `running` and inserts the revision `dispatch_runs` row in the same SQL statement, so webhook redeliveries and rapid successive reviews cannot spawn duplicate or overlapping revision runs on the same branch.
+- For revision runs, the claimed run row already exists before `agent.run` is called; if spawn fails, that claimed row is cleaned up and the slot/idempotency key are released so a retry can start exactly one tracked run.
 
 ## Board Validation
 

@@ -4,8 +4,8 @@ import {
   claimRunForSpawn,
   deleteRun,
   getActiveRunCount,
+  getEntriesByStatus,
   getRunsByProject,
-  getRunsByStatus,
   listActiveProjectConfigs,
   releaseSpawnClaim,
   setTicketStatuses,
@@ -142,7 +142,7 @@ export async function processQueue(): Promise<number> {
   }
 
   const slots = env.MAX_CONCURRENT_AGENTS - activeCount;
-  const queued = await getRunsByStatus("queued");
+  const queued = await getEntriesByStatus("queued");
   const activeProjects = await listActiveProjectConfigs();
   const projectsByKey = new Map(
     activeProjects.map((project) => [project.project_key, project])

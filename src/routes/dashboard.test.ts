@@ -6,6 +6,7 @@ const getDispatchRunsPageMock = vi.fn();
 const countDispatchRunsMock = vi.fn();
 const getStatusCountsMock = vi.fn();
 const getDistinctRunProjectKeysMock = vi.fn();
+const getRunHistoryForTicketsMock = vi.fn();
 const listProjectConfigsMock = vi.fn();
 const deleteRunMock = vi.fn();
 const annotateRunsWithProdDeploymentStatusMock = vi.fn();
@@ -18,6 +19,7 @@ vi.mock("../db/config-queries.js", () => ({
   countDispatchRuns: countDispatchRunsMock,
   getStatusCounts: getStatusCountsMock,
   getDistinctRunProjectKeys: getDistinctRunProjectKeysMock,
+  getRunHistoryForTickets: getRunHistoryForTicketsMock,
   listProjectConfigs: listProjectConfigsMock,
   DEFAULT_DASHBOARD_PAGE_SIZE: 50,
 }));
@@ -39,6 +41,7 @@ describe("dashboardRouter", () => {
     countDispatchRunsMock.mockResolvedValue(0);
     getStatusCountsMock.mockResolvedValue([]);
     getDistinctRunProjectKeysMock.mockResolvedValue([]);
+    getRunHistoryForTicketsMock.mockResolvedValue([]);
     listProjectConfigsMock.mockResolvedValue([]);
     getAllDispatchRunsMock.mockResolvedValue([]);
     annotateRunsWithProdDeploymentStatusMock.mockImplementation(async (runs: unknown[]) =>
@@ -698,7 +701,7 @@ describe("dashboardRouter", () => {
     expect(html).toContain('aria-label="Open actions for HYDI&#39;&lt;img&gt;"');
     expect(html).toContain('aria-label="Show error for HYDI&#39;&lt;img&gt;"');
     expect(html).toContain(
-      "data-confirm-message=\"Force delete HYDI&#39;&lt;img&gt;? This skips the open-PR safety check and only removes the run from the dashboard.\""
+      "data-confirm-message=\"Force delete HYDI&#39;&lt;img&gt;? This skips the open-PR safety check and removes this ticket entry (and run history) from the dashboard.\""
     );
     expect(html).toContain('action="/dashboard/HYDI%27%3Cimg%3E/delete"');
     expect(html).toContain("<code>agent/HYDI&#39;&lt;img&gt;</code>");
@@ -744,7 +747,7 @@ describe("dashboardRouter", () => {
     const html = await res.text();
 
     expect(res.status).toBe(200);
-    expect(html).toContain('href="https://oz.warp.dev/runs/abc?a=1&amp;b=2" target="_blank">Open</a>');
+    expect(html).toContain('href=\"https://oz.warp.dev/runs/abc?a=1&amp;b=2\" target=\"_blank\">Session</a>');
     expect(html).toContain(
       'href="https://github.com/org/repo/pull/98?a=1&amp;b=2" target="_blank">PR #98</a>'
     );

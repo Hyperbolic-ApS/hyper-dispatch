@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 import { PGlite } from "@electric-sql/pglite";
 
 type QueriesModule = typeof import("./queries.js");
+type ConfigQueriesModule = typeof import("./config-queries.js");
 type ConnectionModule = {
   sql: {
     unsafe: (query: string) => Promise<unknown[]>;
@@ -84,11 +85,12 @@ function createPgliteSqlTag(db: PGliteLike) {
 
 describe.skipIf(!process.env.RUN_DB_TESTS)("queries integration", () => {
   let queries: QueriesModule;
+  let configQueries: ConfigQueriesModule;
   let connection: ConnectionModule;
 
   async function resetTables() {
     await connection.sql.unsafe(`
-      TRUNCATE TABLE dispatch_runs, project_configs, revision_events RESTART IDENTITY CASCADE;
+      TRUNCATE TABLE review_findings, dispatch_runs, dispatch_entries, project_configs, revision_events RESTART IDENTITY CASCADE;
     `);
 
     await connection.sql.unsafe(`
@@ -131,6 +133,7 @@ describe.skipIf(!process.env.RUN_DB_TESTS)("queries integration", () => {
 
     connection = await import("./connection.js");
     queries = await import("./queries.js");
+    configQueries = await import("./config-queries.js");
 
     const schemaSql = await readFile(new URL("./schema.sql", import.meta.url), "utf8");
     await connection.sql.unsafe(schemaSql);
@@ -165,21 +168,48 @@ describe.skipIf(!process.env.RUN_DB_TESTS)("queries integration", () => {
   });
 
   it("integration: pr_display_state check constraint rejects invalid values", async () => {
+    await queries.upsertDispatchRun({
+      ticketKey: "HYDI-203",
+      projectKey: "HYDI",
+      status: "queued",
+    });
+    const run203 = await queries.createRun({
+      ticketKey: "HYDI-203",
+      status: "queued",
+    });
     await expect(
       connection.sql.unsafe(`
-        INSERT INTO dispatch_runs (ticket_key, project_key, status, pr_display_state)
-        VALUES ('HYDI-203', 'HYDI', 'queued', 'invalid_state');
+        UPDATE dispatch_runs
+        SET pr_display_state = 'invalid_state'
+        WHERE id = '${run203.id}';
       `)
     ).rejects.toThrow();
+    await queries.upsertDispatchRun({
+      ticketKey: "HYDI-204",
+      projectKey: "HYDI",
+      status: "queued",
+    });
+    const run204 = await queries.createRun({
+      ticketKey: "HYDI-204",
+      status: "queued",
+    });
+    await queries.updateRunStatus("HYDI-204", {
+      run_record_id: run204.id,
+      pr_display_state: "open",
+    });
 
-    await connection.sql.unsafe(`
-      INSERT INTO dispatch_runs (ticket_key, project_key, status, pr_display_state)
-      VALUES ('HYDI-204', 'HYDI', 'queued', 'open');
-    `);
-    await connection.sql.unsafe(`
-      INSERT INTO dispatch_runs (ticket_key, project_key, status, pr_display_state)
-      VALUES ('HYDI-205', 'HYDI', 'queued', NULL);
-    `);
+    await queries.upsertDispatchRun({
+      ticketKey: "HYDI-205",
+      projectKey: "HYDI",
+      status: "queued",
+    });
+    const run205 = await queries.createRun({
+      ticketKey: "HYDI-205",
+      status: "queued",
+    });
+    const rows205 = await queries.getRunsForTicket("HYDI-205");
+    expect(rows205.map((row) => row.id)).toContain(run205.id);
+    expect(rows205.find((row) => row.id === run205.id)?.pr_display_state).toBeNull();
   });
 
   beforeEach(async () => {
@@ -318,33 +348,45 @@ describe.skipIf(!process.env.RUN_DB_TESTS)("queries integration", () => {
     expect(afterDelete).toBe(true);
   });
 
-  it("integration: claimRevisionSlot claims terminal runs, clears run_id, and releaseRevisionSlot restores prior status and run_id", async () => {
+  it("integration: concurrent claimRevisionSlot allows one winner and releaseRevisionSlot removes failed revision rows", async () => {
     await queries.upsertDispatchRun({
       ticketKey: "HYDI-701",
       projectKey: "HYDI",
       status: "succeeded",
     });
     await queries.updateRunStatus("HYDI-701", { run_id: "run-original-701" });
-
-    const firstClaim = await queries.claimRevisionSlot("HYDI-701");
-    const secondClaim = await queries.claimRevisionSlot("HYDI-701");
-    expect(firstClaim).toEqual({
+    const [claimA, claimB] = await Promise.all([
+      queries.claimRevisionSlot("HYDI-701"),
+      queries.claimRevisionSlot("HYDI-701"),
+    ]);
+    const claims = [claimA, claimB];
+    const winners = claims.filter((claim) => claim.claimed);
+    const losers = claims.filter((claim) => !claim.claimed);
+    expect(winners).toHaveLength(1);
+    expect(losers).toHaveLength(1);
+    expect(winners[0]).toMatchObject({
       claimed: true,
       previousStatus: "succeeded",
       previousRunId: "run-original-701",
+      runRecordId: expect.any(String),
     });
-    expect(secondClaim).toEqual({ claimed: false, previousStatus: null, previousRunId: null });
+    expect(losers[0]).toEqual({
+      claimed: false,
+      previousStatus: null,
+      previousRunId: null,
+      runRecordId: null,
+    });
+    const failedRevisionRunId = winners[0]!.runRecordId;
+    expect(failedRevisionRunId).toBeTruthy();
 
-    // run_id is cleared so the monitor's `!run.run_id` guard skips the row
-    // until spawnRevisionRun binds the new run id.
-    const running = await queries.getRunsByStatus("running");
-    const claimed = running.find((run) => run.ticket_key === "HYDI-701");
-    expect(claimed).toBeDefined();
-    expect(claimed?.run_id).toBeNull();
-
-    // Releasing restores BOTH the prior status and the original run_id so no
-    // orphaned row remains in 'running' with a NULL run_id.
-    await queries.releaseRevisionSlot("HYDI-701", firstClaim.previousStatus, firstClaim.previousRunId);
+    await queries.releaseRevisionSlot(
+      "HYDI-701",
+      winners[0]!.previousStatus,
+      winners[0]!.previousRunId,
+      failedRevisionRunId
+    );
+    const runningAfterRelease = await queries.getRunsByStatus("running");
+    expect(runningAfterRelease.find((run) => run.id === failedRevisionRunId)).toBeUndefined();
     const afterRelease = (await queries.getRunsByProject("HYDI")).find(
       (run) => run.ticket_key === "HYDI-701"
     );
@@ -352,10 +394,51 @@ describe.skipIf(!process.env.RUN_DB_TESTS)("queries integration", () => {
     expect(afterRelease?.run_id).toBe("run-original-701");
 
     const reclaim = await queries.claimRevisionSlot("HYDI-701");
-    expect(reclaim).toEqual({
+    expect(reclaim).toMatchObject({
       claimed: true,
       previousStatus: "succeeded",
       previousRunId: "run-original-701",
+      runRecordId: expect.any(String),
+    });
+  });
+
+  it("integration: recomputeEntryStatus between revision claim and spawn cannot reopen a second claim", async () => {
+    await queries.upsertDispatchRun({
+      ticketKey: "HYDI-702",
+      projectKey: "HYDI",
+      status: "succeeded",
+    });
+    const priorRun = await queries.createRun({
+      ticketKey: "HYDI-702",
+      runType: "implementation",
+      status: "succeeded",
+      runId: "run-original-702",
+      completedAt: new Date("2026-01-01T00:05:00.000Z"),
+    });
+    const claim = await queries.claimRevisionSlot("HYDI-702");
+    expect(claim).toMatchObject({
+      claimed: true,
+      previousStatus: "succeeded",
+      previousRunId: "run-original-702",
+      runRecordId: expect.any(String),
+    });
+
+    await queries.updateRunStatus("HYDI-702", {
+      run_record_id: priorRun.id,
+      status: "succeeded",
+      completed_at: new Date("2026-01-01T00:10:00.000Z"),
+    });
+    const projected = (await queries.getRunsByProject("HYDI")).find(
+      (run) => run.ticket_key === "HYDI-702"
+    );
+    expect(projected?.status).toBe("running");
+
+    const secondClaim = await queries.claimRevisionSlot("HYDI-702");
+    expect(secondClaim).toEqual({
+      claimed: false,
+      previousStatus: null,
+      previousRunId: null,
+      runRecordId: null,
     });
   });
 
@@ -374,7 +457,12 @@ describe.skipIf(!process.env.RUN_DB_TESTS)("queries integration", () => {
       blockedBy: ["HYDI-2"],
     });
 
-    const noPrev = { claimed: false, previousStatus: null, previousRunId: null };
+    const noPrev = {
+      claimed: false,
+      previousStatus: null,
+      previousRunId: null,
+      runRecordId: null,
+    };
     expect(await queries.claimRevisionSlot("HYDI-710")).toEqual(noPrev);
     expect(await queries.claimRevisionSlot("HYDI-711")).toEqual(noPrev);
     expect(await queries.claimRevisionSlot("HYDI-712")).toEqual(noPrev);
@@ -465,6 +553,10 @@ describe.skipIf(!process.env.RUN_DB_TESTS)("queries integration", () => {
       status: "blocked",
       blockedBy: ["HYDI-71"],
     });
+    await queries.createRun({
+      ticketKey: "HYDI-70",
+      status: "blocked",
+    });
 
     await connection.sql.unsafe(`
       UPDATE dispatch_runs
@@ -489,12 +581,21 @@ describe.skipIf(!process.env.RUN_DB_TESTS)("queries integration", () => {
     const clearedBlockedBy = await queries.updateRunStatus("HYDI-70", {
       blocked_by: null,
     });
-    expect(clearedBlockedBy?.blocked_by).toBeNull();
+    expect(clearedBlockedBy?.blocked_by).toEqual(["HYDI-71"]);
+    const reloadedAfterClear = await queries.getRunsByProject("HYDI");
+    expect(reloadedAfterClear.find((run) => run.ticket_key === "HYDI-70")?.blocked_by).toBeNull();
 
     const nullPrUrlAttempt = await queries.updateRunStatus("HYDI-70", {
       pr_url: null,
     });
     expect(nullPrUrlAttempt?.pr_url).toBe("https://github.com/hyperbolic-co/hyper-dispatch/pull/70");
+    expect(nullPrUrlAttempt?.model).toBe("sonnet");
+    const nullModelAndSessionLinkAttempt = await queries.updateRunStatus("HYDI-70", {
+      model: null,
+      session_link: null,
+    });
+    expect(nullModelAndSessionLinkAttempt?.model).toBe("sonnet");
+    expect(nullModelAndSessionLinkAttempt?.session_link).toBeNull();
 
     const updatedPrDisplayState = await queries.updateRunStatus("HYDI-70", {
       pr_display_state: "merged",
@@ -505,6 +606,352 @@ describe.skipIf(!process.env.RUN_DB_TESTS)("queries integration", () => {
       status: "succeeded",
     });
     expect(preservePrDisplayState?.pr_display_state).toBe("merged");
+  });
+
+  it("integration: latest ticket projection keeps PR metadata when a later revision run has no PR artifact", async () => {
+    await queries.upsertDispatchRun({
+      ticketKey: "HYDI-900",
+      projectKey: "HYDI",
+      summary: "Preserve PR metadata after revision",
+      status: "queued",
+    });
+    const implementationRun = await queries.createRun({
+      ticketKey: "HYDI-900",
+      runType: "implementation",
+      status: "running",
+      runId: "run-900-impl",
+      spawnedAt: new Date("2026-01-01T10:00:00.000Z"),
+    });
+    await queries.updateRunStatus("HYDI-900", {
+      run_record_id: implementationRun.id,
+      status: "succeeded",
+      completed_at: new Date("2026-01-01T10:05:00.000Z"),
+      pr_url: "https://github.com/hyperbolic-co/hyper-dispatch/pull/900",
+      pr_display_state: "open",
+      pr_has_conflicts: false,
+    });
+
+    const revisionRun = await queries.createRun({
+      ticketKey: "HYDI-900",
+      runType: "revision",
+      status: "running",
+      runId: "run-900-rev",
+      spawnedAt: new Date("2026-01-01T11:00:00.000Z"),
+    });
+    await queries.updateRunStatus("HYDI-900", {
+      run_record_id: revisionRun.id,
+      status: "succeeded",
+      completed_at: new Date("2026-01-01T11:03:00.000Z"),
+      pr_url: null,
+      pr_display_state: null,
+      pr_has_conflicts: null,
+    });
+
+    const page = await configQueries.getDispatchRunsPage({}, 20, 0);
+    const projected = page.find((run) => run.ticket_key === "HYDI-900");
+    expect(projected).toBeDefined();
+    expect(projected?.run_type).toBe("revision");
+    expect(projected?.run_id).toBe("run-900-rev");
+    expect(projected?.status).toBe("succeeded");
+    expect(projected?.pr_url).toBe("https://github.com/hyperbolic-co/hyper-dispatch/pull/900");
+    expect(projected?.pr_display_state).toBe("open");
+    expect(projected?.pr_has_conflicts).toBe(false);
+  });
+  it("integration: createRun inherits the latest known PR metadata when the newest row has null PR fields", async () => {
+    await queries.upsertDispatchRun({
+      ticketKey: "HYDI-901",
+      projectKey: "HYDI",
+      status: "queued",
+    });
+    const initialRun = await queries.createRun({
+      ticketKey: "HYDI-901",
+      runType: "implementation",
+      status: "succeeded",
+      runId: "run-901-impl",
+      completedAt: new Date("2026-01-01T09:00:00.000Z"),
+    });
+    await queries.updateRunStatus("HYDI-901", {
+      run_record_id: initialRun.id,
+      pr_url: "https://github.com/hyperbolic-co/hyper-dispatch/pull/901",
+      pr_display_state: "open",
+      pr_has_conflicts: false,
+      pr_review_running: true,
+      pr_revision_running: false,
+    });
+    const nullMetadataRun = await queries.createRun({
+      ticketKey: "HYDI-901",
+      runType: "revision",
+      status: "failed",
+      runId: "run-901-null",
+      completedAt: new Date("2026-01-01T09:30:00.000Z"),
+    });
+    await connection.sql.unsafe(`
+      UPDATE dispatch_runs
+      SET
+        pr_url = NULL,
+        pr_has_conflicts = NULL,
+        pr_display_state = NULL,
+        pr_review_running = NULL,
+        pr_revision_running = NULL
+      WHERE id = '${nullMetadataRun.id}';
+    `);
+
+    const followUpRun = await queries.createRun({
+      ticketKey: "HYDI-901",
+      runType: "revision",
+      status: "running",
+      runId: "run-901-recover",
+      spawnedAt: new Date("2026-01-01T10:00:00.000Z"),
+    });
+
+    expect(followUpRun.pr_url).toBe("https://github.com/hyperbolic-co/hyper-dispatch/pull/901");
+    expect(followUpRun.pr_display_state).toBe("open");
+    expect(followUpRun.pr_has_conflicts).toBe(false);
+    expect(followUpRun.pr_review_running).toBe(true);
+    expect(followUpRun.pr_revision_running).toBe(false);
+  });
+
+  it("integration: claimRevisionSlot seeds revision rows from the latest known PR metadata when newest row is null", async () => {
+    await queries.upsertDispatchRun({
+      ticketKey: "HYDI-902",
+      projectKey: "HYDI",
+      status: "succeeded",
+    });
+    const implementationRun = await queries.createRun({
+      ticketKey: "HYDI-902",
+      runType: "implementation",
+      status: "succeeded",
+      runId: "run-902-impl",
+      completedAt: new Date("2026-01-01T10:00:00.000Z"),
+    });
+    await queries.updateRunStatus("HYDI-902", {
+      run_record_id: implementationRun.id,
+      pr_url: "https://github.com/hyperbolic-co/hyper-dispatch/pull/902",
+      pr_display_state: "open",
+      pr_has_conflicts: false,
+      pr_review_running: true,
+      pr_revision_running: false,
+    });
+    const nullMetadataRun = await queries.createRun({
+      ticketKey: "HYDI-902",
+      runType: "revision",
+      status: "failed",
+      runId: "run-902-null",
+      completedAt: new Date("2026-01-01T10:30:00.000Z"),
+    });
+    await connection.sql.unsafe(`
+      UPDATE dispatch_runs
+      SET
+        pr_url = NULL,
+        pr_has_conflicts = NULL,
+        pr_display_state = NULL,
+        pr_review_running = NULL,
+        pr_revision_running = NULL
+      WHERE id = '${nullMetadataRun.id}';
+    `);
+
+    const claim = await queries.claimRevisionSlot("HYDI-902");
+    expect(claim).toMatchObject({
+      claimed: true,
+      previousStatus: "failed",
+      previousRunId: "run-902-null",
+      runRecordId: expect.any(String),
+    });
+
+    const rows = await queries.getRunsForTicket("HYDI-902");
+    const insertedRevision = rows.find((row) => row.id === claim.runRecordId);
+    expect(insertedRevision).toBeDefined();
+    expect(insertedRevision?.run_type).toBe("revision");
+    expect(insertedRevision?.status).toBe("running");
+    expect(insertedRevision?.pr_url).toBe(
+      "https://github.com/hyperbolic-co/hyper-dispatch/pull/902"
+    );
+    expect(insertedRevision?.pr_display_state).toBe("open");
+    expect(insertedRevision?.pr_has_conflicts).toBe(false);
+    expect(insertedRevision?.pr_review_running).toBe(true);
+    expect(insertedRevision?.pr_revision_running).toBe(false);
+  });
+
+  it("integration: getRunHistoryForTickets caps history per ticket", async () => {
+    await queries.upsertDispatchRun({
+      ticketKey: "HYDI-950",
+      projectKey: "HYDI",
+      status: "queued",
+    });
+    await queries.upsertDispatchRun({
+      ticketKey: "HYDI-951",
+      projectKey: "HYDI",
+      status: "queued",
+    });
+    for (let i = 0; i < 30; i++) {
+      await queries.createRun({
+        ticketKey: "HYDI-950",
+        runType: i % 2 === 0 ? "implementation" : "revision",
+        status: "succeeded",
+        runId: `run-950-${i}`,
+      });
+    }
+    for (let i = 0; i < 8; i++) {
+      await queries.createRun({
+        ticketKey: "HYDI-951",
+        runType: "implementation",
+        status: "succeeded",
+        runId: `run-951-${i}`,
+      });
+    }
+
+    const customCap = await configQueries.getRunHistoryForTickets(
+      ["HYDI-950", "HYDI-951"],
+      10
+    );
+    expect(customCap.filter((run) => run.ticket_key === "HYDI-950")).toHaveLength(10);
+    expect(customCap.filter((run) => run.ticket_key === "HYDI-951")).toHaveLength(8);
+
+    const defaultCap = await configQueries.getRunHistoryForTickets(["HYDI-950"]);
+    expect(defaultCap).toHaveLength(25);
+  });
+
+  it("integration: updateRunStatus fallback creates a run record and preserves metadata when no run row exists", async () => {
+    await queries.upsertDispatchRun({
+      ticketKey: "HYDI-72",
+      projectKey: "HYDI",
+      status: "queued",
+    });
+
+    const fallback = await queries.updateRunStatus("HYDI-72", {
+      run_type: "revision",
+      status: "failed",
+      error: "spawn failed before run binding",
+      session_link: "https://warp.dev/runs/fallback-72",
+      pr_url: "https://github.com/hyperbolic-co/hyper-dispatch/pull/72",
+    });
+    expect(fallback?.run_type).toBe("revision");
+    expect(fallback?.status).toBe("failed");
+    expect(fallback?.error).toBe("spawn failed before run binding");
+    expect(fallback?.session_link).toBe("https://warp.dev/runs/fallback-72");
+    expect(fallback?.pr_url).toBe("https://github.com/hyperbolic-co/hyper-dispatch/pull/72");
+
+    const failedRuns = await queries.getRunsByStatus("failed");
+    const persisted = failedRuns.find((run) => run.ticket_key === "HYDI-72");
+    expect(persisted).toBeDefined();
+    expect(persisted?.run_type).toBe("revision");
+    expect(persisted?.error).toBe("spawn failed before run binding");
+    expect(persisted?.pr_url).toBe("https://github.com/hyperbolic-co/hyper-dispatch/pull/72");
+  });
+
+  it("integration: updateRunStatus fallback inherits latest known PR metadata when stale run_record_id is provided and PR fields are omitted", async () => {
+    await queries.upsertDispatchRun({
+      ticketKey: "HYDI-74",
+      projectKey: "HYDI",
+      status: "succeeded",
+    });
+    const implementationRun = await queries.createRun({
+      ticketKey: "HYDI-74",
+      runType: "implementation",
+      status: "succeeded",
+      runId: "run-74-impl",
+      completedAt: new Date("2026-01-01T10:00:00.000Z"),
+    });
+    await queries.updateRunStatus("HYDI-74", {
+      run_record_id: implementationRun.id,
+      pr_url: "https://github.com/hyperbolic-co/hyper-dispatch/pull/74",
+      pr_display_state: "open",
+      pr_has_conflicts: false,
+      pr_review_running: true,
+      pr_revision_running: false,
+    });
+    const nullMetadataRun = await queries.createRun({
+      ticketKey: "HYDI-74",
+      runType: "revision",
+      status: "failed",
+      runId: "run-74-null",
+      completedAt: new Date("2026-01-01T10:30:00.000Z"),
+    });
+    await connection.sql.unsafe(`
+      UPDATE dispatch_runs
+      SET
+        pr_url = NULL,
+        pr_has_conflicts = NULL,
+        pr_display_state = NULL,
+        pr_review_running = NULL,
+        pr_revision_running = NULL
+      WHERE id = '${nullMetadataRun.id}';
+    `);
+
+    const fallback = await queries.updateRunStatus("HYDI-74", {
+      run_record_id: "11111111-2222-4333-8444-555555555555",
+      run_type: "revision",
+      status: "failed",
+      error: "stale run_record_id",
+    });
+    expect(fallback).not.toBeNull();
+    expect(fallback?.run_type).toBe("revision");
+    expect(fallback?.status).toBe("failed");
+    expect(fallback?.error).toBe("stale run_record_id");
+    expect(fallback?.pr_url).toBe("https://github.com/hyperbolic-co/hyper-dispatch/pull/74");
+    expect(fallback?.pr_display_state).toBe("open");
+    expect(fallback?.pr_has_conflicts).toBe(false);
+    expect(fallback?.pr_review_running).toBe(true);
+    expect(fallback?.pr_revision_running).toBe(false);
+  });
+
+  it("integration: updateRunStatus does not fabricate a run when explicit run_record_id is missing", async () => {
+    await queries.upsertDispatchRun({
+      ticketKey: "HYDI-73",
+      projectKey: "HYDI",
+      status: "queued",
+    });
+    const before = await queries.getRunsForTicket("HYDI-73");
+    expect(before).toHaveLength(0);
+
+    const result = await queries.updateRunStatus("HYDI-73", {
+      run_record_id: "11111111-2222-4333-8444-555555555555",
+      run_type: "revision",
+      status: "failed",
+      error: "missing run record",
+    });
+    expect(result).toBeNull();
+
+    const after = await queries.getRunsForTicket("HYDI-73");
+    expect(after).toHaveLength(0);
+    const projected = (await queries.getRunsByProject("HYDI")).find(
+      (run) => run.ticket_key === "HYDI-73"
+    );
+    expect(projected?.status).toBe("queued");
+  });
+
+  it("integration: getRevisionState reflects budget defaults and derives round from revision-run count", async () => {
+    await queries.upsertDispatchRun({
+      ticketKey: "HYDI-9901",
+      projectKey: "HYDI",
+      status: "queued",
+    });
+
+    const before = await (queries as any).getRevisionState("HYDI-9901");
+    expect(before).not.toBeNull();
+    expect(before).toMatchObject({ round: 0, budget: 2, needsHuman: false, reviewTier: null });
+
+    await queries.createRun({
+      ticketKey: "HYDI-9901",
+      runType: "revision",
+      status: "running",
+    });
+
+    const after = await (queries as any).getRevisionState("HYDI-9901");
+    expect(after?.round).toBe(1);
+  });
+
+  it("integration: upsertFindings detects repeated findings across rounds", async () => {
+    await queries.upsertDispatchRun({
+      ticketKey: "HYDI-9902",
+      projectKey: "HYDI",
+      status: "queued",
+    });
+
+    const f = { key: "k1", severity: "Major", title: "Fix the thing", path: "src/a.ts" };
+    await (queries as any).upsertFindings("https://github.com/test/repo/pull/1", "HYDI-9902", 1, [f]);
+    const result = await (queries as any).upsertFindings("https://github.com/test/repo/pull/1", "HYDI-9902", 2, [f]);
+    expect(result.repeated).toEqual(["k1"]);
   });
 
   it("integration: getRunsBlockedBy returns only runs containing the blocker key", async () => {
@@ -530,10 +977,42 @@ describe.skipIf(!process.env.RUN_DB_TESTS)("queries integration", () => {
     expect(blocked.map((run) => run.ticket_key)).toEqual(["HYDI-80"]);
   });
 
+  it("integration: deleteRun cascades to review_findings and does not throw FK violation", async () => {
+    const ticketKey = "HYDI-9910";
+    const prUrl = "https://github.com/hyperbolic-co/hyper-dispatch/pull/9910";
+
+    await queries.upsertDispatchRun({
+      ticketKey,
+      projectKey: "HYDI",
+      status: "succeeded",
+    });
+
+    await (queries as any).upsertFindings(prUrl, ticketKey, 1, [
+      { key: "fk-cascade-finding", severity: "Major", title: "Must cascade", path: "src/x.ts" },
+    ]);
+
+    // Confirm the finding was inserted before deletion
+    const before = await (queries as any).getOpenFindings(prUrl);
+    expect(before).toHaveLength(1);
+
+    // deleteRun deletes from dispatch_entries; without ON DELETE CASCADE this throws a FK violation
+    await expect(queries.deleteRun(ticketKey)).resolves.toBeUndefined();
+
+    // The CASCADE should have removed the review_findings row
+    const after = await connection.sql.unsafe(
+      `SELECT * FROM review_findings WHERE pr_url = '${prUrl}'`
+    );
+    expect(after).toHaveLength(0);
+  });
+
   it("integration: getActiveRunCount counts only running runs", async () => {
     await queries.upsertDispatchRun({
       ticketKey: "HYDI-90",
       projectKey: "HYDI",
+      status: "running",
+    });
+    await queries.createRun({
+      ticketKey: "HYDI-90",
       status: "running",
     });
     await queries.upsertDispatchRun({
@@ -541,9 +1020,17 @@ describe.skipIf(!process.env.RUN_DB_TESTS)("queries integration", () => {
       projectKey: "HYDI",
       status: "queued",
     });
+    await queries.createRun({
+      ticketKey: "HYDI-91",
+      status: "queued",
+    });
     await queries.upsertDispatchRun({
       ticketKey: "HYDI-92",
       projectKey: "HYDI",
+      status: "running",
+    });
+    await queries.createRun({
+      ticketKey: "HYDI-92",
       status: "running",
     });
 
@@ -587,11 +1074,19 @@ describe.skipIf(!process.env.RUN_DB_TESTS)("queries integration", () => {
       status: "queued",
       priority: 1,
     });
+    await queries.createRun({
+      ticketKey: "HYDI-100",
+      status: "queued",
+    });
     await queries.upsertDispatchRun({
       ticketKey: "HYDI-101",
       projectKey: "HYDI",
       status: "queued",
       priority: 5,
+    });
+    await queries.createRun({
+      ticketKey: "HYDI-101",
+      status: "queued",
     });
     await queries.upsertDispatchRun({
       ticketKey: "HYDI-102",
@@ -599,10 +1094,14 @@ describe.skipIf(!process.env.RUN_DB_TESTS)("queries integration", () => {
       status: "running",
       priority: 0,
     });
+    await queries.createRun({
+      ticketKey: "HYDI-102",
+      status: "running",
+    });
 
     const queued = await queries.getRunsByStatus("queued");
     const byProject = await queries.getRunsByProject("HYDI");
-    const allRuns = await queries.getAllRuns();
+    const allRuns = await configQueries.getAllDispatchRuns();
 
     expect(queued.map((run) => run.ticket_key)).toEqual(["HYDI-101", "HYDI-100"]);
     expect(byProject).toHaveLength(3);
