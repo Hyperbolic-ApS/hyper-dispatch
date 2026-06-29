@@ -5,25 +5,26 @@ skill, the dispatch reviser prompt (`buildPrompt`), and the dispatch harness
 (`review-gate.ts`). Changing any rule here requires updating all three.
 
 ## Severity
-`Blocking` > `Major` > `Minor` > `Nit`.
-- **Actionable** = `Blocking` or `Major`. Only these may carry action-item
-  markers and only these can trigger an auto-revision.
+`Critical` > `Important` > `Minor` > `Nit` (repo vocabulary).
+`Blocking` / `Major` are accepted synonyms for `Critical` / `Important` respectively.
+- **Actionable** = `Critical` or `Important` (synonyms: `Blocking`, `Major`). Only these
+  may carry action-item markers and only these can trigger an auto-revision.
 - `Minor` / `Nit` are advisory-only: list them under a non-blocking heading,
   NEVER with an action-item marker.
 
 ## Action-item marker format (machine-readable, one per actionable finding)
-`<!-- finding key="<sha1>" severity="Major|Blocking" path="<repo/rel/path>" -->`
+`<!-- finding key="<sha1>" severity="Critical|Important" path="<repo/rel/path>" -->`
 followed by a human-readable title line. The reviewer computes:
 `key = sha1(lower(path) + ":" + slug(ruleOrTitle))`.
 Stable across rounds — do NOT renumber. A finding that persists keeps its key.
 
-## Verdict (GitHub review state)
-- `APPROVED` — zero actionable findings remain. The reviewer MUST approve here;
+## Verdict (GitHub review event)
+- `APPROVE` — zero actionable findings remain. The reviewer MUST approve here;
   remaining `Minor`/`Nit` items do NOT justify withholding approval.
-- `CHANGES_REQUESTED` — ≥1 actionable finding.
-- `COMMENTED` — advisory only (never triggers auto-revision).
+- `REQUEST_CHANGES` — ≥1 actionable finding.
+- `COMMENT` — advisory only (never triggers auto-revision).
 Verdict bodies are THIN: the verdict line + a link to the sticky ledger comment.
-Superseded `CHANGES_REQUESTED` reviews are dismissed by the harness, not edited.
+Superseded `REQUEST_CHANGES` reviews are dismissed by the harness, not edited.
 Inline findings are resolved (reply + resolve thread) when fixed, never reposted.
 
 ## YAGNI / scope (reviewer AND reviser)

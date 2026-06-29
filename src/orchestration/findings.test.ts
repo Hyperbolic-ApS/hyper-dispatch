@@ -18,6 +18,23 @@ describe("parseFindings", () => {
     expect(actionableFindings(parseFindings([body]))).toHaveLength(0);
   });
 
+  it("treats Critical severity as actionable", () => {
+    const body = `<!-- finding key="k-crit" severity="Critical" path="src/a.ts" -->\nMust fix this`;
+    expect(actionableFindings(parseFindings([body]))).toHaveLength(1);
+  });
+
+  it("treats Important severity as actionable", () => {
+    const body = `<!-- finding key="k-imp" severity="Important" path="src/b.ts" -->\nShould fix this`;
+    expect(actionableFindings(parseFindings([body]))).toHaveLength(1);
+  });
+
+  it("still treats Major and Blocking as actionable", () => {
+    const major = `<!-- finding key="k-maj" severity="Major" path="src/c.ts" -->\nMajor issue`;
+    const blocking = `<!-- finding key="k-blk" severity="Blocking" path="src/d.ts" -->\nBlocking issue`;
+    expect(actionableFindings(parseFindings([major]))).toHaveLength(1);
+    expect(actionableFindings(parseFindings([blocking]))).toHaveLength(1);
+  });
+
   // Regression: a global regex's lastIndex must not leak between inputs.
   //
   // The naive implementation gated the legacy fallback with a stateful

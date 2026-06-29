@@ -39,6 +39,8 @@ export function parseFindings(texts: string[]): ParsedFinding[] {
 
 export function actionableFindings(f: ParsedFinding[]): ParsedFinding[] {
   return f.filter(
-    (x) => x.severity === undefined || /^(major|blocking)$/i.test(x.severity),
+    (x) =>
+      x.severity === undefined ||
+      /^(critical|important|major|blocking)$/i.test(x.severity),
   );
 }
