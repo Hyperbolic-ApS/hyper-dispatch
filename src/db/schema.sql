@@ -22,15 +22,29 @@ CREATE TABLE IF NOT EXISTS project_configs (
   updated_at     TIMESTAMPTZ DEFAULT NOW()
 );
 
-CREATE TABLE IF NOT EXISTS dispatch_runs (
+CREATE TABLE IF NOT EXISTS dispatch_entries (
   ticket_key     TEXT PRIMARY KEY,
   project_key    TEXT NOT NULL REFERENCES project_configs(project_key),
   summary        TEXT,
-  run_id         TEXT,
   status         TEXT NOT NULL CHECK (status IN ('blocked', 'queued', 'running', 'succeeded', 'failed', 'stale', 'blocked_cycle')),
   blocked_by     TEXT[],
-  model          TEXT,
   priority       INTEGER DEFAULT 0,
+  ticket_status_name TEXT,
+  ticket_status_category TEXT,
+  revision_budget INTEGER NOT NULL DEFAULT 2,
+  needs_human    BOOLEAN NOT NULL DEFAULT FALSE,
+  review_tier    TEXT,
+  created_at     TIMESTAMPTZ DEFAULT NOW(),
+  updated_at     TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS dispatch_runs (
+  id             UUID PRIMARY KEY,
+  ticket_key     TEXT NOT NULL REFERENCES dispatch_entries(ticket_key) ON DELETE CASCADE,
+  run_type       TEXT NOT NULL DEFAULT 'implementation',
+  run_id         TEXT,
+  status         TEXT NOT NULL CHECK (status IN ('blocked', 'queued', 'running', 'succeeded', 'failed', 'stale', 'blocked_cycle')),
+  model          TEXT,
   spawned_at     TIMESTAMPTZ,
   completed_at   TIMESTAMPTZ,
   pr_url         TEXT,
@@ -40,16 +54,15 @@ CREATE TABLE IF NOT EXISTS dispatch_runs (
   pr_revision_running BOOLEAN,
   session_link   TEXT,
   error          TEXT,
-  ticket_status_name TEXT,
-  ticket_status_category TEXT,
   created_at     TIMESTAMPTZ DEFAULT NOW(),
   updated_at     TIMESTAMPTZ DEFAULT NOW()
 );
 
+CREATE INDEX IF NOT EXISTS idx_dispatch_entries_status ON dispatch_entries(status);
+CREATE INDEX IF NOT EXISTS idx_dispatch_entries_project ON dispatch_entries(project_key);
+CREATE INDEX IF NOT EXISTS idx_dispatch_entries_created_at ON dispatch_entries(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_dispatch_runs_ticket ON dispatch_runs(ticket_key);
 CREATE INDEX IF NOT EXISTS idx_dispatch_runs_status ON dispatch_runs(status);
-CREATE INDEX IF NOT EXISTS idx_dispatch_runs_project ON dispatch_runs(project_key);
--- Supports the dashboard/API ordering (ORDER BY created_at DESC) so large tables
--- are not fully sorted on every read.
 CREATE INDEX IF NOT EXISTS idx_dispatch_runs_created_at ON dispatch_runs(created_at DESC);
 
 -- Idempotency ledger for PR revision webhook events. Each row records a single
@@ -66,3 +79,22 @@ CREATE INDEX IF NOT EXISTS idx_revision_events_ticket ON revision_events(ticket_
 -- Supports efficient range deletes when purging old rows (no automatic TTL; see
 -- docs/database.md — operators periodically prune rows older than a retention window).
 CREATE INDEX IF NOT EXISTS idx_revision_events_created_at ON revision_events(created_at);
+
+-- Content-addressed finding ledger. Each row tracks one reviewer finding across rounds.
+-- Primary key is (pr_url, finding_key) — stable across rounds (finding_key is sha1-based).
+CREATE TABLE IF NOT EXISTS review_findings (
+  finding_key      TEXT NOT NULL,
+  ticket_key       TEXT NOT NULL REFERENCES dispatch_entries(ticket_key) ON DELETE CASCADE,
+  pr_url           TEXT NOT NULL,
+  severity         TEXT,
+  title            TEXT,
+  status           TEXT NOT NULL DEFAULT 'open',
+  disposition      TEXT,
+  first_seen_round INTEGER NOT NULL,
+  last_seen_round  INTEGER NOT NULL,
+  updated_at       TIMESTAMPTZ DEFAULT NOW(),
+  PRIMARY KEY (pr_url, finding_key)
+);
+
+CREATE INDEX IF NOT EXISTS idx_review_findings_ticket ON review_findings(ticket_key);
+CREATE INDEX IF NOT EXISTS idx_review_findings_pr_url ON review_findings(pr_url);

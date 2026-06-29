@@ -75,11 +75,7 @@ Receives signed GitHub webhook payloads for PR state updates and revision trigge
 
 ### `GET /api/status`
 
-Returns all tracked dispatch runs as JSON, plus status counts.
-
-**Query parameters:**
-- `project` (optional) — filter by project key.
-- `status` (optional) — filter by run status (`blocked`, `queued`, `running`, `succeeded`, `failed`, `stale`).
+Returns all tracked ticket entries as JSON, each enriched with latest-run fields and recent run history (newest first, currently capped to 25 rows per ticket), plus status counts.
 
 **Response:**
 ```json
@@ -94,7 +90,27 @@ Returns all tracked dispatch runs as JSON, plus status counts.
       "pr_has_conflicts": null,
       "deployed_to_prod": false,
       "session_link": "https://...",
-      "spawned_at": "2025-01-01T12:00:00Z"
+      "spawned_at": "2025-01-01T12:00:00Z",
+      "runs": [
+        {
+          "id": "2f0f13ab-0133-4756-b436-8de8f363cb36",
+          "ticket_key": "PROJ-123",
+          "run_type": "implementation",
+          "run_id": "abc-123",
+          "status": "succeeded",
+          "session_link": "https://...",
+          "created_at": "2025-01-01T12:00:00Z"
+        },
+        {
+          "id": "7e4cd151-c0f5-46f4-98f5-a2f5f507f5ad",
+          "ticket_key": "PROJ-123",
+          "run_type": "revision",
+          "run_id": "def-456",
+          "status": "running",
+          "session_link": "https://...",
+          "created_at": "2025-01-01T14:30:00Z"
+        }
+      ]
     }
   ],
   "counts": {
@@ -159,7 +175,7 @@ If required fields are missing (`project_key`, `jira_cloud_id`, `board_id`, `oz_
 Update an existing project configuration.
 
 ### `POST /config/:projectKey/delete`
-Delete a project configuration and its associated `dispatch_runs` history. Both deletions run in a single transaction, so a partial failure rolls back atomically (run history is never removed while the config row remains). Returns `404` (HTML) when the project does not exist; otherwise redirects (`302`) back to `/config`.
+Delete a project configuration and its associated `dispatch_entries` + `dispatch_runs` history. Both deletions run in a single transaction, so a partial failure rolls back atomically (history is never removed while the config row remains). Returns `404` (HTML) when the project does not exist; otherwise redirects (`302`) back to `/config`.
 
 ### `GET /config/:projectKey/validate`
 Run Jira board validation for a project. Returns pass/fail per check.

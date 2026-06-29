@@ -5,6 +5,7 @@ import {
   countDispatchRuns,
   getStatusCounts,
   getDistinctRunProjectKeys,
+  getRunHistoryForTickets,
   listProjectConfigs,
   DEFAULT_DASHBOARD_PAGE_SIZE,
   type DispatchRunFilter,
@@ -278,6 +279,17 @@ const CSS = `
   .pagination .disabled { padding: 6px 12px; border: 1px solid #e5e7eb; border-radius: 6px; color: #9ca3af; background: #f9fafb; }
   .page-info { font-weight: 500; }
   .agent-status-cell { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+  .run-history-trigger { position: relative; }
+  .run-history-popover { display: none; position: absolute; left: 0; top: calc(100% + 6px); min-width: 280px; max-width: 380px; background: #fff; border: 1px solid #d1d5db; border-radius: 8px; box-shadow: 0 8px 20px rgba(0,0,0,0.12); padding: 8px; z-index: 50; }
+  .run-history-trigger:hover .run-history-popover,
+  .run-history-trigger[data-open="true"] .run-history-popover { display: block; }
+  .run-history-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+  .run-history-item { display: flex; align-items: center; gap: 8px; }
+  .run-history-status-btn { border: 0; background: transparent; padding: 0; cursor: pointer; }
+  .run-history-status-btn:focus-visible { outline: 2px solid #111827; outline-offset: 2px; border-radius: 4px; }
+  .run-history-meta { color: #4b5563; font-size: 0.75rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .run-history-open { margin-left: auto; display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 22px; border: 1px solid #d1d5db; border-radius: 6px; color: #1f2937; font-size: 0.8rem; text-decoration: none; }
+  .run-history-open:hover { background: #f9fafb; text-decoration: none; }
   .error-token-wrap { position: relative; display: inline-flex; align-items: center; }
   .error-token { width: 16px; height: 16px; border: 0; border-radius: 999px; background: #dc2626; color: #fff; font-size: 0.68rem; font-weight: 700; line-height: 1; display: inline-flex; align-items: center; justify-content: center; cursor: pointer; padding: 0; }
   .error-token:focus-visible { outline: 2px solid #111827; outline-offset: 2px; }
@@ -477,6 +489,14 @@ function readDashboardQuery(
 interface DashboardView {
   query: DashboardQuery;
   runs: RunWithProdDeployment[];
+  runHistoryByTicket: Map<string, Array<{
+    id: string;
+    run_type: string;
+    run_id: string | null;
+    status: string;
+    session_link: string | null;
+    created_at: Date;
+  }>>;
   total: number;
   limit: number;
   counts: Record<string, number>;
@@ -516,6 +536,32 @@ async function loadDashboardView(query: DashboardQuery): Promise<DashboardView> 
   const runs: RunWithProdDeployment[] = showProdDeploymentColumn
     ? await annotateRunsWithProdDeploymentStatus(pageRuns)
     : pageRuns.map((run) => ({ ...run, deployed_to_prod: null }));
+  const runHistoryRows = await getRunHistoryForTickets(
+    runs.map((run) => run.ticket_key)
+  );
+  const runHistoryByTicket = new Map<
+    string,
+    Array<{
+      id: string;
+      run_type: string;
+      run_id: string | null;
+      status: string;
+      session_link: string | null;
+      created_at: Date;
+    }>
+  >();
+  for (const runHistory of runHistoryRows) {
+    const existing = runHistoryByTicket.get(runHistory.ticket_key) ?? [];
+    existing.push({
+      id: runHistory.id,
+      run_type: runHistory.run_type,
+      run_id: runHistory.run_id,
+      status: runHistory.status,
+      session_link: runHistory.session_link,
+      created_at: runHistory.created_at,
+    });
+    runHistoryByTicket.set(runHistory.ticket_key, existing);
+  }
 
   const projects = Array.from(
     new Set([
@@ -542,13 +588,13 @@ async function loadDashboardView(query: DashboardQuery): Promise<DashboardView> 
   // and persisted to dispatch_runs (pr_review_running / pr_revision_running), so
   // this render performs zero live GitHub calls regardless of how many PRs are on
   // the page.
-  return { query, runs, total, limit, counts, totalBlocked, projects };
+  return { query, runs, runHistoryByTicket, total, limit, counts, totalBlocked, projects };
 }
 
 // Renders the dynamic dashboard section (stats bar + table + pagination). Shared by
 // the full page and the /fragment endpoint so the client poll can swap it in place.
 function renderDashboardContent(view: DashboardView): string {
-  const { runs, counts, totalBlocked, total, limit } = view;
+  const { runs, runHistoryByTicket, counts, totalBlocked, total, limit } = view;
   const { hideDone, selectedProject, selectedStatus, page, deleteFailedKey } = view.query;
   const escapedSelectedProject = escapeHtml(selectedProject);
 
@@ -573,14 +619,34 @@ function renderDashboardContent(view: DashboardView): string {
     const escapedTicketUrl = escapeHtml(ticketUrl);
     const branchName = buildAgentBranchName(run.ticket_key, run.summary);
     const runtime = formatDuration(run.spawned_at, run.completed_at);
+    const runHistory = runHistoryByTicket.get(run.ticket_key) ?? [];
+    const runHistoryRows = runHistory.length === 0
+      ? `<li class="run-history-item"><span style="color:#6b7280">No runs yet</span></li>`
+      : runHistory.map((historyRun) => {
+          const safeHistorySessionLink =
+            historyRun.session_link && isSafeUrl(historyRun.session_link)
+              ? historyRun.session_link
+              : null;
+          const escapedHistorySessionLink = safeHistorySessionLink
+            ? escapeHtml(safeHistorySessionLink)
+            : null;
+          const openLink = escapedHistorySessionLink
+            ? `<a href="${escapedHistorySessionLink}" target="_blank" class="run-history-open" aria-label="Open run ${escapeHtml(historyRun.id)} in new tab">↗</a>`
+            : "";
+          return `<li class="run-history-item">
+            <button type="button" class="run-history-status-btn" data-run-history-pin data-ticket-key="${escapedTicketKey}" aria-label="Pin run ${escapeHtml(historyRun.id)}">${statusBadge(historyRun.status)}</button>
+            <span class="run-history-meta">${escapeHtml(historyRun.run_type)} · ${formatSpawnedAtDate(historyRun.created_at)}</span>
+            ${openLink}
+          </li>`;
+        }).join("");
+    const latestStatusBadge = runHistory.length > 0
+      ? statusBadge(runHistory[0]!.status)
+      : statusBadge(run.status);
     const safeSessionLink =
       run.session_link && isSafeUrl(run.session_link) ? run.session_link : null;
     const safePrUrl = run.pr_url && isSafeUrl(run.pr_url) ? run.pr_url : null;
     const escapedSessionLink = safeSessionLink ? escapeHtml(safeSessionLink) : null;
     const escapedPrUrl = safePrUrl ? escapeHtml(safePrUrl) : null;
-    const ozTaskLink = safeSessionLink
-      ? `<a href="${escapedSessionLink}" target="_blank">Open</a>`
-      : "-";
     const blockedByHtml =
       run.blocked_by && run.blocked_by.length > 0
         ? `<div class="blocked-by">Blocked by: ${run.blocked_by.map(escapeHtml).join(", ")}</div>`
@@ -614,7 +680,7 @@ function renderDashboardContent(view: DashboardView): string {
           ${selectedStatus ? `<input type="hidden" name="status" value="${escapeHtml(selectedStatus)}">` : ""}
           <button class="row-menu-action" type="submit" formaction="/dashboard/${encodedTicketKey}/resync" role="menuitem">Resync from Oz</button>
           <button class="row-menu-delete" type="submit" role="menuitem">Delete</button>
-          ${showForceDelete ? `<button class="row-menu-delete" type="submit" name="force" value="1" role="menuitem" data-confirm-message="Force delete ${escapedTicketKey}? This skips the open-PR safety check and only removes the run from the dashboard.">Force delete</button>` : ""}
+          ${showForceDelete ? `<button class="row-menu-delete" type="submit" name="force" value="1" role="menuitem" data-confirm-message="Force delete ${escapedTicketKey}? This skips the open-PR safety check and removes this ticket entry (and run history) from the dashboard.">Force delete</button>` : ""}
         </form>
       </div>
     </div>`;
@@ -631,7 +697,14 @@ function renderDashboardContent(view: DashboardView): string {
       <td>${escapedProjectKey}</td>
       <td>${run.summary ? escapeHtml(run.summary.slice(0, 80)) : "-"}</td>
       <td>${ticketStatusBadge(run.ticket_status_name, run.ticket_status_category)}</td>
-      <td><span class="agent-status-cell">${statusBadge(run.status)}${errorToken}</span></td>
+      <td>
+        <span class="agent-status-cell run-history-trigger" data-run-history-trigger>
+          ${latestStatusBadge}${errorToken}
+          <span class="run-history-popover" role="dialog" aria-label="Run history for ${escapedTicketKey}">
+            <ul class="run-history-list">${runHistoryRows}</ul>
+          </span>
+        </span>
+      </td>
       <td>${formatSpawnedAtDate(run.spawned_at)}</td>
       <td>${runtime}</td>
       <td>
@@ -640,7 +713,6 @@ function renderDashboardContent(view: DashboardView): string {
           <button class="copy-branch-btn" type="button" data-copy-branch="${escapeHtml(branchName)}" aria-label="Copy ${escapeHtml(branchName)} to clipboard"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="7" width="12" height="15" rx="2" ry="2"/><path d="M9 7V4a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v11a2 2 0 0 1-2 2h-4"/></svg></button>
         </span>
       </td>
-      <td>${ozTaskLink}</td>
       <td>${prStatusBadge(
         run.pr_has_conflicts,
         Boolean(run.pr_url),
@@ -682,7 +754,7 @@ function renderDashboardContent(view: DashboardView): string {
     </div>`
       : "";
 
-  const colspan = showProdDeploymentColumn ? 13 : 12;
+  const colspan = showProdDeploymentColumn ? 12 : 11;
   const tableBody =
     rows.length === 0
       ? `<tr><td colspan="${colspan}" style="text-align:center;color:#6b7280">${
@@ -706,7 +778,6 @@ function renderDashboardContent(view: DashboardView): string {
         <th>Spawned At</th>
         <th>Runtime</th>
         <th>Branch</th>
-        <th>Oz Task</th>
         <th>PR Status</th>
         ${showProdDeploymentColumn ? "<th>Prod Deployment (Coolify)</th>" : ""}
         <th>Links</th>
@@ -890,6 +961,25 @@ dashboardRouter.get("/", async (c) => {
     document.addEventListener("click", (event) => {
       const target = event.target instanceof HTMLElement ? event.target : null;
       if (!target) return;
+      const runHistoryPin = target.closest("[data-run-history-pin]");
+      if (runHistoryPin instanceof HTMLButtonElement) {
+        const trigger = runHistoryPin.closest("[data-run-history-trigger]");
+        if (!(trigger instanceof HTMLElement)) return;
+        const isOpen = trigger.getAttribute("data-open") === "true";
+        for (const openPopover of document.querySelectorAll("[data-run-history-trigger][data-open='true']")) {
+          if (!(openPopover instanceof HTMLElement)) continue;
+          openPopover.setAttribute("data-open", "false");
+        }
+        if (!isOpen) {
+          trigger.setAttribute("data-open", "true");
+        }
+        return;
+      }
+      for (const openPopover of document.querySelectorAll("[data-run-history-trigger][data-open='true']")) {
+        if (!(openPopover instanceof HTMLElement)) continue;
+        if (openPopover.contains(target)) continue;
+        openPopover.setAttribute("data-open", "false");
+      }
       const button = target.closest("[data-error-token-button]");
       if (button instanceof HTMLButtonElement) {
         const token = button.closest("[data-error-token]");

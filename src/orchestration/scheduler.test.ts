@@ -11,7 +11,7 @@ const {
   mockUpdateRunStatus,
   mockEnv,
   mockGetActiveRunCount,
-  mockGetRunsByStatus,
+  mockGetEntriesByStatus,
   mockListActiveProjectConfigs,
   mockGetRunsByProject,
   mockDeleteRun,
@@ -38,7 +38,7 @@ const {
     mockUpdateRunStatus: vi.fn(),
     mockEnv: { MAX_CONCURRENT_AGENTS: 4 },
     mockGetActiveRunCount: vi.fn(),
-    mockGetRunsByStatus: vi.fn(),
+    mockGetEntriesByStatus: vi.fn(),
     mockListActiveProjectConfigs: vi.fn(),
     mockGetRunsByProject: vi.fn(),
     mockDeleteRun: vi.fn(),
@@ -61,7 +61,7 @@ vi.mock("../db/queries.js", () => ({
   releaseSpawnClaim: mockReleaseSpawnClaim,
   updateRunStatus: mockUpdateRunStatus,
   getActiveRunCount: mockGetActiveRunCount,
-  getRunsByStatus: mockGetRunsByStatus,
+  getEntriesByStatus: mockGetEntriesByStatus,
   listActiveProjectConfigs: mockListActiveProjectConfigs,
   getRunsByProject: mockGetRunsByProject,
   deleteRun: mockDeleteRun,
@@ -93,7 +93,7 @@ describe("processQueue", () => {
     mockReleaseSpawnClaim.mockResolvedValue(undefined);
     mockUpdateRunStatus.mockResolvedValue(makeDispatchRun());
     mockGetActiveRunCount.mockResolvedValue(0);
-    mockGetRunsByStatus.mockResolvedValue([]);
+    mockGetEntriesByStatus.mockResolvedValue([]);
     mockListActiveProjectConfigs.mockResolvedValue([]);
     mockGetRunsByProject.mockResolvedValue([]);
     mockDeleteRun.mockResolvedValue(undefined);
@@ -118,7 +118,7 @@ describe("processQueue", () => {
   it("returns 0 when slots are available but no queued runs exist", async () => {
     mockEnv.MAX_CONCURRENT_AGENTS = 3;
     mockGetActiveRunCount.mockResolvedValue(1);
-    mockGetRunsByStatus.mockResolvedValue([]);
+    mockGetEntriesByStatus.mockResolvedValue([]);
 
     const spawned = await processQueue();
 
@@ -133,7 +133,7 @@ describe("processQueue", () => {
     mockListActiveProjectConfigs
       .mockResolvedValueOnce([])
       .mockResolvedValueOnce([project]);
-    mockGetRunsByStatus.mockResolvedValue([
+    mockGetEntriesByStatus.mockResolvedValue([
       makeDispatchRun({ ticket_key: "HYDI-1", project_key: "HYDI" }),
       makeDispatchRun({ ticket_key: "HYDI-2", project_key: "HYDI" }),
       makeDispatchRun({ ticket_key: "HYDI-3", project_key: "HYDI" }),
@@ -166,7 +166,7 @@ describe("processQueue", () => {
     mockListActiveProjectConfigs
       .mockResolvedValueOnce([])
       .mockResolvedValueOnce([project]);
-    mockGetRunsByStatus.mockResolvedValue([
+    mockGetEntriesByStatus.mockResolvedValue([
       makeDispatchRun({ ticket_key: "OPS-1", project_key: "OPS" }),
       makeDispatchRun({ ticket_key: "HYDI-2", project_key: "HYDI" }),
     ]);
@@ -192,7 +192,7 @@ describe("processQueue", () => {
     mockListActiveProjectConfigs
       .mockResolvedValueOnce([])
       .mockResolvedValueOnce([project]);
-    mockGetRunsByStatus.mockResolvedValue([
+    mockGetEntriesByStatus.mockResolvedValue([
       makeDispatchRun({ ticket_key: "OPS-1", project_key: "OPS" }),
       makeDispatchRun({ ticket_key: "HYDI-2", project_key: "HYDI" }),
     ]);
@@ -222,7 +222,7 @@ describe("processQueue", () => {
     mockListActiveProjectConfigs
       .mockResolvedValueOnce([])
       .mockResolvedValueOnce([project]);
-    mockGetRunsByStatus.mockResolvedValue([
+    mockGetEntriesByStatus.mockResolvedValue([
       makeDispatchRun({ ticket_key: "HYDI-1", project_key: "HYDI" }),
       makeDispatchRun({ ticket_key: "HYDI-2", project_key: "HYDI" }),
     ]);
@@ -249,7 +249,7 @@ describe("processQueue", () => {
     mockListActiveProjectConfigs
       .mockResolvedValueOnce([])
       .mockResolvedValueOnce([project]);
-    mockGetRunsByStatus.mockResolvedValue([
+    mockGetEntriesByStatus.mockResolvedValue([
       makeDispatchRun({ ticket_key: "HYDI-1", project_key: "HYDI" }),
     ]);
     mockSpawnAgent.mockRejectedValueOnce(new Error("post-run failure"));
@@ -271,7 +271,7 @@ describe("processQueue", () => {
     mockListActiveProjectConfigs
       .mockResolvedValueOnce([])
       .mockResolvedValueOnce([project]);
-    mockGetRunsByStatus.mockResolvedValue([
+    mockGetEntriesByStatus.mockResolvedValue([
       makeDispatchRun({ ticket_key: "HYDI-1", project_key: "HYDI" }),
       makeDispatchRun({ ticket_key: "HYDI-2", project_key: "HYDI" }),
     ]);
@@ -298,7 +298,7 @@ describe("processQueue", () => {
     mockListActiveProjectConfigs
       .mockResolvedValueOnce([])
       .mockResolvedValueOnce([project]);
-    mockGetRunsByStatus.mockResolvedValue([
+    mockGetEntriesByStatus.mockResolvedValue([
       makeDispatchRun({ ticket_key: "HYDI-1", project_key: "HYDI" }),
       makeDispatchRun({ ticket_key: "HYDI-2", project_key: "HYDI" }),
     ]);
@@ -321,7 +321,7 @@ describe("processQueue", () => {
     mockListActiveProjectConfigs
       .mockResolvedValueOnce([])
       .mockResolvedValueOnce([project]);
-    mockGetRunsByStatus.mockResolvedValue([
+    mockGetEntriesByStatus.mockResolvedValue([
       makeDispatchRun({ ticket_key: "HYDI-1", project_key: "HYDI" }),
       makeDispatchRun({ ticket_key: "HYDI-2", project_key: "HYDI" }),
     ]);
@@ -478,7 +478,7 @@ describe("startSchedulerLoop", () => {
     mockClaimRunForSpawn.mockResolvedValue(true);
     mockReleaseSpawnClaim.mockResolvedValue(undefined);
     mockGetActiveRunCount.mockResolvedValue(0);
-    mockGetRunsByStatus.mockResolvedValue([]);
+    mockGetEntriesByStatus.mockResolvedValue([]);
     mockListActiveProjectConfigs.mockResolvedValue([]);
     mockGetRunsByProject.mockResolvedValue([]);
     mockGetIssue.mockResolvedValue(makeJiraIssue());
