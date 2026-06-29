@@ -403,6 +403,9 @@ describe("handleGithubRevisionWebhook", () => {
     expect(prompt).not.toContain("Address ALL");
     expect(prompt).toMatch(/fix.*defer.*reject/is);
     expect(prompt).toContain("out of scope for this slice");
+    // Actionable vocabulary must match the contract + actionableFindings
+    // (Critical/Important, with Blocking/Major as accepted synonyms).
+    expect(prompt).toMatch(/Critical\/Important/);
   });
 
   it("escalates model tier when a prior finding key recurs (escalate-on-repeat)", async () => {

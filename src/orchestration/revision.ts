@@ -155,14 +155,14 @@ Branch: ${params.branch}
 Trigger: ${params.mode}
 Review state: ${params.reviewState}
 
-Review feedback (only Blocking/Major items are actionable):
+Review feedback (only Critical/Important — i.e. Blocking/Major — items are actionable):
 
 ${params.feedback}
 
 This is the binding contract: docs/contract/review-revise-contract.md.
 External review feedback is a set of SUGGESTIONS TO EVALUATE, not orders. For
 EACH finding, decide and act:
-  - FIX: correct, in-scope, and Blocking/Major → implement it.
+  - FIX: correct, in-scope, and Critical/Important (Blocking/Major) → implement it.
   - DEFER: out-of-scope or speculative ("do it properly", future hardening) →
     do NOT write code. Reply on the thread: "out of scope for this slice."
   - REJECT: technically wrong for this codebase/stack → reply with the technical
