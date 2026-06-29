@@ -11,6 +11,7 @@ const {
   releaseRevisionSlotMock,
   getRevisionStateMock,
   setNeedsHumanMock,
+  setReviewTierMock,
   upsertFindingsMock,
   getOpenFindingsMock,
   jiraGetIssueMock,
@@ -36,6 +37,7 @@ const {
   releaseRevisionSlotMock: vi.fn(),
   getRevisionStateMock: vi.fn(),
   setNeedsHumanMock: vi.fn(),
+  setReviewTierMock: vi.fn(),
   upsertFindingsMock: vi.fn(),
   getOpenFindingsMock: vi.fn(),
   jiraGetIssueMock: vi.fn(),
@@ -63,6 +65,7 @@ vi.mock("../db/queries.js", () => ({
   releaseRevisionSlot: releaseRevisionSlotMock,
   getRevisionState: getRevisionStateMock,
   setNeedsHuman: setNeedsHumanMock,
+  setReviewTier: setReviewTierMock,
   upsertFindings: upsertFindingsMock,
   getOpenFindings: getOpenFindingsMock,
 }));
@@ -129,6 +132,7 @@ describe("handleGithubRevisionWebhook", () => {
     releaseRevisionSlotMock.mockReset();
     getRevisionStateMock.mockReset();
     setNeedsHumanMock.mockReset();
+    setReviewTierMock.mockReset();
     upsertFindingsMock.mockReset();
     getOpenFindingsMock.mockReset();
     jiraGetIssueMock.mockReset();
@@ -184,6 +188,7 @@ describe("handleGithubRevisionWebhook", () => {
       reviewTier: null,
     });
     setNeedsHumanMock.mockResolvedValue(undefined);
+    setReviewTierMock.mockResolvedValue(undefined);
     upsertFindingsMock.mockResolvedValue({ repeated: [] });
     projectLedgerMock.mockResolvedValue(undefined);
     dismissSupersededReviewsMock.mockResolvedValue(undefined);
@@ -862,5 +867,45 @@ describe("handleGithubRevisionWebhook", () => {
       prUrl: "https://github.com/org/repo/pull/44",
     });
     expect(runMock).not.toHaveBeenCalled();
+  });
+
+  it("calls setReviewTier with 'auto' when pull_request_review payload has a review-tier:auto label", async () => {
+    getRunsByPrUrlMock.mockResolvedValue([
+      makeDispatchRun({
+        ticket_key: "HYDI-44",
+        project_key: "HYDI",
+        pr_url: "https://github.com/org/repo/pull/44",
+        pr_display_state: "open",
+      }),
+    ]);
+    octokitPaginateMock.mockResolvedValue([
+      {
+        path: "src/orchestration/revision.ts",
+        line: 10,
+        body: "**[REV-001] Fix the handler**",
+      },
+    ]);
+
+    const { handleGithubRevisionWebhook } = await import("./revision.js");
+    await handleGithubRevisionWebhook({
+      event: "pull_request_review",
+      payload: {
+        action: "submitted",
+        repository: { owner: { login: "org" }, name: "repo" },
+        pull_request: {
+          number: 44,
+          html_url: "https://github.com/org/repo/pull/44",
+          head: { ref: "agent/HYDI-44-pr-revision-webhook" },
+          labels: [{ name: "review-tier:auto" }, { name: "size/medium" }],
+        },
+        review: {
+          id: 1111,
+          state: "changes_requested",
+          body: "1. [REV-001] Fix the handler.",
+        },
+      },
+    });
+
+    expect(setReviewTierMock).toHaveBeenCalledWith("HYDI-44", "auto");
   });
 });

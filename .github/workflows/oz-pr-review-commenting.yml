@@ -39,10 +39,11 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           TIER: ${{ steps.tier.outputs.tier }}
+          MODEL: ${{ steps.tier.outputs.model }}
         run: |
           gh pr edit ${{ github.event.pull_request.number }} \
             --repo ${{ github.repository }} \
-            --add-label "review-tier:${TIER}" || true
+            --add-label "review-tier:${MODEL}" || true
 
       - name: Detect Jira ticket reference
         id: jira-check

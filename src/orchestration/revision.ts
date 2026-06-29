@@ -10,6 +10,7 @@ import {
   getRunsByPrUrl,
   releaseRevisionSlot,
   setNeedsHuman,
+  setReviewTier,
   tryRecordRevisionEvent,
   updateRunStatus,
   upsertFindings,
@@ -438,6 +439,15 @@ export async function handleGithubRevisionWebhook(params: {
     });
     if (!context) {
       return { action: "ignored", reason: "PR is not tracked or branch has no ticket key" };
+    }
+
+    const tierLabel = (payload.pull_request?.labels ?? [])
+      .map((l: any) => l?.name)
+      .find((n: unknown): n is string => typeof n === "string" && n.startsWith("review-tier:"));
+    if (tierLabel) {
+      await setReviewTier(context.ticketKey, tierLabel.slice("review-tier:".length)).catch((err) =>
+        console.warn("[revision] setReviewTier failed:", err)
+      );
     }
 
     const inlineReviewComments = await listReviewComments(
