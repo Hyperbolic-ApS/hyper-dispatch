@@ -44,7 +44,16 @@ Displays one row per tracked ticket entry (latest run shown by default) in a tab
   - Dashboard render does not poll GitHub for PR display state; it uses DB state captured by the monitor pipeline
   - PR links are rendered only for safe protocols (`http://`, `https://`, or root-relative paths). Unsafe protocols are dropped and the links cell shows `-`.
   - Safe PR-link `href` values are HTML-escaped before rendering to keep attribute escaping consistent with the rest of the dashboard row
-- Compact row action menu (`⋮`) on the right side with `Delete` (and a conditional `Force delete` action stacked beneath it)
+- Compact row action menu (`⋮`) on the right side with `Resync from Oz`, `Delete`, and a conditional `Force delete` action (in that order)
+  - `Resync from Oz` is rendered above delete and posts to `POST /dashboard/:ticketKey/resync`
+  - Resync reads the tracked `run_id`, retrieves the latest Oz run state, and updates the local `dispatch_runs` row so HyperDispatch reflects the current Oz state even if it drifted (for example, a manually resumed run)
+  - Oz state mapping used by resync:
+    - `SUCCEEDED` → `succeeded`
+    - `FAILED` / `ERROR` → `failed`
+    - `CANCELLED` → `stale`
+    - `QUEUED` / `PENDING` / `CLAIMED` / `INPROGRESS` / `BLOCKED` (or unknown) → `running`
+  - Resync clears stale `completed_at` / `error` fields when moving a run back to `running`, and preserves the current dashboard filters in the redirect notice
+  - If the row is missing or has no stored `run_id`, resync is declined with an inline error notice (no DB update)
   - The action popover is allowed to extend beyond table bounds so the actions remain fully visible on the last row, including at non-default browser zoom levels
   - `Delete` is blocked when the run has an open GitHub PR, with an inline error prompting to close the PR first or use `Force delete`
   - `Delete` is allowed when no PR exists or the linked PR is already closed

@@ -9,9 +9,12 @@ const getDistinctRunProjectKeysMock = vi.fn();
 const getRunHistoryForTicketsMock = vi.fn();
 const listProjectConfigsMock = vi.fn();
 const deleteRunMock = vi.fn();
+const getProjectConfigMock = vi.fn();
+const updateRunStatusMock = vi.fn();
 const annotateRunsWithProdDeploymentStatusMock = vi.fn();
 const parseGithubPullRequestUrlMock = vi.fn();
 const getPullRequestStateMock = vi.fn();
+const ozRunRetrieveMock = vi.fn();
 
 vi.mock("../db/config-queries.js", () => ({
   getAllDispatchRuns: getAllDispatchRunsMock,
@@ -25,6 +28,8 @@ vi.mock("../db/config-queries.js", () => ({
 }));
 vi.mock("../db/queries.js", () => ({
   deleteRun: deleteRunMock,
+  getProjectConfig: getProjectConfigMock,
+  updateRunStatus: updateRunStatusMock,
 }));
 vi.mock("../github/pull-requests.js", () => ({
   parseGithubPullRequestUrl: parseGithubPullRequestUrlMock,
@@ -32,6 +37,15 @@ vi.mock("../github/pull-requests.js", () => ({
 }));
 vi.mock("../coolify/prod-deployment.js", () => ({
   annotateRunsWithProdDeploymentStatus: annotateRunsWithProdDeploymentStatusMock,
+}));
+vi.mock("../orchestration/oz-client.js", () => ({
+  getOzClient: vi.fn(() => ({
+    agent: {
+      runs: {
+        retrieve: ozRunRetrieveMock,
+      },
+    },
+  })),
 }));
 
 describe("dashboardRouter", () => {
@@ -44,6 +58,9 @@ describe("dashboardRouter", () => {
     getRunHistoryForTicketsMock.mockResolvedValue([]);
     listProjectConfigsMock.mockResolvedValue([]);
     getAllDispatchRunsMock.mockResolvedValue([]);
+    getProjectConfigMock.mockResolvedValue(null);
+    updateRunStatusMock.mockResolvedValue(null);
+    ozRunRetrieveMock.mockReset();
     annotateRunsWithProdDeploymentStatusMock.mockImplementation(async (runs: unknown[]) =>
       runs.map((run) => ({ ...(run as object), deployed_to_prod: null }))
     );
@@ -587,7 +604,11 @@ describe("dashboardRouter", () => {
 
     expect(html).toContain("data-row-menu-button");
     expect(html).toContain(">⋮</button>");
+    expect(html).toContain(">Resync from Oz</button>");
     expect(html).toContain(">Delete</button>");
+    expect(html.indexOf(">Resync from Oz</button>")).toBeLessThan(
+      html.indexOf(">Delete</button>")
+    );
   });
 
   it("shows Force delete only for the row whose delete previously failed", async () => {
@@ -927,5 +948,100 @@ describe("dashboardRouter", () => {
     expect(res.status).toBe(302);
     expect(res.headers.get("location")).toContain("noticeType=success");
     expect(deleteRunMock).toHaveBeenCalledWith("HYDI-48");
+  });
+
+  // ─── Resync from Oz handler ────────────────────────────────────────────────
+
+  it("resyncs a failed row to running when Oz reports INPROGRESS", async () => {
+    getAllDispatchRunsMock.mockResolvedValue([
+      makeDispatchRun({
+        ticket_key: "HYDI-120",
+        project_key: "HYDI",
+        run_id: "run_120",
+        status: "failed",
+      }),
+    ]);
+    ozRunRetrieveMock.mockResolvedValue({
+      state: "INPROGRESS",
+      session_link: "https://oz.warp.dev/runs/run_120",
+    });
+
+    const { dashboardRouter } = await import("./dashboard.js");
+    const res = await dashboardRouter.request("http://localhost/HYDI-120/resync", {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      body: "project=HYDI",
+    });
+
+    expect(res.status).toBe(302);
+    expect(res.headers.get("location")).toContain("noticeType=success");
+    expect(res.headers.get("location")).toContain("Resynced+HYDI-120+from+Oz");
+    expect(updateRunStatusMock).toHaveBeenCalledWith(
+      "HYDI-120",
+      expect.objectContaining({
+        status: "running",
+        completed_at: null,
+        error: null,
+        session_link: "https://oz.warp.dev/runs/run_120",
+      })
+    );
+  });
+
+  it("resyncs a row to failed when Oz reports FAILED", async () => {
+    getAllDispatchRunsMock.mockResolvedValue([
+      makeDispatchRun({
+        ticket_key: "HYDI-121",
+        project_key: "HYDI",
+        run_id: "run_121",
+        status: "running",
+      }),
+    ]);
+    ozRunRetrieveMock.mockResolvedValue({
+      state: "FAILED",
+      status_message: { message: "Out of credits" },
+      session_link: "https://oz.warp.dev/runs/run_121",
+    });
+
+    const { dashboardRouter } = await import("./dashboard.js");
+    const res = await dashboardRouter.request("http://localhost/HYDI-121/resync", {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      body: "project=HYDI",
+    });
+
+    expect(res.status).toBe(302);
+    expect(res.headers.get("location")).toContain("noticeType=success");
+    expect(updateRunStatusMock).toHaveBeenCalledWith(
+      "HYDI-121",
+      expect.objectContaining({
+        status: "failed",
+        error: "Out of credits",
+        session_link: "https://oz.warp.dev/runs/run_121",
+      })
+    );
+  });
+
+  it("shows an error notice when trying to resync a row with no run_id", async () => {
+    getAllDispatchRunsMock.mockResolvedValue([
+      makeDispatchRun({
+        ticket_key: "HYDI-122",
+        project_key: "HYDI",
+        run_id: null,
+        status: "failed",
+      }),
+    ]);
+
+    const { dashboardRouter } = await import("./dashboard.js");
+    const res = await dashboardRouter.request("http://localhost/HYDI-122/resync", {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      body: "project=HYDI",
+    });
+
+    expect(res.status).toBe(302);
+    expect(res.headers.get("location")).toContain("noticeType=error");
+    expect(res.headers.get("location")).toContain("has+no+run_id");
+    expect(updateRunStatusMock).not.toHaveBeenCalled();
+    expect(ozRunRetrieveMock).not.toHaveBeenCalled();
   });
 });

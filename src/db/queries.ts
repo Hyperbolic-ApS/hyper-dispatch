@@ -610,14 +610,14 @@ export async function updateRunStatus(
   const shouldUpdateRunId = updates.run_id != null;
   const shouldUpdateModel = updates.model != null;
   const shouldUpdateSpawnedAt = updates.spawned_at != null;
-  const shouldUpdateCompletedAt = updates.completed_at != null;
+  const shouldUpdateCompletedAt = updates.completed_at !== undefined;
   const shouldUpdatePrUrl = updates.pr_url != null;
   const shouldUpdatePrHasConflicts = updates.pr_has_conflicts != null;
   const shouldUpdatePrDisplayState = updates.pr_display_state != null;
   const shouldUpdatePrReviewRunning = updates.pr_review_running != null;
   const shouldUpdatePrRevisionRunning = updates.pr_revision_running != null;
   const shouldUpdateSessionLink = updates.session_link != null;
-  const shouldUpdateError = updates.error != null;
+  const shouldUpdateError = updates.error !== undefined;
   const fallbackRunType = updates.run_type ?? "implementation";
   const rows = await sql<DispatchRun[]>`
     WITH target AS (

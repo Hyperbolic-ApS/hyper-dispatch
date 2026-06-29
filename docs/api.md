@@ -47,7 +47,7 @@ Receives signed GitHub webhook payloads for PR state updates and revision trigge
   - Draft PRs are not marked ready-for-review here; that is the monitor's job (see below). The `opened` event fires before a run's `pr_url` is persisted, so it cannot reliably match the run.
 - `pull_request_review` events:
   - Only `action = submitted` is revision-eligible.
-  - Resolves tracked run/project context from PR URL + branch naming (`agent/{ticket-key}[-suffix]`).
+  - Resolves tracked run/project context from PR URL + branch naming (`agent/{ticket-key}[-suffix]`). If the branch does not match that convention, the PR can still opt in: when any PR comment contains the `/auto-revise` marker, the tracked run's own ticket key is used instead.
   - Collects submitted review feedback and inline comments.
   - Detects actionable review items using `REV-###` references/action-list entries.
   - Spawns a revision Oz run only when action items exist.
@@ -128,6 +128,33 @@ Returns all tracked ticket entries as JSON, each enriched with latest-run fields
 - `true`: PR merge commit is present in successful production deployments in Coolify.
 - `false`: not deployed to production yet (or no PR available).
 - `null`: deployment status could not be determined (for example, missing Coolify config or lookup error).
+
+## Dashboard Actions (HTML)
+
+### `POST /dashboard/:ticketKey/resync`
+
+Resyncs a single dashboard row from the current Oz run state using the stored `dispatch_runs.run_id`.
+
+**Form body (optional):**
+- `project`
+- `hideDone`
+- `status`
+
+These filter parameters are used only to preserve the current dashboard view in the redirect URL.
+
+**Behavior:**
+- Loads the tracked row by `ticketKey` from `dispatch_runs`.
+- If the row is missing, redirects with an error notice.
+- If the row has no `run_id`, redirects with an error notice (nothing to query in Oz).
+- Retrieves the Oz run and maps Oz state → local status:
+  - `SUCCEEDED` → `succeeded`
+  - `FAILED` / `ERROR` → `failed`
+  - `CANCELLED` → `stale`
+  - `QUEUED` / `PENDING` / `CLAIMED` / `INPROGRESS` / `BLOCKED` (or unknown) → `running`
+- When mapping to `running`, clears stale `completed_at` and `error`.
+- Persists `session_link` from Oz when available.
+
+**Response:** `302` redirect to `/dashboard?...` with `noticeType`/`notice` query params.
 
 ## Configuration API
 
