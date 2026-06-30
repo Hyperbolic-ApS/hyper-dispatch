@@ -21,7 +21,7 @@ Displays one row per tracked ticket entry (latest run shown by default) in a tab
   - Agent status tokens are rendered as no-wrap badges, so labels stay on one line in the table
   - Shows the latest run status for that ticket
   - Hovering the status opens a run-history popover listing the most recent run rows for the ticket (newest first, capped per ticket)
-  - Clicking a run status badge pins the popover open; outside-click dismisses it
+  - Clicking the visible status badge toggles a pinned-open popover state (including single-row histories); clicking a run status badge inside the popover also pins it, and outside-click dismisses it
   - Each run-history row has a per-run open-in-new-tab icon when `session_link` is present
   - When a run includes persisted `dispatch_runs.error` text, the Agent Status cell shows a red `!` error token next to the status badge
   - Hovering the token (desktop) or tapping/clicking it (touch/mouse) reveals the escaped error text in an inline tooltip; `Esc` or outside-click closes tapped tooltips

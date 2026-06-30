@@ -243,6 +243,35 @@ describe("dashboardRouter", () => {
     expect(html).not.toContain("Show error for HYDI-84");
   });
 
+  it("renders a clickable run-history toggle so single-row popovers can be pinned", async () => {
+    getDispatchRunsPageMock.mockResolvedValue([
+      makeDispatchRun({
+        ticket_key: "HYDI-130",
+        status: "running",
+      }),
+    ]);
+    getRunHistoryForTicketsMock.mockResolvedValue([
+      makeDispatchRun({
+        id: "run-history-130",
+        ticket_key: "HYDI-130",
+        run_type: "implementation",
+        status: "running",
+        created_at: new Date("2026-06-10T12:34:00.000Z"),
+        session_link: "https://oz.warp.dev/runs/run-history-130",
+      }),
+    ]);
+
+    const { dashboardRouter } = await import("./dashboard.js");
+    const res = await dashboardRouter.request("http://localhost/");
+    const html = await res.text();
+
+    expect(res.status).toBe(200);
+    expect(html).toContain("data-run-history-toggle");
+    expect(html).toContain('aria-label="Toggle run history for HYDI-130"');
+    expect(html).toContain('data-run-history-pin data-ticket-key="HYDI-130"');
+    expect(html).toContain("const runHistoryToggle = target.closest(\"[data-run-history-toggle]\")");
+  });
+
   // ─── Filter + pagination delegation to SQL ─────────────────────────────────
 
   it("passes project/status/hideDone filters and pagination offset to getDispatchRunsPage", async () => {

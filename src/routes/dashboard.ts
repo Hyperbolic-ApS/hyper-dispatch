@@ -280,7 +280,10 @@ const CSS = `
   .page-info { font-weight: 500; }
   .agent-status-cell { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
   .run-history-trigger { position: relative; }
+  .run-history-toggle { border: 0; background: transparent; padding: 0; cursor: pointer; display: inline-flex; align-items: center; }
+  .run-history-toggle:focus-visible { outline: 2px solid #111827; outline-offset: 2px; border-radius: 4px; }
   .run-history-popover { display: none; position: absolute; left: 0; top: calc(100% + 6px); min-width: 280px; max-width: 380px; background: #fff; border: 1px solid #d1d5db; border-radius: 8px; box-shadow: 0 8px 20px rgba(0,0,0,0.12); padding: 8px; z-index: 50; }
+  .run-history-popover::before { content: ""; position: absolute; left: 0; right: 0; top: -6px; height: 6px; }
   .run-history-trigger:hover .run-history-popover,
   .run-history-trigger[data-open="true"] .run-history-popover { display: block; }
   .run-history-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
@@ -642,6 +645,7 @@ function renderDashboardContent(view: DashboardView): string {
     const latestStatusBadge = runHistory.length > 0
       ? statusBadge(runHistory[0]!.status)
       : statusBadge(run.status);
+    const latestStatusTrigger = `<button type="button" class="run-history-toggle" data-run-history-toggle aria-label="Toggle run history for ${escapedTicketKey}" aria-expanded="false">${latestStatusBadge}</button>`;
     const safeSessionLink =
       run.session_link && isSafeUrl(run.session_link) ? run.session_link : null;
     const safePrUrl = run.pr_url && isSafeUrl(run.pr_url) ? run.pr_url : null;
@@ -699,7 +703,7 @@ function renderDashboardContent(view: DashboardView): string {
       <td>${ticketStatusBadge(run.ticket_status_name, run.ticket_status_category)}</td>
       <td>
         <span class="agent-status-cell run-history-trigger" data-run-history-trigger>
-          ${latestStatusBadge}${errorToken}
+          ${latestStatusTrigger}${errorToken}
           <span class="run-history-popover" role="dialog" aria-label="Run history for ${escapedTicketKey}">
             <ul class="run-history-list">${runHistoryRows}</ul>
           </span>
@@ -958,27 +962,45 @@ dashboardRouter.get("/", async (c) => {
         event.preventDefault();
       }
     });
+    const setRunHistoryPopoverOpen = (trigger, isOpen) => {
+      trigger.setAttribute("data-open", isOpen ? "true" : "false");
+      const toggle = trigger.querySelector("[data-run-history-toggle]");
+      if (toggle instanceof HTMLButtonElement) {
+        toggle.setAttribute("aria-expanded", isOpen ? "true" : "false");
+      }
+    };
+    const closeOpenRunHistoryPopovers = () => {
+      for (const openPopover of document.querySelectorAll("[data-run-history-trigger][data-open='true']")) {
+        if (!(openPopover instanceof HTMLElement)) continue;
+        setRunHistoryPopoverOpen(openPopover, false);
+      }
+    };
     document.addEventListener("click", (event) => {
       const target = event.target instanceof HTMLElement ? event.target : null;
       if (!target) return;
+      const runHistoryToggle = target.closest("[data-run-history-toggle]");
+      if (runHistoryToggle instanceof HTMLButtonElement) {
+        const trigger = runHistoryToggle.closest("[data-run-history-trigger]");
+        if (!(trigger instanceof HTMLElement)) return;
+        const isOpen = trigger.getAttribute("data-open") === "true";
+        closeOpenRunHistoryPopovers();
+        if (!isOpen) {
+          setRunHistoryPopoverOpen(trigger, true);
+        }
+        return;
+      }
       const runHistoryPin = target.closest("[data-run-history-pin]");
       if (runHistoryPin instanceof HTMLButtonElement) {
         const trigger = runHistoryPin.closest("[data-run-history-trigger]");
         if (!(trigger instanceof HTMLElement)) return;
-        const isOpen = trigger.getAttribute("data-open") === "true";
-        for (const openPopover of document.querySelectorAll("[data-run-history-trigger][data-open='true']")) {
-          if (!(openPopover instanceof HTMLElement)) continue;
-          openPopover.setAttribute("data-open", "false");
-        }
-        if (!isOpen) {
-          trigger.setAttribute("data-open", "true");
-        }
+        closeOpenRunHistoryPopovers();
+        setRunHistoryPopoverOpen(trigger, true);
         return;
       }
       for (const openPopover of document.querySelectorAll("[data-run-history-trigger][data-open='true']")) {
         if (!(openPopover instanceof HTMLElement)) continue;
         if (openPopover.contains(target)) continue;
-        openPopover.setAttribute("data-open", "false");
+        setRunHistoryPopoverOpen(openPopover, false);
       }
       const button = target.closest("[data-error-token-button]");
       if (button instanceof HTMLButtonElement) {
@@ -1011,6 +1033,7 @@ dashboardRouter.get("/", async (c) => {
     });
     document.addEventListener("keydown", (event) => {
       if (event.key !== "Escape") return;
+      closeOpenRunHistoryPopovers();
       for (const openToken of document.querySelectorAll("[data-error-token][data-open='true']")) {
         if (!(openToken instanceof HTMLElement)) continue;
         openToken.setAttribute("data-open", "false");
